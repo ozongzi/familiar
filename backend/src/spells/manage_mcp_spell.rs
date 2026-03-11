@@ -59,6 +59,7 @@ impl Tool for ManageMcpSpell {
             Err(e) => return json!({ "error": format!("启动失败: {e}") }),
         };
         let new_tool_count = tool.raw_tools().len();
+        let new_tools = tool.raw_tools().clone();
 
         // Limit check: count existing MCP tools + new ones + built-in
         {
@@ -90,7 +91,8 @@ impl Tool for ManageMcpSpell {
 
         json!({
             "status": "ok",
-            "message": format!("MCP '{}' 已安装（{} 个工具）。此安装为即时生效，进程重启后不会自动恢复。", name, new_tool_count)
+            "message": format!("MCP '{}' 已安装（{} 个工具）。此安装为即时生效，进程重启后不会自动恢复，若消失请重新安装", name, new_tool_count),
+            "tools": new_tools
         })
     }
 
