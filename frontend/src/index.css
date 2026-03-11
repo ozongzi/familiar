@@ -1,3 +1,28 @@
+/* ─── Anthropic Fonts ───────────────────────────────────────────────────── */
+@font-face {
+    font-family: 'AnthropicSans';
+    src: url('/fonts/69971a00a3295036497e1a28_AnthropicSans-Roman-Web.woff2') format('woff2');
+    font-weight: 400;
+    font-style: normal;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: 'AnthropicSans';
+    src: url('/fonts/69971a016067bf14b9b8f48d_AnthropicSans-Italic-Web.woff2') format('woff2');
+    font-weight: 400;
+    font-style: italic;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: 'AnthropicMono';
+    src: url('/fonts/69971a2e55d24d61bc045b1a_AnthropicMono-Roman-Web.woff2') format('woff2');
+    font-weight: 400;
+    font-style: normal;
+    font-display: swap;
+}
+
 /* ─── CSS Variables ──────────────────────────────────────────────────────── */
 :root {
     /* Backgrounds */
@@ -31,19 +56,43 @@
     --success: #2d7a4f;
 
     /* Radius */
-    --radius-sm: 6px;
-    --radius-md: 10px;
-    --radius-lg: 18px;
+    --radius-sm: 8px;
+    --radius-md: 12px;
+    --radius-lg: 20px;
+    --radius-full: 999px;
 
     /* Typography */
-    --font-sans: "Geist", system-ui, -apple-system, sans-serif;
-    --font-mono: "Geist Mono", "Cascadia Code", "JetBrains Mono", monospace;
+    --font-sans: "AnthropicSans", "Geist", system-ui, -apple-system, sans-serif;
+    --font-mono: "AnthropicMono", "Geist Mono", "Cascadia Code", "JetBrains Mono", monospace;
 
     /* Layout */
-    --sidebar-width: 260px;
-    --header-height: 52px;
+    --sidebar-width: 280px;
+    --header-height: 56px;
+    --input-height: 64px;
 
-    --transition: 140ms ease;
+    --transition: 200ms cubic-bezier(0.4, 0, 0.2, 1);
+
+    /* Safe areas for mobile */
+    --safe-area-top: env(safe-area-inset-top, 0px);
+    --safe-area-bottom: env(safe-area-inset-bottom, 0px);
+    --safe-area-left: env(safe-area-inset-left, 0px);
+    --safe-area-right: env(safe-area-inset-right, 0px);
+}
+
+/* Mobile-first breakpoints */
+@media (min-width: 768px) {
+    :root {
+        --sidebar-width: 280px;
+        --header-height: 56px;
+    }
+}
+
+/* Large desktop */
+@media (min-width: 1024px) {
+    :root {
+        --sidebar-width: 300px;
+        --header-height: 60px;
+    }
 }
 
 /* ─── Reset ──────────────────────────────────────────────────────────────── */
@@ -60,16 +109,19 @@ body,
 #root {
     height: 100%;
     overflow: hidden;
+    overscroll-behavior: none;
 }
 
 body {
     font-family: var(--font-sans);
-    font-size: 15px;
+    font-size: 16px;
     line-height: 1.6;
     color: var(--text-primary);
     background: var(--bg-base);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
 }
 
 a {
@@ -85,6 +137,7 @@ button {
     cursor: pointer;
     border: none;
     background: none;
+    -webkit-tap-highlight-color: transparent;
 }
 
 input,
@@ -95,12 +148,23 @@ textarea {
     background: none;
     border: none;
     outline: none;
+    -webkit-tap-highlight-color: transparent;
+}
+
+/* Prevent iOS zoom on input focus */
+@media (max-width: 768px) {
+    input[type="text"],
+    input[type="email"],
+    input[type="password"],
+    textarea {
+        font-size: 16px;
+    }
 }
 
 /* ─── Scrollbar ──────────────────────────────────────────────────────────── */
 ::-webkit-scrollbar {
-    width: 5px;
-    height: 5px;
+    width: 6px;
+    height: 6px;
 }
 ::-webkit-scrollbar-track {
     background: transparent;
@@ -111,6 +175,14 @@ textarea {
 }
 ::-webkit-scrollbar-thumb:hover {
     background: var(--bg-active);
+}
+
+/* Mobile scrollbar */
+@media (max-width: 768px) {
+    ::-webkit-scrollbar {
+        width: 4px;
+        height: 4px;
+    }
 }
 
 /* ─── Markdown prose ─────────────────────────────────────────────────────── */
@@ -217,7 +289,7 @@ textarea {
     background: #ede9e0;
     border: 1px solid #d8d3c8;
     padding: 0.15em 0.42em;
-    border-radius: 4px;
+    border-radius: 6px;
     color: #3d3929;
     white-space: nowrap;
 }
@@ -238,10 +310,10 @@ textarea {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 7px 14px;
+    padding: 8px 14px;
     background: #ede9e0;
     border-bottom: 1px solid #d8d3c8;
-    min-height: 36px;
+    min-height: 38px;
     gap: 8px;
 }
 
@@ -258,8 +330,8 @@ textarea {
     display: flex;
     align-items: center;
     gap: 5px;
-    padding: 3px 9px;
-    border-radius: 5px;
+    padding: 4px 10px;
+    border-radius: 6px;
     border: 1px solid #ccc8be;
     background: transparent;
     color: #7a7465;

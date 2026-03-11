@@ -3,8 +3,8 @@
 .row {
     display: flex;
     align-items: flex-start;
-    gap: 10px;
-    padding: 6px 0;
+    gap: 12px;
+    padding: 8px 0;
     max-width: 820px;
     margin: 0 auto;
     width: 100%;
@@ -28,16 +28,16 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 16px;
+    font-size: 14px;
     background: var(--bg-elevated);
     border: 1px solid var(--border);
     user-select: none;
-    margin-top: 2px;
+    margin-top: 4px;
 }
 
 .avatarUser {
     background: var(--accent-dim);
-    border-color: #e8c4b4;
+    border-color: var(--accent);
     font-size: 11px;
     font-weight: 600;
     color: var(--accent);
@@ -47,27 +47,28 @@
 /* ─── Bubble ─────────────────────────────────────────────────────────────── */
 
 .bubble {
-    padding: 10px 14px;
+    padding: 12px 16px;
     border-radius: var(--radius-lg);
-    max-width: calc(100% - 84px);
+    max-width: calc(100% - 80px);
     min-width: 40px;
     word-break: break-word;
     overflow-wrap: break-word;
-    line-height: 1.65;
+    line-height: 1.6;
 }
 
 .bubbleUser {
-    background: var(--bg-elevated);
+    background: var(--bg-surface);
     border: 1px solid var(--border);
     border-bottom-right-radius: var(--radius-sm);
     color: var(--text-primary);
 }
 
 .bubbleAssistant {
-    background: var(--bg-surface);
-    border: 1px solid var(--border-subtle);
+    background: transparent;
+    border: none;
     border-bottom-left-radius: var(--radius-sm);
     color: var(--text-primary);
+    padding-left: 0;
 }
 
 /* ─── User text ──────────────────────────────────────────────────────────── */
@@ -146,11 +147,11 @@
 /* ─── Reasoning block ───────────────────────────────────────────────────── */
 
 .reasoningBlock {
-    margin-bottom: 10px;
+    margin-bottom: 12px;
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
     overflow: hidden;
-    background: var(--bg-elevated);
+    background: var(--bg-surface);
 }
 
 .reasoningToggle {
@@ -158,12 +159,12 @@
     align-items: center;
     gap: 6px;
     width: 100%;
-    padding: 6px 12px;
+    padding: 8px 14px;
     background: none;
     border: none;
     cursor: pointer;
     font-family: var(--font-sans);
-    font-size: 0.82em;
+    font-size: 0.83em;
     color: var(--text-muted);
     text-align: left;
     transition:
@@ -192,7 +193,7 @@
 }
 
 .reasoningContent {
-    padding: 8px 12px 10px;
+    padding: 10px 14px 12px;
     border-top: 1px solid var(--border-subtle);
     font-size: 0.88em;
     color: var(--text-muted);
@@ -205,9 +206,9 @@
 
 .toolRow {
     max-width: 820px;
-    margin: 4px auto;
+    margin: 6px auto;
     width: 100%;
-    padding: 0 42px;
+    padding: 0 44px;
 }
 
 .toolBubble {
@@ -215,7 +216,7 @@
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
     overflow: hidden;
-    font-size: 0.83em;
+    font-size: 0.84em;
 }
 
 /* Inline variant — no expand toggle, specialised view shown directly */
@@ -224,7 +225,7 @@
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
     overflow: hidden;
-    font-size: 0.83em;
+    font-size: 0.84em;
     display: flex;
     flex-direction: column;
     gap: 0;
@@ -233,8 +234,8 @@
 .toolHeaderInline {
     display: flex;
     align-items: center;
-    gap: 7px;
-    padding: 7px 12px;
+    gap: 8px;
+    padding: 8px 14px;
     color: var(--text-secondary);
     border-bottom: 1px solid var(--border-subtle);
 }
@@ -246,7 +247,7 @@
 /* ─── Script preview (run_py / run_ts pending state) ─────────────────────── */
 
 .scriptPreview {
-    background: #f5f2ec;
+    background: var(--bg-elevated);
     border-top: 1px solid var(--border-subtle);
     overflow: hidden;
 }
@@ -275,9 +276,9 @@
 .toolHeader {
     display: flex;
     align-items: center;
-    gap: 7px;
+    gap: 8px;
     width: 100%;
-    padding: 7px 12px;
+    padding: 8px 14px;
     background: none;
     border: none;
     cursor: pointer;
@@ -342,7 +343,7 @@
 }
 
 .toolSection {
-    padding: 8px 12px;
+    padding: 10px 14px;
     border-bottom: 1px solid var(--border-subtle);
 }
 
@@ -356,7 +357,7 @@
     color: var(--text-muted);
     letter-spacing: 0.05em;
     text-transform: uppercase;
-    margin-bottom: 5px;
+    margin-bottom: 6px;
 }
 
 .toolCode {
@@ -377,14 +378,14 @@
     background: var(--bg-surface);
     border: 1px solid var(--accent);
     border-radius: var(--radius-lg);
-    padding: 16px 18px;
+    padding: 18px 20px;
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 14px;
 }
 
 .askUserQuestion {
-    font-size: 0.97em;
+    font-size: 0.98em;
     color: var(--text-primary);
     font-weight: 500;
     line-height: 1.55;
@@ -394,11 +395,11 @@
 .askUserOptions {
     display: flex;
     flex-wrap: wrap;
-    gap: 7px;
+    gap: 8px;
 }
 
 .askUserOption {
-    padding: 6px 14px;
+    padding: 8px 16px;
     border-radius: var(--radius-md);
     border: 1px solid var(--accent);
     background: var(--accent-dim);
@@ -425,13 +426,13 @@
 
 .askUserInput {
     flex: 1;
-    padding: 7px 11px;
+    padding: 8px 12px;
     border-radius: var(--radius-md);
     border: 1px solid var(--border);
     background: var(--bg-elevated);
     color: var(--text-primary);
     font-family: var(--font-sans);
-    font-size: 0.88em;
+    font-size: 0.9em;
     outline: none;
     transition: border-color var(--transition);
 }
@@ -445,7 +446,7 @@
 }
 
 .askUserSubmit {
-    padding: 7px 14px;
+    padding: 8px 16px;
     border-radius: var(--radius-md);
     border: 1px solid var(--accent);
     background: var(--accent);
@@ -492,7 +493,7 @@
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 4px 0;
+    padding: 6px 0;
 }
 
 .fileIcon {
@@ -527,12 +528,12 @@
     display: flex;
     align-items: center;
     gap: 5px;
-    padding: 5px 12px;
+    padding: 6px 14px;
     border-radius: var(--radius-md);
     background: var(--accent-dim);
     border: 1px solid var(--accent);
-    color: #c4b5fd;
-    font-size: 0.82em;
+    color: var(--accent);
+    font-size: 0.83em;
     font-weight: 500;
     font-family: var(--font-sans);
     cursor: pointer;
@@ -554,7 +555,7 @@
 /* ─── File card (Claude-style) ───────────────────────────────────────────── */
 
 .fileCard {
-    background: var(--bg-elevated);
+    background: var(--bg-surface);
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
     overflow: hidden;
@@ -562,7 +563,7 @@
 }
 
 .fileCard:hover {
-    border-color: #3a3a52;
+    border-color: var(--bg-active);
 }
 
 .fileCardPending {
@@ -573,14 +574,14 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 10px;
-    padding: 12px 14px;
+    gap: 12px;
+    padding: 14px 16px;
 }
 
 .fileCardLeft {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 12px;
     min-width: 0;
     flex: 1;
 }
@@ -630,13 +631,13 @@
     display: flex;
     align-items: center;
     gap: 5px;
-    padding: 5px 11px;
+    padding: 6px 12px;
     border-radius: var(--radius-md);
     border: 1px solid var(--border);
     background: var(--bg-hover);
     color: var(--text-secondary);
     font-family: var(--font-sans);
-    font-size: 0.82em;
+    font-size: 0.83em;
     font-weight: 500;
     cursor: pointer;
     transition:
@@ -649,12 +650,12 @@
 .fileCardBtn:hover {
     background: var(--bg-active);
     color: var(--text-primary);
-    border-color: #3a3a52;
+    border-color: var(--bg-active);
 }
 
 .fileCardBtnPrimary {
-    background: #f0e0d8;
-    border-color: #d4856a;
+    background: var(--accent-dim);
+    border-color: var(--accent);
     color: var(--accent);
 }
 
@@ -671,9 +672,9 @@
 }
 
 .filePreviewLoading {
-    padding: 20px;
+    padding: 24px;
     text-align: center;
-    font-size: 0.85em;
+    font-size: 0.86em;
     color: var(--text-muted);
     animation: pulse 1.4s ease-in-out infinite;
 }
@@ -682,19 +683,19 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 16px 16px;
-    font-size: 0.85em;
+    padding: 18px 18px;
+    font-size: 0.86em;
     color: var(--text-muted);
 }
 
 .filePreviewError {
-    padding: 14px 16px;
-    font-size: 0.84em;
+    padding: 16px 18px;
+    font-size: 0.85em;
     color: var(--danger);
 }
 
 .filePreviewTruncated {
-    padding: 8px 16px;
+    padding: 10px 18px;
     font-size: 0.78em;
     color: var(--text-muted);
     border-top: 1px solid var(--border-subtle);
@@ -705,23 +706,23 @@
 /* ─── Code preview inside file card ─────────────────────────────────────── */
 
 .filePreviewCode {
-    background: #f5f2ec;
+    background: var(--bg-elevated);
 }
 
 .filePreviewCodeHeader {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 6px 14px;
-    background: #ede9e0;
-    border-bottom: 1px solid #d8d3c8;
-    min-height: 32px;
+    padding: 8px 16px;
+    background: var(--bg-surface);
+    border-bottom: 1px solid var(--border);
+    min-height: 34px;
 }
 
 .filePreviewLang {
     font-family: var(--font-mono);
     font-size: 0.8em;
-    color: #7a7465;
+    color: var(--text-muted);
     letter-spacing: 0.03em;
 }
 
@@ -732,11 +733,11 @@
 
 .filePreviewPre {
     margin: 0;
-    padding: 14px 16px;
+    padding: 14px 18px;
     overflow-x: auto;
     overflow-y: auto;
     max-height: 480px;
-    background: #f5f2ec;
+    background: var(--bg-elevated);
     font-family: var(--font-mono);
     font-size: 0.855em;
     line-height: 1.65;
@@ -746,7 +747,55 @@
     background: none;
     border: none;
     padding: 0;
-    color: #2e2b26;
+    color: #e4e4e7;
     white-space: pre;
     font-size: inherit;
+}
+
+/* ─── Mobile styles ──────────────────────────────────────────────────────── */
+@media (max-width: 768px) {
+    .row {
+        gap: 10px;
+        padding: 6px 0;
+    }
+
+    .avatar {
+        width: 28px;
+        height: 28px;
+    }
+
+    .bubble {
+        padding: 10px 14px;
+        max-width: calc(100% - 60px);
+    }
+
+    .bubbleAssistant {
+        padding-left: 0;
+    }
+
+    .toolRow {
+        padding: 0 38px;
+    }
+
+    .askUserCard {
+        padding: 16px;
+    }
+
+    .fileCardHeader {
+        padding: 12px 14px;
+    }
+
+    .fileCardLeft {
+        gap: 10px;
+    }
+
+    .fileCardActions {
+        flex-direction: column;
+        gap: 4px;
+    }
+
+    .fileCardBtn {
+        width: 100%;
+        justify-content: center;
+    }
 }

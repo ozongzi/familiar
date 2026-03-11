@@ -1,7 +1,7 @@
 use axum::{
     Json,
-    extract::{Query, State},
-    http::header,
+    extract::{Multipart, Query, State},
+    http::{StatusCode, header},
     response::{IntoResponse, Response},
 };
 use axum_extra::{
@@ -9,8 +9,13 @@ use axum_extra::{
     headers::{Authorization, authorization::Bearer},
 };
 use serde::{Deserialize, Serialize};
+use serde_json::json;
+use uuid::Uuid;
 
+use std::path::Path;
+use tokio::fs::File;
 use tokio::io::AsyncReadExt;
+use tokio::io::AsyncWriteExt;
 
 use crate::errors::AppError;
 use crate::web::AppState;
@@ -263,4 +268,165 @@ fn mime_from_filename(name: &str) -> &'static str {
         // Fallback
         _ => "application/octet-stream",
     }
+}
+
+// ─── File upload handler ───────────────────────────────────────────────────
+
+#[derive(Serialize)]
+pub struct UploadResponse {
+    filename: String,
+    path: String,
+    size: usize,
+}
+
+/// POST /api/files
+/// Expects a multipart/form-data body with a "file" field.
+/// Returns JSON with saved filename, path, and size.
+pub async fn upload_file(
+    State(state): State<AppState>,
+    bearer: Option<TypedHeader<Authorization<Bearer>>>,
+    mut multipart: Multipart,
+) -> Result<(StatusCode, Json<UploadResponse>), AppError> {
+    // Resolve token: header only (keep consistent with other endpoints)
+    let token = bearer
+        .as_ref()
+        .map(|TypedHeader(Authorization(b))| b.token().to_string())
+        .ok_or_else(AppError::unauthorized)?;
+
+    // Validate the token against the sessions table.
+    sqlx::query("SELECT user_id FROM sessions WHERE token = $1")
+        .bind(&token)
+        .fetch_optional(&state.pool)
+        .await
+        .map_err(|e| {
+            tracing::error!("file upload auth query: {e}");
+            AppError::internal("数据库错误")
+        })?
+        .ok_or_else(AppError::unauthorized)?;
+
+    // Storage directory
+    let upload_dir = Path::new("uploads");
+    tokio::fs::create_dir_all(upload_dir)
+        .await
+        .map_err(|e| AppError::internal(&e.to_string()))?;
+
+    // Parse multipart fields and look for field named "file" and optional conversation_id.
+    // We first collect fields so the conversation_id can appear before or after the file field.
+    let mut file_name_opt: Option<String> = None;
+    let mut file_data_opt: Option<bytes::Bytes> = None;
+    let mut conv_id_opt: Option<Uuid> = None;
+
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| AppError::internal(&e.to_string()))?
+    {
+        if let Some(name) = field.name() {
+            match name {
+                "file" => {
+                    file_name_opt = Some(
+                        field
+                            .file_name()
+                            .map(|s| s.to_string())
+                            .unwrap_or_else(|| "upload.bin".to_string()),
+                    );
+                    let data = field
+                        .bytes()
+                        .await
+                        .map_err(|e| AppError::internal(&e.to_string()))?;
+                    file_data_opt = Some(data);
+                }
+                "conversation_id" => {
+                    // treat as plain text field
+                    if let Ok(text) = field.text().await {
+                        if let Ok(parsed) = Uuid::parse_str(text.trim()) {
+                            conv_id_opt = Some(parsed);
+                        }
+                    }
+                }
+                _ => {
+                    // ignore other fields
+                }
+            }
+        }
+    }
+
+    let (file_name, data) = match (file_name_opt, file_data_opt) {
+        (Some(n), Some(d)) => (n, d),
+        _ => return Err(AppError::bad_request("未包含 file 字段")),
+    };
+
+    // Simple size limit (50MB)
+    const MAX_UPLOAD: usize = 50 * 1024 * 1024;
+    if data.len() > MAX_UPLOAD {
+        return Err(AppError::bad_request("上传文件过大"));
+    }
+
+    // Compose a unique safe filename (timestamp + sanitized original)
+    let uniq = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let safe = file_name
+        .replace("/", "_")
+        .replace("\\", "_")
+        .replace('"', "_");
+    let unique_name = format!("{}-{}", uniq, safe);
+
+    let dest_path = upload_dir.join(&unique_name);
+    let mut f = File::create(&dest_path)
+        .await
+        .map_err(|e| AppError::internal(&e.to_string()))?;
+    f.write_all(&data)
+        .await
+        .map_err(|e| AppError::internal(&e.to_string()))?;
+
+    let resp = UploadResponse {
+        filename: unique_name.clone(),
+        path: dest_path.to_string_lossy().to_string(),
+        size: data.len(),
+    };
+
+    // If a conversation_id was provided, validate ownership and persist a Tool message
+    // describing the uploaded file. Do NOT trigger model generation — only persist the message.
+    if let Some(conv_id) = conv_id_opt {
+        // Verify that the session token owner owns the conversation.
+        let owned: bool = sqlx::query_scalar::<_, Option<bool>>(
+            "SELECT EXISTS(SELECT 1 FROM conversations WHERE id = $1 AND user_id = (SELECT user_id FROM sessions WHERE token = $2))",
+        )
+        .bind(conv_id)
+        .bind(&token)
+        .fetch_one(&state.pool)
+        .await
+        .map_err(|e| {
+            tracing::error!("file upload conv auth query: {e}");
+            AppError::internal("数据库错误")
+        })?
+        .unwrap_or(false);
+
+        if owned {
+            // Construct a tool-role message describing the uploaded file.
+            // The content mirrors the present_file result shape the frontend expects.
+            let content_value = json!({
+                "display": "file",
+                "filename": unique_name,
+                "path": dest_path.to_string_lossy(),
+                "size": data.len(),
+            });
+            let content_str = content_value.to_string();
+
+            use ds_api::raw::request::message::{Message as AgentMessage, Role};
+            let msg = AgentMessage::new(Role::Tool, &content_str);
+            // Persist only — do not call start_generation or send_interrupt.
+            state.persist_message(conv_id, &msg);
+        } else {
+            tracing::warn!(
+                "upload attempted for conversation not owned by token: {}",
+                conv_id
+            );
+            // still return 201 for the upload itself, but do not persist to conversation
+        }
+    }
+
+    Ok((StatusCode::CREATED, Json(resp)))
 }

@@ -25,7 +25,9 @@ export function ChatInput({
   placeholder,
 }: Props) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [hasText, setHasText] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
 
   // Auto-resize textarea to fit content
   const resize = useCallback(() => {
@@ -85,6 +87,44 @@ export function ChatInput({
     setHasText((el?.value.trim().length ?? 0) > 0);
   }, [resize]);
 
+  // Handle file upload
+  const handleFileUpload = useCallback(async () => {
+    const fileInput = fileInputRef.current;
+    if (!fileInput || !fileInput.files || fileInput.files.length === 0) return;
+
+    const file = fileInput.files[0];
+    const formData = new FormData();
+    formData.append('file', file, file.name);
+
+    setIsUploading(true);
+
+    try {
+      const token = localStorage.getItem('familiar_token');
+      const res = await fetch('/api/files', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+        body: formData,
+      });
+
+      if (!res.ok) {
+        throw new Error(`Upload failed: ${res.status}`);
+      }
+
+      const json = await res.json();
+      // Upload successful - the file info will be in the chat history
+      // Clear the file input
+      fileInput.value = '';
+      console.log('Uploaded:', json);
+    } catch (err) {
+      console.error('Upload error:', err);
+      alert('文件上传失败，请重试');
+    } finally {
+      setIsUploading(false);
+    }
+  }, []);
+
   // Derive what the action button does right now
   const isAbortMode = streaming && !hasText;
   const isInterruptMode = streaming && hasText;
@@ -95,6 +135,30 @@ export function ChatInput({
   return (
     <div className={styles.wrapper}>
       <div className={`${styles.box} ${disabled ? styles.boxDisabled : ""}`}>
+        {/* Hidden file input */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          className={styles.fileInput}
+          onChange={handleFileUpload}
+          aria-label="上传文件"
+        />
+
+        {/* Upload button */}
+        <button
+          className={`${styles.uploadBtn} ${isUploading ? styles.uploadBtnLoading : ""}`}
+          onClick={() => fileInputRef.current?.click()}
+          disabled={disabled || isUploading}
+          aria-label="上传文件"
+          title="上传文件"
+        >
+          {isUploading ? (
+            <span className={styles.uploadSpinner} />
+          ) : (
+            <UploadIcon />
+          )}
+        </button>
+
         <textarea
           ref={textareaRef}
           className={styles.textarea}
@@ -195,6 +259,27 @@ function InterruptIcon() {
     >
       <polyline points="13 17 18 12 13 7" />
       <polyline points="6 17 11 12 6 7" />
+    </svg>
+  );
+}
+
+function UploadIcon() {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <polyline points="17 8 12 3 7 8" />
+      <line x1="12" y1="3" x2="12" y2="15" />
     </svg>
   );
 }

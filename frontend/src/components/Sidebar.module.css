@@ -4,12 +4,36 @@
     width: var(--sidebar-width);
     min-width: var(--sidebar-width);
     height: 100%;
-    background: var(--bg-elevated);
+    background: var(--bg-surface);
     border-right: 1px solid var(--border);
     display: flex;
     flex-direction: column;
     overflow: hidden;
     flex-shrink: 0;
+    transition:
+        transform 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+        visibility 0.3s ease;
+    z-index: 100;
+}
+
+/* Mobile drawer mode */
+@media (max-width: 768px) {
+    .sidebar {
+        position: fixed;
+        left: 0;
+        top: 0;
+        bottom: 0;
+        width: 85%;
+        max-width: 320px;
+        min-width: 280px;
+        transform: translateX(-100%);
+        border-right: none;
+        box-shadow: 4px 0 24px rgba(0, 0, 0, 0.3);
+    }
+
+    .sidebar.open {
+        transform: translateX(0);
+    }
 }
 
 /* ─── Header ─────────────────────────────────────────────────────────────── */
@@ -18,7 +42,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 0 10px 0 14px;
+    padding: 0 16px;
     height: var(--header-height);
     border-bottom: 1px solid var(--border-subtle);
     flex-shrink: 0;
@@ -27,8 +51,8 @@
 .logo {
     display: flex;
     align-items: center;
-    gap: 8px;
-    font-size: 0.97em;
+    gap: 10px;
+    font-size: 1em;
     font-weight: 600;
     color: var(--text-primary);
     letter-spacing: 0.01em;
@@ -36,9 +60,9 @@
 }
 
 .newBtn {
-    width: 28px;
-    height: 28px;
-    border-radius: var(--radius-sm);
+    width: 36px;
+    height: 36px;
+    border-radius: var(--radius-md);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -56,6 +80,7 @@
 
 .newBtn:active {
     background: var(--bg-active);
+    transform: scale(0.95);
 }
 
 /* ─── Conversation list ──────────────────────────────────────────────────── */
@@ -63,17 +88,17 @@
 .list {
     flex: 1;
     overflow-y: auto;
-    padding: 6px 6px;
+    padding: 8px 8px;
     display: flex;
     flex-direction: column;
     gap: 2px;
 }
 
 .empty {
-    font-size: 0.82em;
+    font-size: 0.85em;
     color: var(--text-muted);
     text-align: center;
-    padding: 24px 12px;
+    padding: 32px 16px;
     line-height: 1.6;
 }
 
@@ -85,8 +110,8 @@
     align-items: center;
     justify-content: space-between;
     gap: 4px;
-    padding: 0 6px 0 10px;
-    height: 38px;
+    padding: 0 10px 0 14px;
+    height: 44px;
     border-radius: var(--radius-md);
     cursor: pointer;
     transition: background var(--transition);
@@ -103,7 +128,7 @@
 }
 
 .itemActive {
-    background: var(--bg-active) !important;
+    background: var(--bg-elevated) !important;
 }
 
 .itemActive .convName {
@@ -121,7 +146,7 @@
 }
 
 .convName {
-    font-size: 0.88em;
+    font-size: 0.9em;
     color: var(--text-secondary);
     white-space: nowrap;
     overflow: hidden;
@@ -138,15 +163,15 @@
 
 .renameInput {
     flex: 1;
-    background: var(--bg-surface);
+    background: var(--bg-base);
     border: 1px solid var(--accent);
     border-radius: var(--radius-sm);
-    padding: 3px 7px;
-    font-size: 0.88em;
+    padding: 4px 8px;
+    font-size: 0.9em;
     color: var(--text-primary);
     outline: none;
     width: 100%;
-    height: 28px;
+    height: 32px;
     box-shadow: 0 0 0 2px var(--accent-glow);
 }
 
@@ -169,8 +194,8 @@
 }
 
 .actionBtn {
-    width: 24px;
-    height: 24px;
+    width: 28px;
+    height: 28px;
     border-radius: var(--radius-sm);
     display: flex;
     align-items: center;
@@ -185,6 +210,10 @@
 .actionBtn:hover {
     background: var(--border);
     color: var(--text-primary);
+}
+
+.actionBtn:active {
+    transform: scale(0.92);
 }
 
 .actionBtnDanger {
@@ -205,17 +234,17 @@
     align-items: center;
     justify-content: space-between;
     gap: 8px;
-    padding: 0 10px 0 14px;
-    height: 52px;
+    padding: 0 16px;
+    height: 60px;
     border-top: 1px solid var(--border-subtle);
-    background: var(--bg-elevated);
+    background: var(--bg-surface);
 }
 
 .userName {
     display: flex;
     align-items: center;
-    gap: 6px;
-    font-size: 0.84em;
+    gap: 8px;
+    font-size: 0.88em;
     color: var(--text-secondary);
     white-space: nowrap;
     overflow: hidden;
@@ -225,9 +254,9 @@
 
 .logoutBtn {
     flex-shrink: 0;
-    width: 28px;
-    height: 28px;
-    border-radius: var(--radius-sm);
+    width: 36px;
+    height: 36px;
+    border-radius: var(--radius-md);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -245,4 +274,34 @@
 .logoutBtn:active {
     background: var(--danger);
     color: #fff;
+    transform: scale(0.95);
+}
+
+/* Mobile close button */
+.closeBtn {
+    display: none;
+}
+
+@media (max-width: 768px) {
+    .closeBtn {
+        display: flex;
+        width: 36px;
+        height: 36px;
+        border-radius: var(--radius-md);
+        align-items: center;
+        justify-content: center;
+        color: var(--text-secondary);
+        transition:
+            background var(--transition),
+            color var(--transition);
+    }
+
+    .closeBtn:hover {
+        background: var(--bg-hover);
+        color: var(--text-primary);
+    }
+
+    .closeBtn:active {
+        transform: scale(0.95);
+    }
 }

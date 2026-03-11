@@ -8,24 +8,6 @@ import { useChat } from "../hooks/useChat";
 import { api } from "../api/client";
 import styles from "./ChatPage.module.css";
 
-// 简单的 SVG 汉堡图标组件
-const MenuIcon = () => (
-  <svg
-    width="24"
-    height="24"
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="2"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-  >
-    <line x1="3" y1="12" x2="21" y2="12"></line>
-    <line x1="3" y1="6" x2="21" y2="6"></line>
-    <line x1="3" y1="18" x2="21" y2="18"></line>
-  </svg>
-);
-
 export function ChatPage() {
   const { token, user, logout } = useAuth();
   const {
@@ -38,9 +20,8 @@ export function ChatPage() {
 
   const [activeId, setActiveId] = useState<string | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
-
-  // ── 移动端侧边栏状态 ──────────────────────────────────────────────────────
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarVisible, setSidebarVisible] = useState(true);
 
   const {
     bubbles,
@@ -57,6 +38,22 @@ export function ChatPage() {
 
   const bottomRef = useRef<HTMLDivElement>(null);
 
+  // Close sidebar when selecting a conversation on mobile
+  const handleSelectConversation = useCallback((id: string) => {
+    if (id !== activeId) {
+      setActiveId(id);
+      // Close sidebar on mobile after selection
+      if (window.innerWidth < 768) {
+        setSidebarOpen(false);
+      }
+    }
+  }, [activeId]);
+
+  // Close sidebar when clicking outside on mobile
+  const handleOverlayClick = useCallback(() => {
+    setSidebarOpen(false);
+  }, []);
+
   // ── Auto-scroll to bottom whenever bubbles change ────────────────────────
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -71,17 +68,23 @@ export function ChatPage() {
 
     let cancelled = false;
 
+    // Defer synchronous state updates out of the effect body to avoid the
+    // react-hooks/set-state-in-effect lint rule (which warns about
+    // cascaded renders when setState is called synchronously in an effect).
     const startTimer = setTimeout(() => {
       setHistoryLoading(true);
       clearBubbles();
     }, 0);
 
+    // Load history asynchronously.
     (async () => {
       try {
         const msgs = await api.listMessages(token, activeId);
         if (!cancelled) {
           setHistory(msgs);
           setHistoryLoading(false);
+          // Only open the reattach WS after history is loaded so replay
+          // events never race with setHistory overwriting bubbles.
           reattach(activeId, token);
         }
       } catch {
@@ -101,6 +104,8 @@ export function ChatPage() {
   // ── Auto-select first conversation after load ────────────────────────────
   useEffect(() => {
     if (!convsLoading && conversations.length > 0 && activeId === null) {
+      // Defer setting state to avoid calling setState synchronously within the
+      // effect body (avoids react-hooks/set-state-in-effect warnings).
       const t = setTimeout(() => {
         setActiveId(conversations[0].id);
       }, 0);
@@ -108,13 +113,28 @@ export function ChatPage() {
     }
   }, [convsLoading, conversations, activeId]);
 
+  // Handle resize - close sidebar on desktop
+  useEffect(() => {
+    const handleResize = () => {
+      if (window.innerWidth >= 768) {
+        setSidebarOpen(false);
+      }
+    };
+
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
+
   // ── Handlers ─────────────────────────────────────────────────────────────
 
   const handleCreate = useCallback(async () => {
     const conv = await createConversation();
     if (conv) {
       setActiveId(conv.id);
-      setIsSidebarOpen(false); // 移动端新建后自动收起侧边栏
+      // Close sidebar on mobile after creating
+      if (window.innerWidth < 768) {
+        setSidebarOpen(false);
+      }
     }
   }, [createConversation]);
 
@@ -154,52 +174,54 @@ export function ChatPage() {
     abort();
   }, [abort]);
 
-  // ── Derive UI state ───────────────────────────────────────────────────────
+  // ── Derive UI state ─────────────────────────────────────────────────────
 
   const isStreaming = status === "connecting" || status === "streaming";
   const activeConv = conversations.find((c) => c.id === activeId);
 
   return (
     <div className={styles.layout}>
-      {/* ── 移动端遮罩层 ─────────────────────────────────────────────────── */}
-      {isSidebarOpen && (
-        <div
-          className={styles.overlay}
-          onClick={() => setIsSidebarOpen(false)}
-          aria-hidden="true"
-        />
-      )}
-
-      {/* ── Sidebar ─────────────────────────────────────────────────────── */}
+      {/* Sidebar overlay for mobile */}
       <div
-        className={`${styles.sidebarWrapper} ${isSidebarOpen ? styles.sidebarOpen : ""}`}
-      >
+        className={`${styles.sidebarOverlay} ${sidebarOpen ? styles.visible : ""}`}
+        onClick={handleOverlayClick}
+        aria-hidden="true"
+      />
+
+      {/* Sidebar */}
+      <div className={`${styles.sidebarContainer} ${sidebarVisible ? "" : styles.sidebarHidden}`}>
         <Sidebar
           conversations={conversations}
           activeId={activeId}
           loading={convsLoading}
-          onSelect={(id) => {
-            if (id !== activeId) setActiveId(id);
-            setIsSidebarOpen(false); // 移动端选择后自动收起侧边栏
-          }}
+          onSelect={handleSelectConversation}
           onCreate={handleCreate}
           onDelete={handleDelete}
           onRename={handleRename}
           userName={user?.name ?? ""}
           onLogout={logout}
+          isOpen={sidebarOpen}
+          onClose={() => setSidebarOpen(false)}
         />
       </div>
 
-      {/* ── Main panel ──────────────────────────────────────────────────── */}
+      {/* Main panel */}
       <main className={styles.main}>
         {/* Header */}
         <header className={styles.header}>
           <button
-            className={styles.menuButton}
-            onClick={() => setIsSidebarOpen(true)}
-            aria-label="Open sidebar"
+            className={styles.menuBtn}
+            onClick={() => setSidebarOpen(true)}
+            aria-label="打开菜单"
           >
             <MenuIcon />
+          </button>
+          <button
+            className={styles.sidebarToggle}
+            onClick={() => setSidebarVisible(!sidebarVisible)}
+            aria-label={sidebarVisible ? "收起侧边栏" : "展开侧边栏"}
+          >
+            {sidebarVisible ? <SidebarCloseIcon /> : <SidebarOpenIcon />}
           </button>
           <h2 className={styles.convTitle}>
             {activeConv ? activeConv.name : "Familiar"}
@@ -213,7 +235,7 @@ export function ChatPage() {
               <img src="/favicon.svg" width={52} height={52} alt="" />
               <p className={styles.emptyTitle}>欢迎使用 Familiar</p>
               <p className={styles.emptyHint}>
-                点击左侧或菜单「+」新建一个对话开始聊天
+                点击左上角菜单图标开始对话
               </p>
             </div>
           )}
@@ -265,5 +287,65 @@ export function ChatPage() {
         />
       </main>
     </div>
+  );
+}
+
+/* ─── Icons ─────────────────────────────────────────────────────────────── */
+
+function MenuIcon() {
+  return (
+    <svg
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <line x1="3" y1="12" x2="21" y2="12" />
+      <line x1="3" y1="6" x2="21" y2="6" />
+      <line x1="3" y1="18" x2="21" y2="18" />
+    </svg>
+  );
+}
+
+function SidebarOpenIcon() {
+  return (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <line x1="9" y1="3" x2="9" y2="21" />
+    </svg>
+  );
+}
+
+function SidebarCloseIcon() {
+  return (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <line x1="15" y1="3" x2="15" y2="21" />
+    </svg>
   );
 }

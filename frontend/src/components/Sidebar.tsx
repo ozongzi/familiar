@@ -12,6 +12,8 @@ interface Props {
   onRename: (id: string, name: string) => void;
   userName: string;
   onLogout: () => void;
+  isOpen?: boolean;
+  onClose?: () => void;
 }
 
 export function Sidebar({
@@ -24,6 +26,8 @@ export function Sidebar({
   onRename,
   userName,
   onLogout,
+  isOpen = false,
+  onClose,
 }: Props) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
@@ -70,9 +74,16 @@ export function Sidebar({
   }
 
   return (
-    <aside className={styles.sidebar}>
-      {/* ── Header ────────────────────────────────────────── */}
+    <aside className={`${styles.sidebar} ${isOpen ? styles.open : ""}`}>
+      {/* Header */}
       <div className={styles.header}>
+        <button
+          className={styles.closeBtn}
+          onClick={onClose}
+          aria-label="关闭菜单"
+        >
+          <CloseIcon />
+        </button>
         <span className={styles.logo}>
           <img src="/favicon.svg" width={22} height={22} alt="" />
           Familiar
@@ -87,7 +98,7 @@ export function Sidebar({
         </button>
       </div>
 
-      {/* ── Conversation list ──────────────────────────────── */}
+      {/* Conversation list */}
       <nav className={styles.list} aria-label="对话列表">
         {loading && conversations.length === 0 && (
           <p className={styles.empty}>加载中…</p>
@@ -166,7 +177,7 @@ export function Sidebar({
         })}
       </nav>
 
-      {/* ── Footer / user info ─────────────────────────────── */}
+      {/* Footer / user info */}
       <div className={styles.footer}>
         <span className={styles.userName} title={userName}>
           <UserIcon />
@@ -190,8 +201,8 @@ export function Sidebar({
 function PlusIcon() {
   return (
     <svg
-      width="16"
-      height="16"
+      width="18"
+      height="18"
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
@@ -206,11 +217,30 @@ function PlusIcon() {
   );
 }
 
+function CloseIcon() {
+  return (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <line x1="18" y1="6" x2="6" y2="18" />
+      <line x1="6" y1="6" x2="18" y2="18" />
+    </svg>
+  );
+}
+
 function PencilIcon() {
   return (
     <svg
-      width="13"
-      height="13"
+      width="14"
+      height="14"
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
@@ -228,8 +258,8 @@ function PencilIcon() {
 function TrashIcon() {
   return (
     <svg
-      width="13"
-      height="13"
+      width="14"
+      height="14"
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
@@ -250,8 +280,8 @@ function TrashIcon() {
 function CheckIcon() {
   return (
     <svg
-      width="13"
-      height="13"
+      width="14"
+      height="14"
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
@@ -268,8 +298,8 @@ function CheckIcon() {
 function UserIcon() {
   return (
     <svg
-      width="13"
-      height="13"
+      width="14"
+      height="14"
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
@@ -287,8 +317,8 @@ function UserIcon() {
 function LogoutIcon() {
   return (
     <svg
-      width="15"
-      height="15"
+      width="16"
+      height="16"
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"

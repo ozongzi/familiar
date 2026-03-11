@@ -17,7 +17,7 @@ use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::{ServeDir, ServeFile};
 
 use conversations::*;
-use files::{download_file, preview_file};
+use files::{download_file, preview_file, upload_file};
 use history::*;
 use sessions::*;
 use users::*;
@@ -63,6 +63,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/conversations/{id}/messages", get(list_messages))
         // ── File download / preview ───────────────────────────────────────────
         .route("/api/files", get(download_file))
+        .route("/api/files", post(upload_file))
         .route("/api/files/preview", get(preview_file))
         // ── WebSocket ─────────────────────────────────────────────────────────
         .route("/ws/{id}", get(ws_handler))

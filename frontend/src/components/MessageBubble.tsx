@@ -75,12 +75,6 @@ function TextChatBubble({
     <div
       className={`${styles.row} ${isUser ? styles.rowUser : styles.rowAssistant}`}
     >
-      {!isUser && (
-        <div className={styles.avatar} aria-hidden="true">
-          🐱
-        </div>
-      )}
-
       <div
         className={`${styles.bubble} ${isUser ? styles.bubbleUser : styles.bubbleAssistant}`}
       >
@@ -131,15 +125,6 @@ function TextChatBubble({
           </>
         )}
       </div>
-
-      {isUser && (
-        <div
-          className={`${styles.avatar} ${styles.avatarUser}`}
-          aria-hidden="true"
-        >
-          你
-        </div>
-      )}
     </div>
   );
 }
