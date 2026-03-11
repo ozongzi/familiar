@@ -8,6 +8,24 @@ import { useChat } from "../hooks/useChat";
 import { api } from "../api/client";
 import styles from "./ChatPage.module.css";
 
+// 简单的 SVG 汉堡图标组件
+const MenuIcon = () => (
+  <svg
+    width="24"
+    height="24"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
+    <line x1="3" y1="12" x2="21" y2="12"></line>
+    <line x1="3" y1="6" x2="21" y2="6"></line>
+    <line x1="3" y1="18" x2="21" y2="18"></line>
+  </svg>
+);
+
 export function ChatPage() {
   const { token, user, logout } = useAuth();
   const {
@@ -20,6 +38,9 @@ export function ChatPage() {
 
   const [activeId, setActiveId] = useState<string | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
+
+  // ── 移动端侧边栏状态 ──────────────────────────────────────────────────────
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
   const {
     bubbles,
@@ -50,23 +71,17 @@ export function ChatPage() {
 
     let cancelled = false;
 
-    // Defer synchronous state updates out of the effect body to avoid the
-    // react-hooks/set-state-in-effect lint rule (which warns about
-    // cascaded renders when setState is called synchronously in an effect).
     const startTimer = setTimeout(() => {
       setHistoryLoading(true);
       clearBubbles();
     }, 0);
 
-    // Load history asynchronously.
     (async () => {
       try {
         const msgs = await api.listMessages(token, activeId);
         if (!cancelled) {
           setHistory(msgs);
           setHistoryLoading(false);
-          // Only open the reattach WS after history is loaded so replay
-          // events never race with setHistory overwriting bubbles.
           reattach(activeId, token);
         }
       } catch {
@@ -86,8 +101,6 @@ export function ChatPage() {
   // ── Auto-select first conversation after load ────────────────────────────
   useEffect(() => {
     if (!convsLoading && conversations.length > 0 && activeId === null) {
-      // Defer setting state to avoid calling setState synchronously within the
-      // effect body (avoids react-hooks/set-state-in-effect warnings).
       const t = setTimeout(() => {
         setActiveId(conversations[0].id);
       }, 0);
@@ -99,7 +112,10 @@ export function ChatPage() {
 
   const handleCreate = useCallback(async () => {
     const conv = await createConversation();
-    if (conv) setActiveId(conv.id);
+    if (conv) {
+      setActiveId(conv.id);
+      setIsSidebarOpen(false); // 移动端新建后自动收起侧边栏
+    }
   }, [createConversation]);
 
   const handleDelete = useCallback(
@@ -145,25 +161,46 @@ export function ChatPage() {
 
   return (
     <div className={styles.layout}>
+      {/* ── 移动端遮罩层 ─────────────────────────────────────────────────── */}
+      {isSidebarOpen && (
+        <div
+          className={styles.overlay}
+          onClick={() => setIsSidebarOpen(false)}
+          aria-hidden="true"
+        />
+      )}
+
       {/* ── Sidebar ─────────────────────────────────────────────────────── */}
-      <Sidebar
-        conversations={conversations}
-        activeId={activeId}
-        loading={convsLoading}
-        onSelect={(id) => {
-          if (id !== activeId) setActiveId(id);
-        }}
-        onCreate={handleCreate}
-        onDelete={handleDelete}
-        onRename={handleRename}
-        userName={user?.name ?? ""}
-        onLogout={logout}
-      />
+      <div
+        className={`${styles.sidebarWrapper} ${isSidebarOpen ? styles.sidebarOpen : ""}`}
+      >
+        <Sidebar
+          conversations={conversations}
+          activeId={activeId}
+          loading={convsLoading}
+          onSelect={(id) => {
+            if (id !== activeId) setActiveId(id);
+            setIsSidebarOpen(false); // 移动端选择后自动收起侧边栏
+          }}
+          onCreate={handleCreate}
+          onDelete={handleDelete}
+          onRename={handleRename}
+          userName={user?.name ?? ""}
+          onLogout={logout}
+        />
+      </div>
 
       {/* ── Main panel ──────────────────────────────────────────────────── */}
       <main className={styles.main}>
         {/* Header */}
         <header className={styles.header}>
+          <button
+            className={styles.menuButton}
+            onClick={() => setIsSidebarOpen(true)}
+            aria-label="Open sidebar"
+          >
+            <MenuIcon />
+          </button>
           <h2 className={styles.convTitle}>
             {activeConv ? activeConv.name : "Familiar"}
           </h2>
@@ -176,7 +213,7 @@ export function ChatPage() {
               <img src="/favicon.svg" width={52} height={52} alt="" />
               <p className={styles.emptyTitle}>欢迎使用 Familiar</p>
               <p className={styles.emptyHint}>
-                点击左侧「+」新建一个对话开始聊天
+                点击左侧或菜单「+」新建一个对话开始聊天
               </p>
             </div>
           )}

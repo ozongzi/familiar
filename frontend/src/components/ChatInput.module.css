@@ -1,41 +1,61 @@
-/* ─── Wrapper ─────────────────────────────────────────────────────────────── */
+/* Modern Claude-like chat input
+   - Softer rounded surface
+   - Slight glass / blur effect
+   - Subtle shadows and smooth transitions
+   - Clear affordances for Send / Interrupt / Abort states
+*/
+
+/* ─── Container ──────────────────────────────────────────────────────────── */
 
 .wrapper {
     display: flex;
     flex-direction: column;
-    gap: 6px;
-    padding: 12px 16px 16px;
-    background: var(--bg-base);
-    border-top: 1px solid var(--border-subtle);
+    gap: 8px;
+    padding: 14px 18px 18px;
+    background: transparent; /* keep page background; box itself is elevated */
 }
 
-/* ─── Input box ──────────────────────────────────────────────────────────── */
+/* ─── Input box (glass card) ─────────────────────────────────────────────── */
 
 .box {
     display: flex;
     align-items: flex-end;
-    gap: 8px;
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
-    padding: 8px 8px 8px 14px;
+    gap: 10px;
+    background: linear-gradient(
+        180deg,
+        rgba(255, 255, 255, 0.6),
+        rgba(255, 255, 255, 0.5)
+    );
+    /* Use fallback colors provided by theme variables */
+    background-color: var(--bg-surface);
+    border: 1px solid rgba(0, 0, 0, 0.06);
+    border-radius: calc(var(--radius-lg, 12px));
+    padding: 10px 10px 10px 14px;
     transition:
-        border-color var(--transition),
-        box-shadow var(--transition);
+        border-color var(--transition, 180ms) ease,
+        box-shadow var(--transition, 180ms) ease,
+        transform var(--transition, 180ms) ease;
+    align-items: center;
+    box-shadow: 0 6px 18px rgba(16, 24, 40, 0.06);
+    backdrop-filter: blur(6px) saturate(120%);
+    -webkit-backdrop-filter: blur(6px) saturate(120%);
 }
 
+/* stronger, colored focus when the textarea is active */
 .box:focus-within {
     border-color: var(--accent);
-    box-shadow: 0 0 0 3px var(--accent-glow);
+    box-shadow: 0 8px 30px var(--accent-glow, rgba(44, 132, 255, 0.12));
+    transform: translateY(-1px);
 }
 
 .boxDisabled {
-    opacity: 0.6;
+    opacity: 0.65;
     pointer-events: none;
 }
 
 /* ─── Textarea ───────────────────────────────────────────────────────────── */
 
+/* reset to ensure consistent look */
 .textarea {
     flex: 1;
     resize: none;
@@ -43,116 +63,188 @@
     border: none;
     outline: none;
     color: var(--text-primary);
-    font-family: var(--font-sans);
-    font-size: 0.95em;
-    line-height: 1.6;
-    min-height: 24px;
-    max-height: 200px;
+    font-family: var(
+        --font-sans,
+        system-ui,
+        -apple-system,
+        "Segoe UI",
+        Roboto,
+        "Helvetica Neue",
+        Arial
+    );
+    font-size: 1rem;
+    line-height: 1.5;
+    min-height: 36px;
+    max-height: 220px;
     overflow-y: auto;
-    padding: 2px 0;
-    scrollbar-width: thin;
-    scrollbar-color: var(--border) transparent;
+    padding: 6px 4px;
+    caret-color: var(--accent);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
 }
 
+/* Slightly muted, descriptive placeholder that mirrors Claude style */
 .textarea::placeholder {
     color: var(--text-muted);
+    font-style: italic;
+    opacity: 0.9;
 }
 
+/* keyboard users should still see focus inside the box (handled above),
+   but make textarea pointer distinct when disabled */
 .textarea:disabled {
     cursor: not-allowed;
+    opacity: 0.9;
 }
 
-/* ─── Send button ────────────────────────────────────────────────────────── */
-
-.sendBtn {
-    flex-shrink: 0;
-    width: 36px;
-    height: 36px;
-    border-radius: var(--radius-md);
-    background: var(--accent);
-    color: #fff;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition:
-        background var(--transition),
-        transform var(--transition),
-        opacity var(--transition);
-    align-self: flex-end;
-    border: none;
-    cursor: pointer;
+/* scrollbars: subtle, thin */
+.textarea::-webkit-scrollbar {
+    height: 8px;
+    width: 8px;
+}
+.textarea::-webkit-scrollbar-thumb {
+    background: linear-gradient(
+        180deg,
+        rgba(0, 0, 0, 0.12),
+        rgba(0, 0, 0, 0.08)
+    );
+    border-radius: 99px;
 }
 
-.sendBtn:hover:not(:disabled) {
-    background: var(--accent-hover);
-}
+/* ─── Action buttons ────────────────────────────────────────────────────── */
 
-.sendBtn:active:not(:disabled) {
-    transform: scale(0.93);
-}
-
-.sendBtn:disabled {
-    opacity: 0.35;
-    cursor: not-allowed;
-}
-
-/* ─── Interrupt mode (streaming + has text) ──────────────────────────────── */
-
-.sendBtnInterrupt {
-    background: #1a5fa6;
-}
-
-.sendBtnInterrupt:hover:not(:disabled) {
-    background: #154e8a;
-}
-
-/* ─── Abort button (streaming + no text) ─────────────────────────────────── */
-
+/* Shared button base */
+.sendBtn,
 .abortBtn {
     flex-shrink: 0;
-    width: 36px;
-    height: 36px;
-    border-radius: var(--radius-md);
-    background: var(--bg-elevated);
-    border: 1px solid var(--border);
-    color: var(--text-secondary);
-    display: flex;
+    width: 44px;
+    height: 44px;
+    border-radius: 999px;
+    display: inline-flex;
     align-items: center;
     justify-content: center;
+    border: 1px solid transparent;
+    transition:
+        background var(--transition, 180ms) ease,
+        transform var(--transition, 120ms) ease,
+        box-shadow var(--transition, 180ms) ease,
+        opacity var(--transition, 180ms) ease;
     cursor: pointer;
     align-self: flex-end;
-    transition:
-        background var(--transition),
-        color var(--transition),
-        border-color var(--transition),
-        transform var(--transition);
+    padding: 0;
 }
 
+/* Primary send button (default) */
+.sendBtn {
+    background: linear-gradient(
+        180deg,
+        var(--accent),
+        var(--accent-hover, rgba(0, 0, 0, 0.12))
+    );
+    color: #fff;
+    box-shadow:
+        0 6px 18px rgba(56, 124, 255, 0.18),
+        0 1px 0 rgba(255, 255, 255, 0.06) inset;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+/* Slight lift on hover, small scale on active */
+.sendBtn:hover:not(:disabled) {
+    transform: translateY(-2px) scale(1.02);
+    box-shadow: 0 10px 30px rgba(56, 124, 255, 0.18);
+}
+.sendBtn:active:not(:disabled) {
+    transform: scale(0.96);
+}
+
+/* Disabled send button */
+.sendBtn:disabled {
+    opacity: 0.38;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+}
+
+/* Interrupt mode uses a slightly different hue (blue-ish) */
+.sendBtnInterrupt {
+    background: linear-gradient(180deg, #1a73b8, #1765a6);
+    box-shadow: 0 6px 18px rgba(26, 115, 184, 0.16);
+}
+
+/* Abort appears as a neutral elevated button with subtle border */
+.abortBtn {
+    background: rgba(255, 255, 255, 0.9);
+    color: var(--text-secondary);
+    border: 1px solid var(--border);
+    box-shadow: 0 4px 12px rgba(6, 8, 16, 0.04);
+}
 .abortBtn:hover {
-    background: var(--danger-dim);
-    border-color: var(--danger);
-    color: var(--danger);
+    transform: translateY(-2px);
+    background: var(--danger-dim, rgba(255, 230, 230, 0.95));
+    border-color: var(--danger, #d23);
+    color: var(--danger, #d23);
 }
-
 .abortBtn:active {
-    transform: scale(0.93);
+    transform: scale(0.96);
 }
 
-/* ─── Hint text ──────────────────────────────────────────────────────────── */
+/* Icon sizing to keep visual balance */
+.sendBtn svg,
+.abortBtn svg {
+    width: 18px;
+    height: 18px;
+    display: block;
+}
+
+/* ─── Streaming hint & helper text ──────────────────────────────────────── */
 
 .hint {
-    font-size: 0.78em;
+    font-size: 0.82rem;
     color: var(--text-muted);
     text-align: center;
-    animation: pulse 1.6s ease-in-out infinite;
+    margin: 0 6px;
+    user-select: none;
+    letter-spacing: 0.1px;
+    animation: subtlePulse 2s ease-in-out infinite;
 }
 
-@keyframes pulse {
-    0%,
-    100% {
-        opacity: 0.5;
+/* gentler pulse than before */
+@keyframes subtlePulse {
+    0% {
+        opacity: 0.6;
+        transform: translateY(0);
     }
     50% {
         opacity: 1;
+        transform: translateY(-1px);
+    }
+    100% {
+        opacity: 0.6;
+        transform: translateY(0);
+    }
+}
+
+/* ─── Accessibility helpers ────────────────────────────────────────────── */
+
+/* ensure high-contrast focus state when user navigates by keyboard */
+.box:focus-within .textarea {
+    outline: none;
+    /* focus ring already on box; keep textarea clean */
+}
+
+/* small screens — slightly adjust paddings and button size */
+@media (max-width: 480px) {
+    .box {
+        padding: 8px 10px 8px 12px;
+        gap: 8px;
+    }
+    .sendBtn,
+    .abortBtn {
+        width: 40px;
+        height: 40px;
+    }
+    .textarea {
+        font-size: 0.95rem;
+        min-height: 34px;
     }
 }

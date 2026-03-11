@@ -106,3 +106,181 @@
         transform: translateY(0);
     }
 }
+
+/* ─── Two-column layout ──────────────────────────────────────────────────── */
+
+.layout {
+    display: flex;
+    height: 100%;
+    /* 添加 relative，为了让移动端的遮罩层和抽屉能在 layout 内绝对定位 */
+    position: relative;
+    overflow: hidden;
+    background: var(--bg-base);
+}
+
+/* ─── Sidebar Wrapper (响应式处理) ───────────────────────────────────────── */
+
+.sidebarWrapper {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    /* 默认桌面端正常宽度，这里假设你的 Sidebar 组件会自己控制宽度，
+       如果 Sidebar 没有定宽，可以在这里加上 width: 260px; 等 */
+    flex-shrink: 0;
+}
+
+/* ─── Main panel ─────────────────────────────────────────────────────────── */
+
+.main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: var(--bg-surface);
+}
+
+/* ─── Header ─────────────────────────────────────────────────────────────── */
+
+.header {
+    flex-shrink: 0;
+    height: var(--header-height);
+    display: flex;
+    align-items: center;
+    padding: 0 20px;
+    border-bottom: 1px solid var(--border-subtle);
+    background: var(--bg-surface);
+    gap: 12px; /* 给菜单按钮和标题增加间距 */
+}
+
+.menuButton {
+    display: none; /* 桌面端默认隐藏 */
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    padding: 4px;
+    margin-left: -8px; /* 抵消 header 的 padding，保持对齐 */
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-sm);
+    transition: background-color 0.2s ease;
+}
+
+.menuButton:hover {
+    background: var(--bg-hover);
+}
+
+.convTitle {
+    font-size: 0.97em;
+    font-weight: 600;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    line-height: 1.3;
+    letter-spacing: 0.01em;
+}
+
+/* ... 保持你原有其他样式不变 (messages, empty, errorBanner) ... */
+.messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px 20px 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    scroll-behavior: smooth;
+}
+
+.empty {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    padding: 40px 20px;
+    text-align: center;
+    margin: auto;
+}
+
+.emptyTitle {
+    font-size: 1.1em;
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+
+.emptyHint {
+    font-size: 0.88em;
+    color: var(--text-muted);
+    line-height: 1.7;
+    max-width: 300px;
+}
+
+.errorBanner {
+    max-width: 820px;
+    width: 100%;
+    margin: 8px auto 0;
+    padding: 10px 16px;
+    background: var(--danger-dim);
+    border: 1px solid rgba(192, 57, 43, 0.2);
+    border-radius: var(--radius-md);
+    color: var(--danger);
+    font-size: 0.88em;
+    line-height: 1.5;
+    animation: fadeIn 0.2s ease;
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(4px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* ─── 移动端适配 (Mobile Media Query) ────────────────────────────────────── */
+
+@media (max-width: 768px) {
+    .menuButton {
+        display: flex; /* 移动端显示汉堡菜单 */
+    }
+
+    .sidebarWrapper {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        left: -100%; /* 默认隐藏在屏幕左侧之外 */
+        width: 80%; /* 侧边栏占屏幕 80% 宽度 */
+        max-width: 320px;
+        z-index: 100;
+        background: var(--bg-base); /* 确保背景不透明 */
+        transition: left 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        box-shadow: 2px 0 8px rgba(0, 0, 0, 0.15); /* 加个阴影增强层级感 */
+    }
+
+    .sidebarWrapper.sidebarOpen {
+        left: 0; /* 展开侧边栏 */
+    }
+
+    /* 遮罩层样式 */
+    .overlay {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background-color: rgba(0, 0, 0, 0.4);
+        z-index: 90;
+        backdrop-filter: blur(2px);
+        animation: fadeIn 0.3s ease;
+    }
+
+    .messages {
+        padding: 16px 12px 8px; /* 移动端适当减小内边距 */
+    }
+}
