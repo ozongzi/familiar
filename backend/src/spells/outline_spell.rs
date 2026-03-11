@@ -292,7 +292,7 @@ impl Tool for OutlineSpell {
         };
 
         // ── Read source ───────────────────────────────────────────────────────
-        let src = match std::fs::read(&path) {
+        let src = match tokio::fs::read(&path).await {
             Ok(b) => b,
             Err(e) => return json!({ "error": e.to_string() }),
         };

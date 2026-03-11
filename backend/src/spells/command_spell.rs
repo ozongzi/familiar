@@ -24,7 +24,7 @@ impl Tool for CommandSpell {
 
         if let Some(dir) = cwd {
             // If provided cwd is relative, resolve it relative to the default_home and canonicalize.
-            match std::fs::canonicalize(dir) {
+            match tokio::fs::canonicalize(dir).await {
                 Ok(cwd) => {
                     cmd.current_dir(cwd);
                 }

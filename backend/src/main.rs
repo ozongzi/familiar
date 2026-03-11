@@ -12,7 +12,7 @@ use sqlx::postgres::PgPoolOptions;
 use tracing::info;
 use tracing_subscriber::{EnvFilter, fmt};
 
-#[tokio::main]
+#[tokio::main(flavor = "multi_thread", worker_threads = 4)]
 async fn main() {
     // env::set_current_dir(
     //     env::var("HOME")

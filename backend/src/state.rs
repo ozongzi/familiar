@@ -540,8 +540,12 @@ async fn run_generation(
     use futures::StreamExt;
     use serde_json::json;
 
+    info!(conversation = %conversation_id, "[TIMING] run_generation started, calling chat_from_history");
+    let t_start = std::time::Instant::now();
     let mut stream = agent.chat_from_history();
+    info!(conversation = %conversation_id, "[TIMING] chat_from_history returned in {:?}", t_start.elapsed());
     let mut reply_buf = String::new();
+    let mut poll_count = 0u32;
 
     loop {
         // Check abort flag before polling the next event.
@@ -572,26 +576,37 @@ async fn run_generation(
             return None;
         }
 
+        poll_count += 1;
+        let t_poll = std::time::Instant::now();
+        info!(conversation = %conversation_id, "[TIMING] poll #{poll_count}: calling stream.next()");
+
         tokio::select! {
             biased;
 
             agent_event = stream.next() => {
+                let elapsed = t_poll.elapsed();
                 let Some(event) = agent_event else {
+                    info!(conversation = %conversation_id, "[TIMING] poll #{poll_count}: stream.next() -> None (stream ended) in {elapsed:?}");
                     break;
                 };
 
                 let payload = match event {
                     Ok(AgentEvent::Token(token)) => {
+                        info!(conversation = %conversation_id, "[TIMING] poll #{poll_count}: stream.next() -> Token ({} chars) in {elapsed:?}", token.len());
                         reply_buf.push_str(&token);
                         json!({"type": "token", "content": token}).to_string()
                     }
-                    Ok(AgentEvent::ToolCall(c)) => json!({
-                        "type": "tool_call",
-                        "id": c.id,
-                        "name": c.name,
-                        "delta": c.delta,
-                    }).to_string(),
+                    Ok(AgentEvent::ToolCall(c)) => {
+                        info!(conversation = %conversation_id, "[TIMING] poll #{poll_count}: stream.next() -> ToolCall name={} id={} delta_len={} in {elapsed:?}", c.name, c.id, c.delta.len());
+                        json!({
+                            "type": "tool_call",
+                            "id": c.id,
+                            "name": c.name,
+                            "delta": c.delta,
+                        }).to_string()
+                    }
                     Ok(AgentEvent::ToolResult(res)) => {
+                        info!(conversation = %conversation_id, "[TIMING] poll #{poll_count}: stream.next() -> ToolResult name={} id={} in {elapsed:?}", res.name, res.id);
                         // The agent will drain its interrupt channel before the next
                         // sampling turn. Clear our queue so we don't double-process
                         // any interrupts that were consumed mid-generation.
@@ -609,10 +624,11 @@ async fn run_generation(
                         }).to_string()
                     }
                     Ok(AgentEvent::ReasoningToken(token)) => {
+                        info!(conversation = %conversation_id, "[TIMING] poll #{poll_count}: stream.next() -> ReasoningToken ({} chars) in {elapsed:?}", token.len());
                         json!({"type": "reasoning_token", "content": token}).to_string()
                     }
                     Err(e) => {
-                        error!(conversation = %conversation_id, "agent error: {e}");
+                        error!(conversation = %conversation_id, "[TIMING] poll #{poll_count}: stream.next() -> Error in {elapsed:?}: {e}");
                         let payload = json!({"type": "error", "message": e.to_string()}).to_string();
                         // Emit the error event before recovering.
                         {
@@ -644,7 +660,10 @@ async fn run_generation(
                 }
             }
 
-            else => break,
+            else => {
+                info!(conversation = %conversation_id, "[TIMING] poll #{poll_count}: select! else branch triggered in {:?}", t_poll.elapsed());
+                break;
+            }
         }
     }
 
