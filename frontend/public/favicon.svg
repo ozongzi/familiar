@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <rect width="32" height="32" rx="8" fill="#1a1a2e"/>
+  <!-- cat ears -->
+  <polygon points="6,14 10,4 14,14" fill="#7c6af7"/>
+  <polygon points="18,14 22,4 26,14" fill="#7c6af7"/>
+  <polygon points="7.5,13 10,6 12.5,13" fill="#b8b0ff"/>
+  <polygon points="19.5,13 22,6 24.5,13" fill="#b8b0ff"/>
+  <!-- cat head -->
+  <ellipse cx="16" cy="20" rx="11" ry="10" fill="#7c6af7"/>
+  <!-- eyes -->
+  <ellipse cx="11.5" cy="19" rx="2" ry="2.5" fill="#1a1a2e"/>
+  <ellipse cx="20.5" cy="19" rx="2" ry="2.5" fill="#1a1a2e"/>
+  <circle cx="12" cy="18.5" r="0.7" fill="white"/>
+  <circle cx="21" cy="18.5" r="0.7" fill="white"/>
+  <!-- nose -->
+  <polygon points="16,22 14.5,23.5 17.5,23.5" fill="#ffb3d9"/>
+  <!-- mouth -->
+  <path d="M14.5,23.5 Q16,25 17.5,23.5" fill="none" stroke="#1a1a2e" stroke-width="0.8"/>
+  <!-- whiskers -->
+  <line x1="5" y1="21" x2="13" y2="22.5" stroke="#b8b0ff" stroke-width="0.6" opacity="0.7"/>
+  <line x1="5" y1="23" x2="13" y2="23.5" stroke="#b8b0ff" stroke-width="0.6" opacity="0.7"/>
+  <line x1="27" y1="21" x2="19" y2="22.5" stroke="#b8b0ff" stroke-width="0.6" opacity="0.7"/>
+  <line x1="27" y1="23" x2="19" y2="23.5" stroke="#b8b0ff" stroke-width="0.6" opacity="0.7"/>
+</svg>

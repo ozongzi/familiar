@@ -1,0 +1,180 @@
+/* ─── Page (full viewport, centered) ────────────────────────────────────── */
+
+.page {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    background: var(--bg-base);
+    padding: 16px;
+}
+
+/* ─── Card ───────────────────────────────────────────────────────────────── */
+
+.card {
+    width: 100%;
+    max-width: 380px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 36px 32px 28px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    box-shadow:
+        0 1px 3px rgba(60, 45, 30, 0.06),
+        0 8px 32px rgba(60, 45, 30, 0.08);
+}
+
+/* ─── Logo row ───────────────────────────────────────────────────────────── */
+
+.logoRow {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 4px;
+}
+
+.title {
+    font-size: 1.55em;
+    font-weight: 700;
+    color: var(--text-primary);
+    letter-spacing: -0.01em;
+    line-height: 1;
+}
+
+/* ─── Subtitle ───────────────────────────────────────────────────────────── */
+
+.subtitle {
+    font-size: 0.9em;
+    color: var(--text-secondary);
+    margin-bottom: 18px;
+}
+
+/* ─── Form ───────────────────────────────────────────────────────────────── */
+
+.form {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.label {
+    font-size: 0.82em;
+    font-weight: 500;
+    color: var(--text-secondary);
+    letter-spacing: 0.02em;
+}
+
+.input {
+    background: var(--bg-base);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 9px 13px;
+    font-size: 0.95em;
+    color: var(--text-primary);
+    transition:
+        border-color var(--transition),
+        box-shadow var(--transition);
+    width: 100%;
+    outline: none;
+    font-family: var(--font-sans);
+}
+
+.input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-glow);
+    background: var(--bg-surface);
+}
+
+.input::placeholder {
+    color: var(--text-muted);
+}
+
+.input:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+/* ─── Error ──────────────────────────────────────────────────────────────── */
+
+.error {
+    font-size: 0.84em;
+    color: var(--danger);
+    background: var(--danger-dim);
+    border: 1px solid rgba(192, 57, 43, 0.2);
+    border-radius: var(--radius-sm);
+    padding: 8px 12px;
+    line-height: 1.5;
+}
+
+/* ─── Submit button ──────────────────────────────────────────────────────── */
+
+.submitBtn {
+    margin-top: 4px;
+    width: 100%;
+    padding: 10px;
+    border-radius: var(--radius-md);
+    background: var(--accent);
+    color: #fff;
+    font-size: 0.97em;
+    font-weight: 600;
+    font-family: var(--font-sans);
+    letter-spacing: 0.01em;
+    transition:
+        background var(--transition),
+        transform var(--transition),
+        opacity var(--transition);
+    cursor: pointer;
+    border: none;
+}
+
+.submitBtn:hover:not(:disabled) {
+    background: var(--accent-hover);
+}
+
+.submitBtn:active:not(:disabled) {
+    transform: scale(0.98);
+}
+
+.submitBtn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* ─── Toggle mode link ───────────────────────────────────────────────────── */
+
+.toggle {
+    font-size: 0.84em;
+    color: var(--text-muted);
+    text-align: center;
+    margin-top: 12px;
+}
+
+.toggleBtn {
+    color: var(--accent);
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: inherit;
+    font-family: inherit;
+    padding: 0 3px;
+    font-weight: 500;
+    transition: color var(--transition);
+}
+
+.toggleBtn:hover {
+    color: var(--accent-hover);
+    text-decoration: underline;
+}
+
+.toggleBtn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}

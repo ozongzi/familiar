@@ -1,0 +1,7 @@
+config.toml
+SPEC.md
+**/target
+**/dist
+**/build
+**/node_modules
+**/coverage

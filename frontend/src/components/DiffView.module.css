@@ -1,0 +1,206 @@
+/* ─── Container ──────────────────────────────────────────────────────────── */
+
+.container {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    font-size: 0.82em;
+    background: var(--bg-surface);
+}
+
+/* ─── Header ─────────────────────────────────────────────────────────────── */
+
+.header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 7px 14px;
+    background: var(--bg-elevated);
+    border-bottom: 1px solid var(--border);
+    min-height: 34px;
+}
+
+.filepath {
+    font-family: var(--font-mono);
+    font-size: 0.9em;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.filepathDir {
+    color: var(--text-muted);
+}
+
+.filepathName {
+    color: var(--text-primary);
+    font-weight: 500;
+}
+
+.stats {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+.statAdded {
+    font-family: var(--font-mono);
+    font-size: 0.88em;
+    font-weight: 600;
+    color: #2d7a4f;
+    background: rgba(45, 122, 79, 0.1);
+    padding: 1px 6px;
+    border-radius: 3px;
+}
+
+.statRemoved {
+    font-family: var(--font-mono);
+    font-size: 0.88em;
+    font-weight: 600;
+    color: #a63030;
+    background: rgba(166, 48, 48, 0.1);
+    padding: 1px 6px;
+    border-radius: 3px;
+}
+
+.badge {
+    font-size: 0.78em;
+    font-weight: 600;
+    color: #1a5fa6;
+    background: rgba(26, 95, 166, 0.1);
+    padding: 1px 6px;
+    border-radius: 3px;
+    letter-spacing: 0.02em;
+}
+
+/* ─── Body / scroll area ─────────────────────────────────────────────────── */
+
+.body {
+    overflow-x: auto;
+    overflow-y: auto;
+    max-height: 480px;
+    background: var(--bg-surface);
+}
+
+/* ─── Table ──────────────────────────────────────────────────────────────── */
+
+.table {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+}
+
+/* ─── Line number cells ──────────────────────────────────────────────────── */
+
+.lineNo {
+    width: 42px;
+    min-width: 42px;
+    padding: 0 10px;
+    text-align: right;
+    font-family: var(--font-mono);
+    font-size: 0.88em;
+    color: var(--text-muted);
+    user-select: none;
+    vertical-align: top;
+    line-height: 1.65;
+    white-space: nowrap;
+    border-right: 1px solid var(--border-subtle);
+}
+
+/* ─── Content cell ───────────────────────────────────────────────────────── */
+
+.lineContent {
+    padding: 0 4px 0 0;
+    white-space: pre;
+    vertical-align: top;
+    width: 100%;
+}
+
+.marker {
+    display: inline-block;
+    width: 18px;
+    text-align: center;
+    font-family: var(--font-mono);
+    font-size: 0.9em;
+    user-select: none;
+    flex-shrink: 0;
+}
+
+.code {
+    font-family: var(--font-mono);
+    font-size: 0.9em;
+    background: none;
+    border: none;
+    padding: 0;
+    white-space: pre;
+    line-height: 1.65;
+}
+
+/* ─── Row variants ───────────────────────────────────────────────────────── */
+
+.rowAdded {
+    background: rgba(45, 122, 79, 0.08);
+}
+
+.rowAdded .lineNo {
+    color: #2d7a4f;
+    background: rgba(45, 122, 79, 0.06);
+}
+
+.rowAdded .marker {
+    color: #2d7a4f;
+    font-weight: 600;
+}
+
+.rowAdded .code {
+    color: #1e5c38;
+}
+
+.rowRemoved {
+    background: rgba(166, 48, 48, 0.07);
+}
+
+.rowRemoved .lineNo {
+    color: #a63030;
+    background: rgba(166, 48, 48, 0.06);
+}
+
+.rowRemoved .marker {
+    color: #a63030;
+    font-weight: 600;
+}
+
+.rowRemoved .code {
+    color: #7a2020;
+}
+
+.rowUnchanged {
+    background: transparent;
+}
+
+.rowUnchanged .marker {
+    color: var(--text-muted);
+}
+
+.rowUnchanged .code {
+    color: var(--text-secondary);
+}
+
+/* ─── Collapse row ───────────────────────────────────────────────────────── */
+
+.collapseRow {
+    background: var(--bg-base);
+}
+
+.collapseCell {
+    padding: 3px 4px 3px 18px;
+    font-family: var(--font-mono);
+    font-size: 0.82em;
+    color: var(--text-muted);
+    font-style: italic;
+    border-top: 1px solid var(--border-subtle);
+    border-bottom: 1px solid var(--border-subtle);
+}

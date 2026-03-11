@@ -1,0 +1,390 @@
+/* ─── CSS Variables ──────────────────────────────────────────────────────── */
+:root {
+    /* Backgrounds */
+    --bg-base: #f7f5ef;
+    --bg-surface: #ffffff;
+    --bg-elevated: #f0ede6;
+    --bg-hover: #ebe7de;
+    --bg-active: #e4dfd4;
+
+    /* Borders */
+    --border: #ddd8ce;
+    --border-subtle: #e8e4db;
+
+    /* Text */
+    --text-primary: #1a1915;
+    --text-secondary: #6b6651;
+    --text-muted: #a09880;
+    --text-link: #b85c3a;
+
+    /* Accent — Claude's warm terracotta/orange-brown */
+    --accent: #c96442;
+    --accent-dim: #f5ede8;
+    --accent-glow: rgba(201, 100, 66, 0.12);
+    --accent-hover: #b85539;
+
+    /* Danger */
+    --danger: #c0392b;
+    --danger-dim: rgba(192, 57, 43, 0.08);
+
+    /* Success */
+    --success: #2d7a4f;
+
+    /* Radius */
+    --radius-sm: 6px;
+    --radius-md: 10px;
+    --radius-lg: 18px;
+
+    /* Typography */
+    --font-sans: "Geist", system-ui, -apple-system, sans-serif;
+    --font-mono: "Geist Mono", "Cascadia Code", "JetBrains Mono", monospace;
+
+    /* Layout */
+    --sidebar-width: 260px;
+    --header-height: 52px;
+
+    --transition: 140ms ease;
+}
+
+/* ─── Reset ──────────────────────────────────────────────────────────────── */
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+html,
+body,
+#root {
+    height: 100%;
+    overflow: hidden;
+}
+
+body {
+    font-family: var(--font-sans);
+    font-size: 15px;
+    line-height: 1.6;
+    color: var(--text-primary);
+    background: var(--bg-base);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+a {
+    color: var(--text-link);
+    text-decoration: none;
+}
+a:hover {
+    text-decoration: underline;
+}
+
+button {
+    font-family: inherit;
+    cursor: pointer;
+    border: none;
+    background: none;
+}
+
+input,
+textarea {
+    font-family: inherit;
+    font-size: inherit;
+    color: inherit;
+    background: none;
+    border: none;
+    outline: none;
+}
+
+/* ─── Scrollbar ──────────────────────────────────────────────────────────── */
+::-webkit-scrollbar {
+    width: 5px;
+    height: 5px;
+}
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 99px;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: var(--bg-active);
+}
+
+/* ─── Markdown prose ─────────────────────────────────────────────────────── */
+.prose {
+    line-height: 1.75;
+    word-break: break-word;
+    overflow-wrap: break-word;
+    color: var(--text-primary);
+}
+
+.prose p {
+    margin-bottom: 0.75em;
+}
+.prose p:last-child {
+    margin-bottom: 0;
+}
+
+.prose h1,
+.prose h2,
+.prose h3,
+.prose h4,
+.prose h5,
+.prose h6 {
+    font-weight: 600;
+    line-height: 1.35;
+    margin: 1.2em 0 0.5em;
+    color: var(--text-primary);
+}
+.prose h1 {
+    font-size: 1.45em;
+}
+.prose h2 {
+    font-size: 1.25em;
+}
+.prose h3 {
+    font-size: 1.1em;
+}
+
+.prose ul,
+.prose ol {
+    padding-left: 1.5em;
+    margin-bottom: 0.75em;
+}
+.prose li {
+    margin-bottom: 0.25em;
+}
+
+.prose blockquote {
+    border-left: 3px solid var(--accent);
+    padding: 0.3em 0.9em;
+    color: var(--text-secondary);
+    margin: 0.75em 0;
+    background: var(--accent-dim);
+    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+
+.prose hr {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 1.2em 0;
+}
+
+.prose table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 0.75em;
+    font-size: 0.93em;
+}
+.prose th,
+.prose td {
+    padding: 0.4em 0.8em;
+    border: 1px solid var(--border);
+    text-align: left;
+}
+.prose th {
+    background: var(--bg-elevated);
+    font-weight: 600;
+}
+.prose tr:nth-child(even) td {
+    background: var(--bg-base);
+}
+
+.prose a {
+    color: var(--text-link);
+}
+.prose a:hover {
+    text-decoration: underline;
+}
+
+.prose strong {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+.prose em {
+    font-style: italic;
+    color: var(--text-secondary);
+}
+
+/* inline code */
+.prose .inline-code,
+.prose code:not(pre code) {
+    font-family: var(--font-mono);
+    font-size: 0.875em;
+    background: #ede9e0;
+    border: 1px solid #d8d3c8;
+    padding: 0.15em 0.42em;
+    border-radius: 4px;
+    color: #3d3929;
+    white-space: nowrap;
+}
+
+/* ─── Claude-style code block ────────────────────────────────────────────── */
+
+.prose .code-block {
+    margin: 0.9em 0;
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    border: 1px solid #d8d3c8;
+    background: #f5f2ec;
+    font-size: 0.875em;
+}
+
+/* Header bar: language label + copy button */
+.prose .code-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 7px 14px;
+    background: #ede9e0;
+    border-bottom: 1px solid #d8d3c8;
+    min-height: 36px;
+    gap: 8px;
+}
+
+.prose .code-lang {
+    font-family: var(--font-mono);
+    font-size: 0.82em;
+    color: #7a7465;
+    letter-spacing: 0.03em;
+    text-transform: lowercase;
+}
+
+/* Copy button */
+.prose .code-copy-btn {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 9px;
+    border-radius: 5px;
+    border: 1px solid #ccc8be;
+    background: transparent;
+    color: #7a7465;
+    font-family: var(--font-sans);
+    font-size: 0.8em;
+    cursor: pointer;
+    transition:
+        background 120ms ease,
+        color 120ms ease,
+        border-color 120ms ease;
+    white-space: nowrap;
+    margin-left: auto;
+    flex-shrink: 0;
+}
+
+.prose .code-copy-btn:hover {
+    background: #e4dfd4;
+    color: #3d3929;
+    border-color: #b0a99a;
+}
+
+.prose .code-copy-btn.copied {
+    color: #2d7a4f;
+    border-color: #a3d4b8;
+    background: rgba(45, 122, 79, 0.08);
+}
+
+/* Code area */
+.prose .code-pre {
+    margin: 0;
+    padding: 14px 16px;
+    overflow-x: auto;
+    background: #f5f2ec;
+    line-height: 1.65;
+}
+
+.prose .code-pre code {
+    font-family: var(--font-mono);
+    font-size: inherit;
+    background: none;
+    border: none;
+    padding: 0;
+    color: #2e2b26;
+    white-space: pre;
+}
+
+/* ─── Highlight.js token colors (Claude-style warm light) ───────────────── */
+
+.hljs-comment,
+.hljs-quote {
+    color: #9a9182;
+    font-style: italic;
+}
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-built_in,
+.hljs-name,
+.hljs-tag {
+    color: #9b3b8a;
+}
+.hljs-string,
+.hljs-title,
+.hljs-section,
+.hljs-attribute,
+.hljs-literal,
+.hljs-template-tag,
+.hljs-template-variable,
+.hljs-type {
+    color: #2d7a4f;
+}
+.hljs-number,
+.hljs-regexp,
+.hljs-symbol,
+.hljs-variable {
+    color: #b85c1a;
+}
+.hljs-function,
+.hljs-title.function_,
+.hljs-selector-id,
+.hljs-selector-class {
+    color: #1a5fa6;
+}
+.hljs-meta,
+.hljs-meta .hljs-string {
+    color: #7a5c1e;
+}
+.hljs-operator,
+.hljs-punctuation {
+    color: #5a5349;
+}
+.hljs-params {
+    color: #3d3929;
+}
+.hljs-attr,
+.hljs-property {
+    color: #1a5fa6;
+}
+.hljs-class .hljs-title,
+.hljs-title.class_ {
+    color: #a63030;
+}
+.hljs-emphasis {
+    font-style: italic;
+}
+.hljs-strong {
+    font-weight: bold;
+}
+.hljs-addition {
+    color: #2d7a4f;
+    background: rgba(45, 122, 79, 0.1);
+}
+.hljs-deletion {
+    color: #a63030;
+    background: rgba(166, 48, 48, 0.1);
+}
+
+/* ─── Utility ────────────────────────────────────────────────────────────── */
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border-width: 0;
+}

@@ -1,0 +1,159 @@
+/* ─── Container ──────────────────────────────────────────────────────────── */
+
+.container {
+    border: 1px solid #2a2a2a;
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    font-size: 0.82em;
+    background: #1a1a1a;
+}
+
+/* ─── Header / prompt bar ────────────────────────────────────────────────── */
+
+.header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 7px 14px;
+    background: #242424;
+    border-bottom: 1px solid #2e2e2e;
+    min-height: 34px;
+}
+
+/* macOS-style traffic lights */
+.dots {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    flex-shrink: 0;
+}
+
+.dots span {
+    display: block;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #3a3a3a;
+}
+
+.dots span:nth-child(1) { background: #ff5f57; }
+.dots span:nth-child(2) { background: #febc2e; }
+.dots span:nth-child(3) { background: #28c840; }
+
+/* Prompt */
+.prompt {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    overflow: hidden;
+}
+
+.promptSigil {
+    font-family: var(--font-mono);
+    font-size: 0.95em;
+    color: #28c840;
+    font-weight: 600;
+    flex-shrink: 0;
+}
+
+.promptCmd {
+    font-family: var(--font-mono);
+    font-size: 0.9em;
+    color: #e0e0e0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Exit code badge */
+.exitOk {
+    flex-shrink: 0;
+    font-family: var(--font-mono);
+    font-size: 0.78em;
+    font-weight: 600;
+    color: #28c840;
+    background: rgba(40, 200, 64, 0.12);
+    border: 1px solid rgba(40, 200, 64, 0.25);
+    padding: 1px 7px;
+    border-radius: 3px;
+}
+
+.exitFail {
+    flex-shrink: 0;
+    font-family: var(--font-mono);
+    font-size: 0.78em;
+    font-weight: 600;
+    color: #ff5f57;
+    background: rgba(255, 95, 87, 0.12);
+    border: 1px solid rgba(255, 95, 87, 0.25);
+    padding: 1px 7px;
+    border-radius: 3px;
+}
+
+/* ─── Output body ────────────────────────────────────────────────────────── */
+
+.body {
+    padding: 10px 14px;
+    overflow-x: auto;
+    overflow-y: auto;
+    max-height: 400px;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+}
+
+.empty {
+    font-family: var(--font-mono);
+    font-size: 0.88em;
+    color: #555;
+    font-style: italic;
+}
+
+/* stdout */
+.stdout {
+    margin: 0;
+    font-family: var(--font-mono);
+    font-size: 0.9em;
+    line-height: 1.6;
+    color: #d4d4d4;
+    white-space: pre-wrap;
+    word-break: break-all;
+    overflow-wrap: break-word;
+    background: none;
+    border: none;
+    padding: 0;
+}
+
+/* stderr section */
+.divider {
+    height: 1px;
+    background: #2e2e2e;
+    margin: 8px 0 6px;
+}
+
+.stderrHeader {
+    font-family: var(--font-mono);
+    font-size: 0.75em;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: #ff5f57;
+    margin-bottom: 4px;
+    opacity: 0.7;
+}
+
+.stderr {
+    margin: 0;
+    font-family: var(--font-mono);
+    font-size: 0.9em;
+    line-height: 1.6;
+    color: #ff8a84;
+    white-space: pre-wrap;
+    word-break: break-all;
+    overflow-wrap: break-word;
+    background: none;
+    border: none;
+    padding: 0;
+}
