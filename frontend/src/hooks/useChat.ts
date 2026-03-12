@@ -114,6 +114,26 @@ export function useChat(
     return key;
   }
 
+  function appendSpawnOutput(chunk: string): boolean {
+    let updated = false;
+    setBubbles((prev) => {
+      for (let i = prev.length - 1; i >= 0; i--) {
+        const b = prev[i];
+        if (b.kind === "tool" && b.name === "spawn" && b.pending) {
+          updated = true;
+          const next = [...prev];
+          next[i] = {
+            ...b,
+            spawnOutput: (b.spawnOutput ?? "") + chunk,
+          };
+          return next;
+        }
+      }
+      return prev;
+    });
+    return updated;
+  }
+
   // ── Public API ─────────────────────────────────────────────────────────────
 
   const setHistory = useCallback((msgs: Message[]) => {
@@ -152,6 +172,7 @@ export function useChat(
             argsRaw,
             result,
             pending: result === null,
+            spawnOutput: undefined,
           };
           history.push(toolBubble);
         }
@@ -291,6 +312,9 @@ export function useChat(
           ),
         );
       } else if (event.type === "token") {
+        if (event.source === "spawn" && appendSpawnOutput(event.content)) {
+          return false;
+        }
         const key = ensureActiveText();
         setBubbles((prev) =>
           prev.map((b) =>
@@ -300,6 +324,7 @@ export function useChat(
           ),
         );
       } else if (event.type === "tool_call") {
+        if (event.source === "spawn") return false;
         setBubbles((prev) => {
           const exists = prev.some(
             (b) => b.key === `tool-${event.id}` && b.kind === "tool",
@@ -329,14 +354,28 @@ export function useChat(
             argsRaw: event.delta,
             result: null,
             pending: true,
+            spawnOutput: event.name === "spawn" ? "" : undefined,
           };
           return [...prev, toolBubble];
         });
       } else if (event.type === "tool_result") {
+        if (event.source === "spawn") return false;
         setBubbles((prev) =>
           prev.map((b) =>
             b.key === `tool-${event.id}` && b.kind === "tool"
-              ? { ...b, result: event.result, pending: false }
+              ? {
+                  ...b,
+                  result: event.result,
+                  pending: false,
+                  spawnOutput:
+                    b.name === "spawn" &&
+                    (!b.spawnOutput || b.spawnOutput.length === 0) &&
+                    event.result &&
+                    typeof event.result === "object" &&
+                    "result" in (event.result as Record<string, unknown>)
+                      ? String((event.result as Record<string, unknown>).result ?? "")
+                      : b.spawnOutput,
+                }
               : b,
           ),
         );

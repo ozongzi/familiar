@@ -61,10 +61,10 @@ export interface Message {
 // ─── WebSocket events ─────────────────────────────────────────────────────
 
 export type WsServerEvent =
-  | { type: "token"; content: string }
+  | { type: "token"; content: string; source?: "spawn" }
   | { type: "reasoning_token"; content: string }
-  | { type: "tool_call"; id: string; name: string; delta: string }
-  | { type: "tool_result"; id: string; name: string; result: unknown }
+  | { type: "tool_call"; id: string; name: string; delta: string; source?: "spawn" }
+  | { type: "tool_result"; id: string; name: string; result: unknown; source?: "spawn" }
   | { type: "user_interrupt"; content: string }
   | { type: "aborted" }
   | { type: "done" }
@@ -102,6 +102,8 @@ export interface ToolBubble {
   result: unknown | null;
   /** Still waiting for the tool_result event */
   pending: boolean;
+  /** Live token stream emitted by spawn 子 Agent。 */
+  spawnOutput?: string;
 }
 
 /** A file the user uploaded — rendered as a right-aligned user bubble. */

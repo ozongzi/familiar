@@ -257,7 +257,7 @@ function ToolCallBubble({
   }, [bubble.argsRaw]);
   const result = bubble.result as Record<string, unknown> | null;
 
-  // Detect present / present_file result
+  // Detect present result
   const fileResult =
     bubble.result &&
     typeof bubble.result === "object" &&
@@ -270,15 +270,14 @@ function ToolCallBubble({
         })
       : null;
 
-  // Terminal tools: bash / execute (legacy), run_ts, run_py
+  // Terminal tools: bash, run_ts, run_py
   const isTerminal =
     bubble.name === "bash" ||
-    bubble.name === "execute" ||
     bubble.name === "run_ts" ||
     bubble.name === "run_py";
 
-  // Edit tools: edit / str_replace (legacy) / write
-  const isReplaceTool = bubble.name === "edit" || bubble.name === "str_replace";
+  // Edit tools: edit / write
+  const isReplaceTool = bubble.name === "edit";
   const isEditTool = isReplaceTool || bubble.name === "write";
 
   // Diff view only shown when edit completed successfully with parsed args
@@ -293,7 +292,8 @@ function ToolCallBubble({
         args?.path !== undefined &&
         args?.content !== undefined));
 
-  const isInline = isTerminal || isEditTool;
+  const isSpawn = bubble.name === "spawn";
+  const isInline = isTerminal || isEditTool || isSpawn;
 
   // Streaming args display (generic view only)
   const argsStr = args ? JSON.stringify(args, null, 2) : bubble.argsRaw || "";
@@ -302,6 +302,12 @@ function ToolCallBubble({
     !isInline && bubble.result && !fileResult
       ? JSON.stringify(bubble.result, null, 2)
       : null;
+
+  const spawnOutput = bubble.name === "spawn" ? (bubble.spawnOutput ?? "") : "";
+  const spawnResultText =
+    bubble.name === "spawn" && result && typeof result.result === "string"
+      ? String(result.result)
+      : "";
 
   // ── Extract script content from streaming argsRaw (run_py / run_ts) ───────
   const streamingScript = useMemo(() => {
@@ -315,9 +321,9 @@ function ToolCallBubble({
     return args?.script ? String(args.script) : null;
   }, [bubble.pending, bubble.name, bubble.argsRaw, args]);
 
-  // ── Extract command content from streaming argsRaw (execute) ──────────────
+  // ── Extract command content from streaming argsRaw (bash) ─────────────────
   const streamingCommand = useMemo(() => {
-    if (bubble.name !== "bash" && bubble.name !== "execute") return null;
+    if (bubble.name !== "bash") return null;
     if (bubble.pending) {
       if (!bubble.argsRaw) return null;
       return extractArgsField(bubble.argsRaw, "command");
@@ -325,7 +331,7 @@ function ToolCallBubble({
     return args?.command ? String(args.command) : null;
   }, [bubble.pending, bubble.name, bubble.argsRaw, args]);
 
-  // ── Extract fields for edit tools (str_replace / write) ───────────────────
+  // ── Extract fields for edit tools (edit / write) ───────────────────────────
   const streamingEditPath = useMemo(() => {
     if (!isEditTool) return null;
     if (!bubble.pending) return args?.path ? String(args.path) : null;
@@ -333,7 +339,7 @@ function ToolCallBubble({
     return extractArgsField(bubble.argsRaw, "path");
   }, [isEditTool, bubble.pending, bubble.argsRaw, args]);
 
-  // old_str (edit / str_replace) — used for diff preview as soon as it arrives
+  // old_str (edit) — used for diff preview as soon as it arrives
   const streamingOldStr = useMemo(() => {
     if (!isReplaceTool) return null;
     if (!bubble.pending) return args?.old_str ? String(args.old_str) : null;
@@ -362,7 +368,7 @@ function ToolCallBubble({
   const toolLabel =
     bubble.description ||
     (() => {
-      if (bubble.name === "bash" || bubble.name === "execute") {
+      if (bubble.name === "bash") {
         return streamingCommand
           ? streamingCommand.trim().slice(0, 60)
           : bubble.name;
@@ -375,8 +381,8 @@ function ToolCallBubble({
       return bubble.name;
     })();
 
-  // ── Early return: ask_user → question card ───────────────────────────────
-  if (bubble.name === "ask_user" || bubble.name === "ask") {
+  // ── Early return: ask → question card ────────────────────────────────────
+  if (bubble.name === "ask") {
     const answeredText =
       !bubble.pending && bubble.result
         ? ((bubble.result as Record<string, unknown>)["answer"] as
@@ -395,8 +401,8 @@ function ToolCallBubble({
     );
   }
 
-  // ── Early return: present / present_file → file card ─────────────────────
-  if ((bubble.name === "present" || bubble.name === "present_file") && fileResult) {
+  // ── Early return: present → file card ─────────────────────────────────────
+  if (bubble.name === "present" && fileResult) {
     return <FileCard file={fileResult} pending={bubble.pending} />;
   }
 
@@ -432,7 +438,7 @@ function ToolCallBubble({
 
           {expanded && (
             <>
-              {/* edit/str_replace: 流式期间 — old_str 到了就渲染 diff（new_str 未到时显示纯删除行） */}
+              {/* edit: 流式期间 — old_str 到了就渲染 diff（new_str 未到时显示纯删除行） */}
               {isEditTool &&
                 bubble.pending &&
                 isReplaceTool &&
@@ -460,17 +466,14 @@ function ToolCallBubble({
                 )}
 
               {/* edit tools: 完成后显示最终 DiffView（成功且 args 解析完整） */}
-              {isEditTool &&
-                !bubble.pending &&
-                isDiff &&
-                isReplaceTool && (
-                  <DiffView
-                    mode="str_replace"
-                    path={String(args!.path)}
-                    oldStr={String(args!.old_str)}
-                    newStr={String(args!.new_str)}
-                  />
-                )}
+              {isEditTool && !bubble.pending && isDiff && isReplaceTool && (
+                <DiffView
+                  mode="str_replace"
+                  path={String(args!.path)}
+                  oldStr={String(args!.old_str)}
+                  newStr={String(args!.new_str)}
+                />
+              )}
               {isEditTool &&
                 !bubble.pending &&
                 isDiff &&
@@ -495,6 +498,16 @@ function ToolCallBubble({
                 </div>
               )}
 
+              {/* spawn: 子 Agent 流式输出 */}
+              {isSpawn &&
+                (spawnOutput.length > 0 || spawnResultText.length > 0) && (
+                  <div className={styles.toolSection}>
+                    <p className={styles.toolSectionLabel}>子 Agent 输出</p>
+                    <MarkdownRenderer
+                      content={`${spawnOutput || spawnResultText}${bubble.pending ? "\n\n█" : ""}`}
+                    />
+                  </div>
+                )}
               {/* run_py / run_ts: syntax-highlighted script preview (streaming or done) */}
               {isTerminal && streamingScript !== null && (
                 <div className={styles.scriptPreview}>
@@ -504,9 +517,8 @@ function ToolCallBubble({
                 </div>
               )}
 
-              {/* bash/execute: sh-highlighted command preview (streaming and done) */}
-              {(bubble.name === "bash" || bubble.name === "execute") &&
-                streamingCommand !== null && (
+              {/* bash: sh-highlighted command preview (streaming and done) */}
+              {bubble.name === "bash" && streamingCommand !== null && (
                 <div className={styles.scriptPreview}>
                   <MarkdownRenderer
                     content={`\`\`\`sh\n${streamingCommand}${argsStreaming ? "█" : ""}\n\`\`\``}
@@ -514,9 +526,9 @@ function ToolCallBubble({
                 </div>
               )}
 
-              {/* bash/execute: fallback raw args while streaming if command field not yet present */}
+              {/* bash: fallback raw args while streaming if command field not yet present */}
               {bubble.pending &&
-                (bubble.name === "bash" || bubble.name === "execute") &&
+                bubble.name === "bash" &&
                 streamingCommand === null &&
                 argsStr && (
                   <div className={styles.toolSection}>
