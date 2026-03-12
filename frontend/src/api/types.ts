@@ -53,6 +53,7 @@ export interface Message {
   content: string | null;
   tool_calls: string | null;
   tool_call_id: string | null;
+  reasoning: string | null;
   is_summary: boolean;
   created_at: number;
 }

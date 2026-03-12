@@ -250,3 +250,14 @@
         padding: 14px 20px 18px;
     }
 }
+
+/* ─── Upload error ────────────────────────────────────────────────────────── */
+.uploadError {
+    margin: 4px 0 0;
+    padding: 6px 10px;
+    border-radius: 6px;
+    font-size: 0.8rem;
+    color: #e05252;
+    background: rgba(224, 82, 82, 0.08);
+    border: 1px solid rgba(224, 82, 82, 0.2);
+}

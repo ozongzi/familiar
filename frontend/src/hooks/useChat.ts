@@ -84,18 +84,96 @@ export function useChat(conversationId: string | null, token: string | null) {
   // ── Public API ─────────────────────────────────────────────────────────────
 
   const setHistory = useCallback(
-    (msgs: Array<{ role: string; content: string | null }>) => {
-      const history: TextBubble[] = msgs
-        .filter((m) => m.role === "user" || m.role === "assistant")
-        .filter((m) => m.content && m.content.trim().length > 0)
-        .map((m) => ({
-          kind: "text" as const,
-          key: uid(),
-          role: m.role as "user" | "assistant",
-          content: m.content!,
-          reasoning: "",
-          streaming: false,
-        }));
+    (
+      msgs: Array<{
+        role: string;
+        content: string | null;
+        tool_calls?: string | null;
+        tool_call_id?: string | null;
+        name?: string | null;
+        reasoning?: string | null;
+      }>,
+    ) => {
+      // Build a map of tool_call_id → result content for role==="tool" rows,
+      // so we can attach results when we encounter the matching assistant tool_calls.
+      const toolResultMap = new Map<string, unknown>();
+      for (const m of msgs) {
+        if (m.role === "tool" && m.tool_call_id && m.content) {
+          let parsed: unknown = m.content;
+          try {
+            parsed = JSON.parse(m.content);
+          } catch {
+            // leave as string
+          }
+          toolResultMap.set(m.tool_call_id, parsed);
+        }
+      }
+
+      const history: ChatBubble[] = [];
+
+      for (const m of msgs) {
+        // Skip system / tool-result rows (tool results are merged into ToolBubbles below)
+        if (m.role === "system" || m.role === "tool") continue;
+
+        if (m.role === "assistant" && m.tool_calls) {
+          // Assistant message that issued one or more tool calls.
+          // Parse the standard OpenAI tool_calls JSON array.
+          type RawToolCall = {
+            id: string;
+            type?: string;
+            function?: { name: string; arguments: string };
+          };
+          let calls: RawToolCall[] = [];
+          try {
+            calls = JSON.parse(m.tool_calls) as RawToolCall[];
+          } catch {
+            // malformed — skip
+          }
+          for (const tc of calls) {
+            if (!tc.id || !tc.function) continue;
+            const result = toolResultMap.get(tc.id) ?? null;
+            const toolBubble: ToolBubble = {
+              kind: "tool",
+              key: `tool-${tc.id}`,
+              role: "tool",
+              name: tc.function.name,
+              argsRaw: tc.function.arguments ?? "",
+              result,
+              pending: result === null,
+            };
+            history.push(toolBubble);
+          }
+          // If there's also text content in this assistant turn, add a text bubble after.
+          if (m.content && m.content.trim().length > 0) {
+            history.push({
+              kind: "text",
+              key: uid(),
+              role: "assistant",
+              content: m.content,
+              reasoning: m.reasoning ?? "",
+              streaming: false,
+            });
+          }
+          continue;
+        }
+
+        // Regular user / assistant text message.
+        if (
+          (m.role === "user" || m.role === "assistant") &&
+          m.content &&
+          m.content.trim().length > 0
+        ) {
+          history.push({
+            kind: "text",
+            key: uid(),
+            role: m.role as "user" | "assistant",
+            content: m.content,
+            reasoning: m.reasoning ?? "",
+            streaming: false,
+          });
+        }
+      }
+
       setBubbles(history);
       historyReadyRef.current = true;
     },

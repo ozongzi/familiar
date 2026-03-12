@@ -14,6 +14,7 @@ interface Props {
   streaming?: boolean;
   disabled?: boolean;
   placeholder?: string;
+  token?: string | null;
 }
 
 export function ChatInput({
@@ -23,11 +24,15 @@ export function ChatInput({
   streaming = false,
   disabled = false,
   placeholder,
+  token,
 }: Props) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [hasText, setHasText] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+
+  const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50 MB
 
   // Auto-resize textarea to fit content
   const resize = useCallback(() => {
@@ -93,37 +98,46 @@ export function ChatInput({
     if (!fileInput || !fileInput.files || fileInput.files.length === 0) return;
 
     const file = fileInput.files[0];
+
+    // Client-side size check before even attempting the upload.
+    if (file.size > MAX_FILE_SIZE) {
+      setUploadError(`文件过大（最大 50 MB），当前：${(file.size / 1024 / 1024).toFixed(1)} MB`);
+      fileInput.value = "";
+      return;
+    }
+
     const formData = new FormData();
-    formData.append('file', file, file.name);
+    formData.append("file", file, file.name);
 
     setIsUploading(true);
+    setUploadError(null);
 
     try {
-      const token = localStorage.getItem('familiar_token');
-      const res = await fetch('/api/files', {
-        method: 'POST',
+      const authToken = token ?? localStorage.getItem("familiar_token");
+      const res = await fetch("/api/files", {
+        method: "POST",
         headers: {
-          'Authorization': `Bearer ${token}`,
+          Authorization: `Bearer ${authToken}`,
         },
         body: formData,
       });
 
       if (!res.ok) {
-        throw new Error(`Upload failed: ${res.status}`);
+        const err = await res.json().catch(() => ({ error: "上传失败" }));
+        throw new Error(err?.error ?? `上传失败 (${res.status})`);
       }
 
       const json = await res.json();
-      // Upload successful - the file info will be in the chat history
-      // Clear the file input
-      fileInput.value = '';
-      console.log('Uploaded:', json);
+      console.log("Uploaded:", json);
+      // Success — error state already cleared above.
     } catch (err) {
-      console.error('Upload error:', err);
-      alert('文件上传失败，请重试');
+      setUploadError(err instanceof Error ? err.message : "上传失败，请重试");
     } finally {
+      // Always reset the input so re-selecting the same file triggers onChange.
+      fileInput.value = "";
       setIsUploading(false);
     }
-  }, []);
+  }, [token, MAX_FILE_SIZE]);
 
   // Derive what the action button does right now
   const isAbortMode = streaming && !hasText;
@@ -203,6 +217,11 @@ export function ChatInput({
 
       {streaming && (
         <p className={styles.hint}>正在生成回复… 可追加消息或按 Esc 打断</p>
+      )}
+      {uploadError && (
+        <p className={styles.uploadError} role="alert">
+          ⚠️ {uploadError}
+        </p>
       )}
     </div>
   );

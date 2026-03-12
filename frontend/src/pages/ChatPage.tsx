@@ -279,6 +279,7 @@ export function ChatPage() {
           onAbort={handleAbort}
           streaming={isStreaming}
           disabled={!activeId}
+          token={token}
           placeholder={
             !activeId
               ? "请先选择或新建一个对话"
