@@ -194,6 +194,13 @@ export function ChatPage() {
     [addUploadBubble],
   );
 
+  // Called by ChatInput when it needs a conversation id but we're in draft mode.
+  // Creates a real conversation so the upload can be linked to it.
+  const handleRequestConversationId = useCallback(async (): Promise<string | null> => {
+    if (activeId && activeId !== DRAFT_ID) return activeId;
+    return await createDraftConversation();
+  }, [activeId, createDraftConversation]);
+
   // ── Derive UI state ────────────────────────────────────────────────────
 
   const isStreaming = status === "connecting" || status === "streaming";
@@ -313,6 +320,7 @@ export function ChatPage() {
           disabled={false}
           token={token}
           conversationId={isDraft ? null : activeId}
+          requestConversationId={handleRequestConversationId}
           onUpload={handleUpload}
           placeholder="发消息… (Enter 发送，Shift+Enter 换行)"
         />

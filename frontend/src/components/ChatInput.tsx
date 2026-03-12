@@ -23,6 +23,12 @@ interface Props {
   token?: string | null;
   /** Current conversation id — if set, the upload is linked to the conversation. */
   conversationId?: string | null;
+  /**
+   * Called when an upload needs a conversation id but none exists yet
+   * (draft mode). Should create a new conversation and return its id,
+   * or null on failure.
+   */
+  requestConversationId?: () => Promise<string | null>;
   /** Called after a successful upload with the saved file info. */
   onUpload?: (result: UploadResult) => void;
 }
@@ -36,6 +42,7 @@ export function ChatInput({
   placeholder,
   token,
   conversationId,
+  requestConversationId,
   onUpload,
 }: Props) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -118,12 +125,17 @@ export function ChatInput({
       return;
     }
 
+    // Resolve the conversation id: use the existing one, or create a new
+    // conversation on-the-fly so the upload can always be linked to a conversation.
+    let convId = conversationId ?? null;
+    if (!convId && requestConversationId) {
+      convId = await requestConversationId();
+    }
+
     const formData = new FormData();
     formData.append("file", file, file.name);
-    // Link to the current conversation so the backend can persist a user
-    // message with the file path (allowing the model to reference it).
-    if (conversationId) {
-      formData.append("conversation_id", conversationId);
+    if (convId) {
+      formData.append("conversation_id", convId);
     }
 
     setIsUploading(true);
@@ -158,7 +170,7 @@ export function ChatInput({
       fileInput.value = "";
       setIsUploading(false);
     }
-  }, [token, conversationId, onUpload, MAX_FILE_SIZE]);
+  }, [token, conversationId, requestConversationId, onUpload, MAX_FILE_SIZE]);
 
   // Derive what the action button does right now
   const isAbortMode = streaming && !hasText;
