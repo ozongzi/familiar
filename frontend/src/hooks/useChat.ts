@@ -3,6 +3,7 @@ import type {
   ChatBubble,
   TextBubble,
   ToolBubble,
+  UploadBubble,
   WsServerEvent,
   Message,
 } from "../api/types";
@@ -172,6 +173,32 @@ export function useChat(
         m.content &&
         m.content.trim().length > 0
       ) {
+        // Detect special file-upload user messages saved by the upload endpoint.
+        if (m.role === "user") {
+          try {
+            const parsed = JSON.parse(m.content) as Record<string, unknown>;
+            if (
+              parsed.__type === "file_upload" &&
+              typeof parsed.filename === "string" &&
+              typeof parsed.path === "string" &&
+              typeof parsed.size === "number"
+            ) {
+              const uploadBubble: UploadBubble = {
+                kind: "upload",
+                key: uid(),
+                role: "user",
+                filename: parsed.filename,
+                path: parsed.path,
+                size: parsed.size,
+              };
+              history.push(uploadBubble);
+              continue;
+            }
+          } catch {
+            /* not JSON — fall through to normal text bubble */
+          }
+        }
+
         history.push({
           kind: "text",
           key: uid(),
@@ -195,6 +222,22 @@ export function useChat(
     attachedConvRef.current = null;
     historyReadyRef.current = false;
   }, []);
+
+  /** Add a file-upload bubble to the chat (called after a successful upload). */
+  const addUploadBubble = useCallback(
+    (filename: string, path: string, size: number) => {
+      const bubble: UploadBubble = {
+        kind: "upload",
+        key: uid(),
+        role: "user",
+        filename,
+        path,
+        size,
+      };
+      setBubbles((prev) => [...prev, bubble]);
+    },
+    [],
+  );
 
   // ── Interrupt / abort ──────────────────────────────────────────────────────
 
@@ -495,5 +538,6 @@ export function useChat(
     reattach,
     setHistory,
     clearBubbles,
+    addUploadBubble,
   };
 }

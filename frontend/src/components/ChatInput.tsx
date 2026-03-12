@@ -7,6 +7,12 @@ import {
 } from "react";
 import styles from "./ChatInput.module.css";
 
+interface UploadResult {
+  filename: string;
+  path: string;
+  size: number;
+}
+
 interface Props {
   onSend: (text: string) => void;
   onInterrupt?: (text: string) => void;
@@ -15,6 +21,10 @@ interface Props {
   disabled?: boolean;
   placeholder?: string;
   token?: string | null;
+  /** Current conversation id — if set, the upload is linked to the conversation. */
+  conversationId?: string | null;
+  /** Called after a successful upload with the saved file info. */
+  onUpload?: (result: UploadResult) => void;
 }
 
 export function ChatInput({
@@ -25,6 +35,8 @@ export function ChatInput({
   disabled = false,
   placeholder,
   token,
+  conversationId,
+  onUpload,
 }: Props) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -108,6 +120,11 @@ export function ChatInput({
 
     const formData = new FormData();
     formData.append("file", file, file.name);
+    // Link to the current conversation so the backend can persist a user
+    // message with the file path (allowing the model to reference it).
+    if (conversationId) {
+      formData.append("conversation_id", conversationId);
+    }
 
     setIsUploading(true);
     setUploadError(null);
@@ -127,9 +144,13 @@ export function ChatInput({
         throw new Error(err?.error ?? `上传失败 (${res.status})`);
       }
 
-      const json = await res.json();
-      console.log("Uploaded:", json);
-      // Success — error state already cleared above.
+      const json = (await res.json()) as {
+        filename: string;
+        path: string;
+        size: number;
+      };
+      // Notify parent to display the uploaded file bubble.
+      onUpload?.({ filename: json.filename, path: json.path, size: json.size });
     } catch (err) {
       setUploadError(err instanceof Error ? err.message : "上传失败，请重试");
     } finally {
@@ -137,7 +158,7 @@ export function ChatInput({
       fileInput.value = "";
       setIsUploading(false);
     }
-  }, [token, MAX_FILE_SIZE]);
+  }, [token, conversationId, onUpload, MAX_FILE_SIZE]);
 
   // Derive what the action button does right now
   const isAbortMode = streaming && !hasText;

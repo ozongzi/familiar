@@ -104,7 +104,17 @@ export interface ToolBubble {
   pending: boolean;
 }
 
-export type ChatBubble = TextBubble | ToolBubble;
+/** A file the user uploaded — rendered as a right-aligned user bubble. */
+export interface UploadBubble {
+  kind: "upload";
+  key: string;
+  role: "user";
+  filename: string;
+  path: string;
+  size: number;
+}
+
+export type ChatBubble = TextBubble | ToolBubble | UploadBubble;
 
 // ─── API error shape ──────────────────────────────────────────────────────
 

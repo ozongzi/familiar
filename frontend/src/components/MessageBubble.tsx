@@ -10,7 +10,7 @@ import {
 import { MarkdownRenderer } from "./MarkdownRenderer";
 import { DiffView } from "./DiffView";
 import { TerminalView } from "./TerminalView";
-import type { ChatBubble } from "../api/types";
+import type { ChatBubble, UploadBubble } from "../api/types";
 import styles from "./MessageBubble.module.css";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -26,6 +26,9 @@ export const MessageBubble = memo(function MessageBubble({
 }: Props) {
   if (bubble.kind === "tool") {
     return <ToolCallBubble bubble={bubble} onAnswer={onAnswer} />;
+  }
+  if (bubble.kind === "upload") {
+    return <UploadChatBubble bubble={bubble} />;
   }
   return <TextChatBubble bubble={bubble} />;
 });
@@ -124,6 +127,46 @@ function TextChatBubble({
             )}
           </>
         )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Upload bubble (user-side file card) ──────────────────────────────────────
+
+function UploadChatBubble({ bubble }: { bubble: UploadBubble }) {
+  const token = localStorage.getItem("familiar_token") ?? "";
+
+  const handleDownload = useCallback(() => {
+    const params = new URLSearchParams({ path: bubble.path, token });
+    const a = document.createElement("a");
+    a.href = `/api/files?${params}`;
+    a.download = bubble.filename;
+    a.click();
+  }, [bubble.path, bubble.filename, token]);
+
+  return (
+    <div className={`${styles.row} ${styles.rowUser}`}>
+      <div className={styles.uploadBubble}>
+        <div className={styles.uploadBubbleInner}>
+          <span className={styles.uploadBubbleIcon} aria-hidden="true">
+            <FileIcon />
+          </span>
+          <div className={styles.uploadBubbleMeta}>
+            <span className={styles.uploadBubbleName}>{bubble.filename}</span>
+            <span className={styles.uploadBubbleSize}>
+              {formatBytes(bubble.size)}
+            </span>
+          </div>
+          <button
+            className={styles.uploadBubbleDownload}
+            onClick={handleDownload}
+            aria-label={`下载 ${bubble.filename}`}
+            title="下载"
+          >
+            <DownloadIcon />
+          </button>
+        </div>
       </div>
     </div>
   );

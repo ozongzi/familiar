@@ -72,6 +72,7 @@ export function ChatPage() {
     reattach,
     setHistory,
     clearBubbles,
+    addUploadBubble,
   } = useChat(
     activeId === DRAFT_ID ? null : activeId,
     token,
@@ -185,6 +186,13 @@ export function ChatPage() {
   );
 
   const handleAbort = useCallback(() => { abort(); }, [abort]);
+
+  const handleUpload = useCallback(
+    (result: { filename: string; path: string; size: number }) => {
+      addUploadBubble(result.filename, result.path, result.size);
+    },
+    [addUploadBubble],
+  );
 
   // ── Derive UI state ────────────────────────────────────────────────────
 
@@ -304,6 +312,8 @@ export function ChatPage() {
           streaming={isStreaming}
           disabled={false}
           token={token}
+          conversationId={isDraft ? null : activeId}
+          onUpload={handleUpload}
           placeholder="发消息… (Enter 发送，Shift+Enter 换行)"
         />
       </main>

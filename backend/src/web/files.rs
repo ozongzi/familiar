@@ -387,7 +387,7 @@ pub async fn upload_file(
         size: data.len(),
     };
 
-    // If a conversation_id was provided, validate ownership and persist a Tool message
+    // If a conversation_id was provided, validate ownership and persist a User message
     // describing the uploaded file. Do NOT trigger model generation — only persist the message.
     if let Some(conv_id) = conv_id_opt {
         // Verify that the session token owner owns the conversation.
@@ -405,20 +405,33 @@ pub async fn upload_file(
         .unwrap_or(false);
 
         if owned {
-            // Construct a tool-role message describing the uploaded file.
-            // The content mirrors the present_file result shape the frontend expects.
-            let content_value = json!({
-                "display": "file",
+            // Persist a User-role message so DeepSeek's API is not violated
+            // (Tool messages must follow assistant tool_calls; a spontaneous
+            // Tool message would cause a 400 Bad Request).
+            let content_str = json!({
+                "__type": "file_upload",
                 "filename": unique_name,
                 "path": dest_path.to_string_lossy(),
                 "size": data.len(),
-            });
-            let content_str = content_value.to_string();
+            })
+            .to_string();
 
             use ds_api::raw::request::message::{Message as AgentMessage, Role};
-            let msg = AgentMessage::new(Role::Tool, &content_str);
-            // Persist only — do not call start_generation or send_interrupt.
+            let msg = AgentMessage::new(Role::User, &content_str);
+            // Persist to DB.
             state.persist_message(conv_id, &msg);
+
+            // Also push into the in-memory agent if it is currently idle
+            // (not mid-generation). This ensures the next generation turn
+            // sees the uploaded file without having to rebuild the agent.
+            {
+                let mut map = state.chats.lock().unwrap();
+                if let Some(entry) = map.get_mut(&conv_id) {
+                    if let Some(ref mut agent) = entry.agent {
+                        agent.push_user_message_with_name(&content_str, None);
+                    }
+                }
+            }
         } else {
             tracing::warn!(
                 "upload attempted for conversation not owned by token: {}",
