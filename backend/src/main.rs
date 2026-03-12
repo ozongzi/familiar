@@ -6,7 +6,7 @@ mod spells;
 mod state;
 mod web;
 
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use sqlx::postgres::PgPoolOptions;
 use tracing::info;
@@ -83,6 +83,7 @@ async fn main() {
                 api_key: String::new(),
                 api_base: String::new(),
                 model_name: String::new(),
+                extra_body: HashMap::new(),
                 mcp_tools: dummy_mcp,
                 default_tools: vec![],
                 broadcast_tx: dummy_tx,

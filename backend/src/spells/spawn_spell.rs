@@ -1,14 +1,15 @@
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use ds_api::{AgentEvent, DeepseekAgent, McpTool, tool};
 use futures::StreamExt;
-use serde_json::json;
+use serde_json::{Value, json};
 use tokio::sync::Mutex;
 
 pub struct SpawnSpell {
     pub api_key: String,
     pub api_base: String,
     pub model_name: String,
+    pub extra_body: HashMap<String, Value>,
     /// 可向子 Agent 注入的 MCP 工具快照
     pub mcp_tools: Arc<Mutex<Vec<(String, McpTool)>>>,
     /// 默认安全工具白名单（无副作用：search/glob/outline/read 等）
@@ -26,6 +27,7 @@ impl Tool for SpawnSpell {
     /// description: 本次操作意图（供 UI 渲染，可不填）
     /// goal: 子 Agent 的目标，尽量具体
     /// tools: 允许使用的工具名列表（可选，不填则用默认安全集）
+    /// extra_body: 可选的 JSON 额外字段，会在子 Agent 构建时通过 `extra_field` 注入到 agent 配置中
     async fn spawn(
         &self,
         description: Option<String>,
@@ -49,6 +51,10 @@ impl Tool for SpawnSpell {
              请始终用中文回复。"#
                 .to_string(),
         );
+
+        for (k, v) in &self.extra_body {
+            builder = builder.extra_field(k.clone(), v.clone());
+        }
 
         for tool in &mcp_snapshot {
             if allowed.iter().any(|a| a == &tool.0 || a == "*") {

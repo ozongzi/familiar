@@ -1,5 +1,7 @@
 use config::{Config as Cfg, Environment, File};
 use serde::Deserialize;
+use serde_json::Value;
+use std::collections::HashMap;
 
 /// Top-level configuration for familiar.
 ///
@@ -37,6 +39,10 @@ pub struct ModelConfig {
     pub api_key: String,
     pub api_base: String,
     pub name: String,
+    /// Optional arbitrary body fields to include when sending model requests.
+    /// Loaded from `extra_body` in the config file (table of key = value).
+    #[serde(default)]
+    pub extra_body: HashMap<String, Value>,
 }
 
 /// HTTP server configuration.

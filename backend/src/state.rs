@@ -6,6 +6,7 @@ use ds_api::AgentEvent;
 use ds_api::DeepseekAgent;
 use ds_api::McpTool;
 use ds_api::Tool as _;
+use serde_json::Value;
 use sqlx::PgPool;
 use tokio::sync::broadcast;
 use tokio::sync::mpsc::UnboundedSender;
@@ -129,6 +130,10 @@ pub struct AppState {
     /// Model name to use for every agent turn.
     pub model_name: String,
 
+    /// Extra key/value pairs to inject into each agent via `extra_field`.
+    /// Populated from configuration's `model.extra_body` (if present).
+    pub model_extra_body: HashMap<String, Value>,
+
     /// Optional system prompt applied to every freshly created agent.
     pub system_prompt: Option<String>,
 
@@ -167,6 +172,8 @@ impl AppState {
             deepseek_token: cfg.model.api_key.clone(),
             model_api_base: cfg.model.api_base.clone(),
             model_name: cfg.model.name.clone(),
+            // Extra model request body fields (JSON values) loaded directly from config.
+            model_extra_body: cfg.model.extra_body.clone(),
             system_prompt: cfg.system_prompt(),
             pool,
             db,
@@ -256,6 +263,7 @@ impl AppState {
             api_key: self.deepseek_token.clone(),
             api_base: self.model_api_base.clone(),
             model_name: self.model_name.clone(),
+            extra_body: self.model_extra_body.clone(),
             mcp_tools: Arc::clone(&self.mcp_tools),
             default_tools: vec![
                 "read".to_string(),
@@ -273,6 +281,12 @@ impl AppState {
 
         for (_, tool) in mcp_snapshot {
             builder = builder.add_tool(tool);
+        }
+
+        // Inject any configured extra fields into the agent via `extra_field`.
+        // `model_extra_body` is a HashMap<String, Value> populated at AppState::new.
+        for (k, v) in &self.model_extra_body {
+            builder = builder.extra_field(k.clone(), v.clone());
         }
 
         if let Some(prompt) = &self.system_prompt {
