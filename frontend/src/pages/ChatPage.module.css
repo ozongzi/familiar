@@ -10,7 +10,9 @@
 /* Sidebar container */
 .sidebarContainer {
     flex-shrink: 0;
-    transition: width 0.3s ease, min-width 0.3s ease;
+    transition:
+        width 0.3s ease,
+        min-width 0.3s ease;
 }
 
 .sidebarHidden {
@@ -126,6 +128,33 @@
     min-width: 0;
 }
 
+/* New conversation button — mobile only (mirrors menuBtn on the right) */
+.newConvBtn {
+    display: none;
+    width: 40px;
+    height: 40px;
+    border-radius: var(--radius-md);
+    align-items: center;
+    justify-content: center;
+    color: var(--text-secondary);
+    transition:
+        background var(--transition),
+        color var(--transition);
+    flex-shrink: 0;
+    background: none;
+    border: none;
+    cursor: pointer;
+}
+
+.newConvBtn:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+.newConvBtn:active {
+    transform: scale(0.95);
+}
+
 /* ─── Message scroll area ────────────────────────────────────────────────── */
 
 .messages {
@@ -202,6 +231,10 @@
     }
 
     .menuBtn {
+        display: flex;
+    }
+
+    .newConvBtn {
         display: flex;
     }
 

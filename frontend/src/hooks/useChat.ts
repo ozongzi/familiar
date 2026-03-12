@@ -4,51 +4,88 @@ import type {
   TextBubble,
   ToolBubble,
   WsServerEvent,
+  Message,
 } from "../api/types";
 
 type ChatStatus = "idle" | "connecting" | "streaming" | "error";
 
-// During streaming the user can either inject a message mid-run or abort.
 export type InterruptMode = "interrupt" | "abort";
 
 function uid() {
   return Math.random().toString(36).slice(2);
 }
 
-export function useChat(conversationId: string | null, token: string | null) {
+/**
+ * Try to extract the `description` field value from a partial or complete
+ * JSON args string.  Returns null if the field hasn't arrived yet.
+ *
+ * We assume `description` is always the FIRST parameter in the JSON object,
+ * so it appears very early in the streaming delta.  The regex handles:
+ *   - partial values still being streamed (no closing quote yet)
+ *   - complete values (closing quote present)
+ *   - escaped characters inside the string
+ */
+function extractDescription(raw: string): string | null {
+  // Match: "description"\s*:\s*"<captured>" where the closing quote is optional
+  // (stream may be cut off mid-value).
+  const m = raw.match(/"description"\s*:\s*"((?:[^"\\]|\\.)*)(")?/);
+  if (!m) return null;
+  const value = m[1];
+  if (!value) return null;
+  // Unescape JSON string escapes so the UI shows clean text.
+  try {
+    return JSON.parse(`"${value}"`);
+  } catch {
+    return value;
+  }
+}
+
+interface UseChatOptions {
+  /** Called with the new conversation ID and first user message text right
+   *  after a conversation is created in draft mode.  The caller uses this to
+   *  fire-and-forget an auto-title request without blocking the send path. */
+  onConversationCreated?: (id: string, firstMessage: string) => void;
+}
+
+export function useChat(
+  conversationId: string | null,
+  token: string | null,
+  /** Factory that creates a real conversation and returns its id, used when
+   *  the chat is in draft mode (conversationId === null) and the user sends
+   *  the first message. */
+  createConversation: () => Promise<string | null>,
+  options: UseChatOptions = {},
+) {
   const [bubbles, setBubbles] = useState<ChatBubble[]>([]);
   const [status, setStatus] = useState<ChatStatus>("idle");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
-  // Stable ref so abort/interrupt callbacks never go stale.
   const wsLiveRef = useRef<WebSocket | null>(null);
-  // Track which conversationId we last attached to, to avoid double-attach.
   const attachedConvRef = useRef<string | null>(null);
-  // True while a reattach WS is open but generation has not yet started
-  // (status is still "idle"). Used by send() to detect and close it first.
   const reattachingRef = useRef(false);
-
-  // True once setHistory has been called for the current conversation.
-  // reattach() will not open a WS until this is true.
   const historyReadyRef = useRef(false);
-
-  // Key of the assistant TextBubble that is currently accumulating tokens.
-  // null means no active text segment yet (next token will create one).
   const activeTextKeyRef = useRef<string | null>(null);
-
-  // statusRef so close/error handlers always read the latest value
-  // without stale-closure issues.
   const statusRef = useRef<ChatStatus>("idle");
+  const onConversationCreatedRef = useRef(options.onConversationCreated);
+  useEffect(() => {
+    onConversationCreatedRef.current = options.onConversationCreated;
+  });
 
   function updateStatus(s: ChatStatus) {
     statusRef.current = s;
     setStatus(s);
   }
 
+  // ── Cleanup on unmount ────────────────────────────────────────────────────
+  useEffect(() => {
+    return () => {
+      wsRef.current?.close(1000);
+    };
+  }, []);
+
   // ── Helpers ────────────────────────────────────────────────────────────────
 
-  /** Seal the current active text bubble (stop streaming). */
   function sealActiveText() {
     const key = activeTextKeyRef.current;
     if (!key) return;
@@ -60,11 +97,6 @@ export function useChat(conversationId: string | null, token: string | null) {
     activeTextKeyRef.current = null;
   }
 
-  /**
-   * Ensure there is an active streaming text bubble for the assistant.
-   * If one already exists, returns its key; otherwise creates a new one
-   * and appends it to the list.
-   */
   function ensureActiveText(): string {
     if (activeTextKeyRef.current) return activeTextKeyRef.current;
     const key = uid();
@@ -83,102 +115,77 @@ export function useChat(conversationId: string | null, token: string | null) {
 
   // ── Public API ─────────────────────────────────────────────────────────────
 
-  const setHistory = useCallback(
-    (
-      msgs: Array<{
-        role: string;
-        content: string | null;
-        tool_calls?: string | null;
-        tool_call_id?: string | null;
-        name?: string | null;
-        reasoning?: string | null;
-      }>,
-    ) => {
-      // Build a map of tool_call_id → result content for role==="tool" rows,
-      // so we can attach results when we encounter the matching assistant tool_calls.
-      const toolResultMap = new Map<string, unknown>();
-      for (const m of msgs) {
-        if (m.role === "tool" && m.tool_call_id && m.content) {
-          let parsed: unknown = m.content;
-          try {
-            parsed = JSON.parse(m.content);
-          } catch {
-            // leave as string
-          }
-          toolResultMap.set(m.tool_call_id, parsed);
-        }
+  const setHistory = useCallback((msgs: Message[]) => {
+    const toolResultMap = new Map<string, unknown>();
+    for (const m of msgs) {
+      if (m.role === "tool" && m.tool_call_id && m.content) {
+        let parsed: unknown = m.content;
+        try { parsed = JSON.parse(m.content); } catch { /* leave as string */ }
+        toolResultMap.set(m.tool_call_id, parsed);
       }
+    }
 
-      const history: ChatBubble[] = [];
+    const history: ChatBubble[] = [];
 
-      for (const m of msgs) {
-        // Skip system / tool-result rows (tool results are merged into ToolBubbles below)
-        if (m.role === "system" || m.role === "tool") continue;
+    for (const m of msgs) {
+      if (m.role === "system" || m.role === "tool") continue;
 
-        if (m.role === "assistant" && m.tool_calls) {
-          // Assistant message that issued one or more tool calls.
-          // Parse the standard OpenAI tool_calls JSON array.
-          type RawToolCall = {
-            id: string;
-            type?: string;
-            function?: { name: string; arguments: string };
+      if (m.role === "assistant" && m.tool_calls) {
+        type RawToolCall = {
+          id: string;
+          type?: string;
+          function?: { name: string; arguments: string };
+        };
+        let calls: RawToolCall[] = [];
+        try { calls = JSON.parse(m.tool_calls) as RawToolCall[]; } catch { /* skip */ }
+        for (const tc of calls) {
+          if (!tc.id || !tc.function) continue;
+          const result = toolResultMap.get(tc.id) ?? null;
+          const argsRaw = tc.function.arguments ?? "";
+          const toolBubble: ToolBubble = {
+            kind: "tool",
+            key: `tool-${tc.id}`,
+            role: "tool",
+            name: tc.function.name,
+            description: extractDescription(argsRaw) ?? "",
+            argsRaw,
+            result,
+            pending: result === null,
           };
-          let calls: RawToolCall[] = [];
-          try {
-            calls = JSON.parse(m.tool_calls) as RawToolCall[];
-          } catch {
-            // malformed — skip
-          }
-          for (const tc of calls) {
-            if (!tc.id || !tc.function) continue;
-            const result = toolResultMap.get(tc.id) ?? null;
-            const toolBubble: ToolBubble = {
-              kind: "tool",
-              key: `tool-${tc.id}`,
-              role: "tool",
-              name: tc.function.name,
-              argsRaw: tc.function.arguments ?? "",
-              result,
-              pending: result === null,
-            };
-            history.push(toolBubble);
-          }
-          // If there's also text content in this assistant turn, add a text bubble after.
-          if (m.content && m.content.trim().length > 0) {
-            history.push({
-              kind: "text",
-              key: uid(),
-              role: "assistant",
-              content: m.content,
-              reasoning: m.reasoning ?? "",
-              streaming: false,
-            });
-          }
-          continue;
+          history.push(toolBubble);
         }
-
-        // Regular user / assistant text message.
-        if (
-          (m.role === "user" || m.role === "assistant") &&
-          m.content &&
-          m.content.trim().length > 0
-        ) {
+        if (m.content && m.content.trim().length > 0) {
           history.push({
             kind: "text",
             key: uid(),
-            role: m.role as "user" | "assistant",
+            role: "assistant",
             content: m.content,
             reasoning: m.reasoning ?? "",
             streaming: false,
           });
         }
+        continue;
       }
 
-      setBubbles(history);
-      historyReadyRef.current = true;
-    },
-    [],
-  );
+      if (
+        (m.role === "user" || m.role === "assistant") &&
+        m.content &&
+        m.content.trim().length > 0
+      ) {
+        history.push({
+          kind: "text",
+          key: uid(),
+          role: m.role as "user" | "assistant",
+          content: m.content,
+          reasoning: m.reasoning ?? "",
+          streaming: false,
+        });
+      }
+    }
+
+    setBubbles(history);
+    historyReadyRef.current = true;
+  }, []);
 
   const clearBubbles = useCallback(() => {
     setBubbles([]);
@@ -189,14 +196,12 @@ export function useChat(conversationId: string | null, token: string | null) {
     historyReadyRef.current = false;
   }, []);
 
-  // ── Interrupt / abort (usable while streaming) ─────────────────────────
+  // ── Interrupt / abort ──────────────────────────────────────────────────────
 
   const interrupt = useCallback((text: string) => {
     const ws = wsLiveRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     if (statusRef.current !== "streaming") return;
-
-    // Show the injected message immediately as a user bubble.
     const userBubble: TextBubble = {
       kind: "text",
       key: uid(),
@@ -206,7 +211,6 @@ export function useChat(conversationId: string | null, token: string | null) {
       streaming: false,
     };
     setBubbles((prev) => [...prev, userBubble]);
-
     ws.send(JSON.stringify({ type: "interrupt", content: text }));
   }, []);
 
@@ -222,27 +226,10 @@ export function useChat(conversationId: string | null, token: string | null) {
     ws.send(JSON.stringify({ type: "answer", content: text }));
   }, []);
 
-  // ── Core WebSocket event processor (shared by send and reattach) ───────
+  // ── processEvent ref ───────────────────────────────────────────────────────
 
-  /**
-   * Process a single parsed WsServerEvent, mutating bubble state.
-   * Returns true if the event signals end-of-stream (done/aborted/error).
-   *
-   * Implementation is stored on a ref so event listeners can always call the
-   * latest implementation without capturing a stale callback.
-   */
-  // Use a ref to hold the current processEvent implementation so callbacks
-  // that are registered once (e.g. WebSocket listeners) can invoke the up-
-  // to-date logic without requiring those callbacks to list processEvent in
-  // their dependency arrays.
-  const processEventRef = useRef<(event: WsServerEvent) => boolean>(
-    () => false,
-  );
+  const processEventRef = useRef<(event: WsServerEvent) => boolean>(() => false);
 
-  // Populate the ref inside an effect (runs after render) so we avoid updating
-  // refs during render (which ESLint flags). We intentionally run this effect
-  // on every render by omitting a dependency array so the ref always points to
-  // a function that closes over the latest local variables.
   useEffect(() => {
     processEventRef.current = (event: WsServerEvent): boolean => {
       if (event.type === "user_interrupt") {
@@ -270,18 +257,24 @@ export function useChat(conversationId: string | null, token: string | null) {
           ),
         );
       } else if (event.type === "tool_call") {
-        // First chunk (delta === "") creates the bubble; subsequent chunks append.
-        // Non-streaming: single event with full args in delta, also goes through the create path.
         setBubbles((prev) => {
           const exists = prev.some(
             (b) => b.key === `tool-${event.id}` && b.kind === "tool",
           );
           if (exists) {
-            return prev.map((b) =>
-              b.key === `tool-${event.id}` && b.kind === "tool"
-                ? { ...b, argsRaw: b.argsRaw + event.delta }
-                : b,
-            );
+            return prev.map((b) => {
+              if (b.key !== `tool-${event.id}` || b.kind !== "tool") return b;
+              const newArgsRaw = b.argsRaw + event.delta;
+              // Try to extract description from the growing argsRaw.
+              // We require description to be the first parameter so the pattern
+              // appears very early in the stream.
+              const desc = extractDescription(newArgsRaw);
+              return {
+                ...b,
+                argsRaw: newArgsRaw,
+                description: desc ?? b.description,
+              };
+            });
           }
           sealActiveText();
           const toolBubble: ToolBubble = {
@@ -289,6 +282,7 @@ export function useChat(conversationId: string | null, token: string | null) {
             key: `tool-${event.id}`,
             role: "tool",
             name: event.name,
+            description: extractDescription(event.delta) ?? "",
             argsRaw: event.delta,
             result: null,
             pending: true,
@@ -321,40 +315,30 @@ export function useChat(conversationId: string | null, token: string | null) {
     };
   });
 
-  // ── Reattach to an ongoing generation — called explicitly by ChatPage
-  //    after history has been loaded, so there is no race between
-  //    setHistory overwriting bubbles and replay events being processed.
+  // ── Reattach ───────────────────────────────────────────────────────────────
 
-  const reattach = useCallback((conversationId: string, token: string) => {
-    // Guard: don't open a second WS if one is already live.
+  const reattach = useCallback((convId: string, tok: string) => {
     if (wsLiveRef.current) return;
-    if (attachedConvRef.current === conversationId) return;
+    if (attachedConvRef.current === convId) return;
 
-    attachedConvRef.current = conversationId;
+    attachedConvRef.current = convId;
 
     const wsProtocol = location.protocol === "https:" ? "wss" : "ws";
-    const ws = new WebSocket(
-      `${wsProtocol}://${location.host}/ws/${conversationId}`,
-    );
+    const ws = new WebSocket(`${wsProtocol}://${location.host}/ws/${convId}`);
     wsRef.current = ws;
     wsLiveRef.current = ws;
 
     ws.addEventListener("open", () => {
       reattachingRef.current = true;
-      ws.send(JSON.stringify({ token }));
+      ws.send(JSON.stringify({ token: tok }));
       ws.send(JSON.stringify({ type: "reattach" }));
     });
 
     ws.addEventListener("message", (ev) => {
       let event: WsServerEvent;
-      try {
-        event = JSON.parse(ev.data as string) as WsServerEvent;
-      } catch {
-        return;
-      }
+      try { event = JSON.parse(ev.data as string) as WsServerEvent; }
+      catch { return; }
 
-      // During reattach we set status to streaming as soon as we see any
-      // non-terminal event, so the UI shows the in-progress state.
       if (
         statusRef.current === "idle" &&
         event.type !== "done" &&
@@ -365,9 +349,7 @@ export function useChat(conversationId: string | null, token: string | null) {
         updateStatus("streaming");
       }
 
-      const finished = processEventRef.current
-        ? processEventRef.current(event)
-        : false;
+      const finished = processEventRef.current(event);
       if (finished) {
         reattachingRef.current = false;
         ws.close(1000);
@@ -389,24 +371,18 @@ export function useChat(conversationId: string | null, token: string | null) {
     });
   }, []);
 
-  // ── Open a new WebSocket turn ──────────────────────────────────────────
+  // ── Send ───────────────────────────────────────────────────────────────────
 
   const send = useCallback(
-    (text: string) => {
-      if (!conversationId || !token) return;
+    async (text: string) => {
+      if (!token) return;
       if (statusRef.current === "connecting") return;
 
-      // If already streaming, route through the interrupt channel instead of
-      // opening a new WebSocket. This lets messages queue up while deepseek-reasoner
-      // is thinking, to be consumed at the next Idle transition.
       if (statusRef.current === "streaming") {
         interrupt(text);
         return;
       }
 
-      // 关闭 reattach 阶段可能留下的静默连接，避免两个 WS 同时追加 token。
-      // reattachingRef 标记的是"已建连但 generation 尚未开始"的静默连接；
-      // 如果 generation 已经在跑（streaming），send 在函数开头就已被拦截。
       if (reattachingRef.current) {
         const existing = wsLiveRef.current;
         if (existing && existing.readyState === WebSocket.OPEN) {
@@ -418,10 +394,22 @@ export function useChat(conversationId: string | null, token: string | null) {
         attachedConvRef.current = null;
       }
 
+      // Draft mode: create the conversation first, then send.
+      let convId = conversationId;
+      if (!convId) {
+        convId = await createConversation();
+        if (!convId) {
+          setErrorMsg("创建对话失败，请重试");
+          return;
+        }
+        // Notify caller so it can fire auto-title logic.
+        onConversationCreatedRef.current?.(convId, text);
+      }
+
       setErrorMsg(null);
       activeTextKeyRef.current = null;
 
-      // Optimistically add user bubble
+      // Optimistically add user bubble.
       const userBubble: TextBubble = {
         kind: "text",
         key: uid(),
@@ -435,12 +423,10 @@ export function useChat(conversationId: string | null, token: string | null) {
       updateStatus("connecting");
 
       const wsProtocol = location.protocol === "https:" ? "wss" : "ws";
-      const ws = new WebSocket(
-        `${wsProtocol}://${location.host}/ws/${conversationId}`,
-      );
+      const ws = new WebSocket(`${wsProtocol}://${location.host}/ws/${convId}`);
       wsRef.current = ws;
       wsLiveRef.current = ws;
-      attachedConvRef.current = conversationId;
+      attachedConvRef.current = convId;
 
       ws.addEventListener("open", () => {
         ws.send(JSON.stringify({ token }));
@@ -450,15 +436,10 @@ export function useChat(conversationId: string | null, token: string | null) {
 
       ws.addEventListener("message", (ev) => {
         let event: WsServerEvent;
-        try {
-          event = JSON.parse(ev.data as string) as WsServerEvent;
-        } catch {
-          return;
-        }
+        try { event = JSON.parse(ev.data as string) as WsServerEvent; }
+        catch { return; }
 
-        const finished = processEventRef.current
-          ? processEventRef.current(event)
-          : false;
+        const finished = processEventRef.current(event);
         if (finished) {
           ws.close(1000);
           wsRef.current = null;
@@ -467,6 +448,14 @@ export function useChat(conversationId: string | null, token: string | null) {
       });
 
       ws.addEventListener("error", () => {
+        // The browser fires an error event before every close, including
+        // normal closes initiated by ws.close(1000) after "done".  Only
+        // treat it as a real error if we're still actively streaming.
+        if (statusRef.current !== "streaming" && statusRef.current !== "connecting") {
+          wsRef.current = null;
+          wsLiveRef.current = null;
+          return;
+        }
         const key = activeTextKeyRef.current;
         if (key) {
           setBubbles((prev) => prev.filter((b) => b.key !== key));
@@ -481,13 +470,7 @@ export function useChat(conversationId: string | null, token: string | null) {
       ws.addEventListener("close", (ev) => {
         wsRef.current = null;
         wsLiveRef.current = null;
-        // Only treat as an error if the close was abnormal AND we are still
-        // in the streaming state (i.e. done/error has not already handled it).
-        if (
-          ev.code !== 1000 &&
-          ev.code !== 1001 &&
-          statusRef.current === "streaming"
-        ) {
+        if (ev.code !== 1000 && ev.code !== 1001 && statusRef.current === "streaming") {
           const key = activeTextKeyRef.current;
           if (key) {
             setBubbles((prev) => prev.filter((b) => b.key !== key));
@@ -498,7 +481,7 @@ export function useChat(conversationId: string | null, token: string | null) {
         }
       });
     },
-    [conversationId, token, interrupt],
+    [conversationId, token, interrupt, createConversation],
   );
 
   return {

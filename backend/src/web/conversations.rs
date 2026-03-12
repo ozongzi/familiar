@@ -116,6 +116,73 @@ pub async fn delete_conversation(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
+// ── Auto-title ────────────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct AutoTitleRequest {
+    pub prompt: String,
+}
+
+#[derive(Serialize)]
+pub struct AutoTitleResponse {
+    pub title: String,
+}
+
+pub async fn auto_title(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(id): Path<Uuid>,
+    Json(req): Json<AutoTitleRequest>,
+) -> AppResult<Json<AutoTitleResponse>> {
+    // Verify ownership.
+    let owned: bool = sqlx::query_scalar::<_, Option<bool>>(
+        "SELECT EXISTS(SELECT 1 FROM conversations WHERE id = $1 AND user_id = $2)",
+    )
+    .bind(id)
+    .bind(auth.user_id)
+    .fetch_one(&state.pool)
+    .await?
+    .unwrap_or(false);
+
+    if !owned {
+        return Err(AppError::not_found("对话不存在"));
+    }
+
+    use ds_api::{ApiClient, ApiRequest};
+    use ds_api::raw::request::message::{Message, Role};
+
+    let client = ApiClient::new(state.deepseek_token.clone())
+        .with_base_url(state.model_api_base.clone());
+
+    let system = Message::new(
+        Role::System,
+        "根据用户发送的第一条消息，生成一个简短的对话标题（5到10个字）。\
+         只返回标题文字本身，不加引号、标点或任何解释。",
+    );
+    let user = Message::new(Role::User, &req.prompt);
+
+    let api_req = ApiRequest::builder()
+        .with_model(state.model_name.clone())
+        .messages(vec![system, user])
+        .max_tokens(32);
+
+    let resp = client
+        .send(api_req)
+        .await
+        .map_err(|e| AppError::internal(&e.to_string()))?;
+
+    let title = resp
+        .choices
+        .into_iter()
+        .next()
+        .and_then(|c| c.message.content)
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+
+    Ok(Json(AutoTitleResponse { title }))
+}
+
 pub async fn rename_conversation(
     State(state): State<AppState>,
     auth: AuthUser,

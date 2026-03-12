@@ -33,6 +33,7 @@ export function Sidebar({
   const [editValue, setEditValue] = useState("");
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const editInputRef = useRef<HTMLInputElement>(null);
+  const confirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Focus the rename input when it appears
   useEffect(() => {
@@ -41,6 +42,14 @@ export function Sidebar({
       editInputRef.current?.select();
     }
   }, [editingId]);
+
+  // Clear the confirm-delete timer on unmount.
+  useEffect(() => {
+    return () => {
+      if (confirmTimerRef.current !== null)
+        clearTimeout(confirmTimerRef.current);
+    };
+  }, []);
 
   function startRename(conv: Conversation) {
     setEditingId(conv.id);
@@ -64,12 +73,20 @@ export function Sidebar({
 
   function handleDeleteClick(id: string) {
     if (confirmDeleteId === id) {
+      if (confirmTimerRef.current !== null) {
+        clearTimeout(confirmTimerRef.current);
+        confirmTimerRef.current = null;
+      }
       onDelete(id);
       setConfirmDeleteId(null);
     } else {
+      if (confirmTimerRef.current !== null)
+        clearTimeout(confirmTimerRef.current);
       setConfirmDeleteId(id);
-      // Auto-cancel confirm after 3 seconds
-      setTimeout(() => setConfirmDeleteId(null), 3000);
+      confirmTimerRef.current = setTimeout(() => {
+        setConfirmDeleteId(null);
+        confirmTimerRef.current = null;
+      }, 3000);
     }
   }
 

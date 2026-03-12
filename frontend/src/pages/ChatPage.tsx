@@ -8,6 +8,9 @@ import { useChat } from "../hooks/useChat";
 import { api } from "../api/client";
 import styles from "./ChatPage.module.css";
 
+// Sentinel value meaning "new draft conversation, not yet persisted".
+const DRAFT_ID = "__draft__" as const;
+
 export function ChatPage() {
   const { token, user, logout } = useAuth();
   const {
@@ -18,10 +21,45 @@ export function ChatPage() {
     renameConversation,
   } = useConversations(token);
 
+  // null  = loading, DRAFT_ID = new draft, otherwise a real conversation id.
   const [activeId, setActiveId] = useState<string | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarVisible, setSidebarVisible] = useState(true);
+
+  // When useChat creates a conversation in draft mode, we want to update
+  // activeId WITHOUT triggering the history-load effect (there's no history
+  // yet, and a clearBubbles() would wipe the optimistic user bubble).
+  // We use a ref flag that the effect reads synchronously before deciding
+  // whether to load history.
+  const skipNextHistoryLoadRef = useRef(false);
+
+  // ── Draft-mode conversation factory passed to useChat ──────────────────
+  // Creates a real conversation and returns its id.  Does NOT call setActiveId
+  // here — that happens in onConversationCreated so we can set the skip flag
+  // first.
+  const createDraftConversation = useCallback(async (): Promise<string | null> => {
+    const conv = await createConversation();
+    if (!conv) return null;
+    // Set the flag before setActiveId so the effect sees it synchronously.
+    skipNextHistoryLoadRef.current = true;
+    setActiveId(conv.id);
+    return conv.id;
+  }, [createConversation]);
+
+  const autoTitle = useCallback(
+    async (convId: string, firstMessage: string) => {
+      if (!token) return;
+      const prompt = firstMessage.trim().slice(0, 200);
+      try {
+        const { title } = await api.autoTitle(token, convId, prompt);
+        if (title) await renameConversation(convId, title);
+      } catch {
+        // Non-critical; silently ignore.
+      }
+    },
+    [token, renameConversation],
+  );
 
   const {
     bubbles,
@@ -34,57 +72,44 @@ export function ChatPage() {
     reattach,
     setHistory,
     clearBubbles,
-  } = useChat(activeId, token);
+  } = useChat(
+    activeId === DRAFT_ID ? null : activeId,
+    token,
+    createDraftConversation,
+    { onConversationCreated: autoTitle },
+  );
 
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  // Close sidebar when selecting a conversation on mobile
-  const handleSelectConversation = useCallback((id: string) => {
-    if (id !== activeId) {
-      setActiveId(id);
-      // Close sidebar on mobile after selection
-      if (window.innerWidth < 768) {
-        setSidebarOpen(false);
-      }
-    }
-  }, [activeId]);
-
-  // Close sidebar when clicking outside on mobile
-  const handleOverlayClick = useCallback(() => {
-    setSidebarOpen(false);
-  }, []);
-
-  // ── Auto-scroll to bottom whenever bubbles change ────────────────────────
+  // ── Auto-scroll ────────────────────────────────────────────────────────
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [bubbles]);
 
-  // ── When active conversation changes, load history ───────────────────────
+  // ── Load history when switching to a real conversation ─────────────────
   useEffect(() => {
-    if (!activeId || !token) {
+    if (!activeId || activeId === DRAFT_ID || !token) {
       clearBubbles();
       return;
     }
 
+    // If this activeId change was caused by useChat creating a draft conversation,
+    // skip the history load — the WS send is already in flight and bubbles are live.
+    if (skipNextHistoryLoadRef.current) {
+      skipNextHistoryLoadRef.current = false;
+      return;
+    }
+
     let cancelled = false;
+    setHistoryLoading(true);
+    clearBubbles();
 
-    // Defer synchronous state updates out of the effect body to avoid the
-    // react-hooks/set-state-in-effect lint rule (which warns about
-    // cascaded renders when setState is called synchronously in an effect).
-    const startTimer = setTimeout(() => {
-      setHistoryLoading(true);
-      clearBubbles();
-    }, 0);
-
-    // Load history asynchronously.
     (async () => {
       try {
         const msgs = await api.listMessages(token, activeId);
         if (!cancelled) {
           setHistory(msgs);
           setHistoryLoading(false);
-          // Only open the reattach WS after history is loaded so replay
-          // events never race with setHistory overwriting bubbles.
           reattach(activeId, token);
         }
       } catch {
@@ -95,54 +120,48 @@ export function ChatPage() {
       }
     })();
 
-    return () => {
-      cancelled = true;
-      clearTimeout(startTimer);
-    };
+    return () => { cancelled = true; };
   }, [activeId, token, clearBubbles, setHistory, reattach]);
 
-  // ── Auto-select first conversation after load ────────────────────────────
+  // ── On initial load: start in draft mode (not the most recent conv) ────
   useEffect(() => {
-    if (!convsLoading && conversations.length > 0 && activeId === null) {
-      // Defer setting state to avoid calling setState synchronously within the
-      // effect body (avoids react-hooks/set-state-in-effect warnings).
-      const t = setTimeout(() => {
-        setActiveId(conversations[0].id);
-      }, 0);
-      return () => clearTimeout(t);
+    if (!convsLoading && activeId === null) {
+      setActiveId(DRAFT_ID);
     }
-  }, [convsLoading, conversations, activeId]);
+  }, [convsLoading, activeId]);
 
-  // Handle resize - close sidebar on desktop
+  // ── Handle resize ──────────────────────────────────────────────────────
   useEffect(() => {
     const handleResize = () => {
-      if (window.innerWidth >= 768) {
-        setSidebarOpen(false);
-      }
+      if (window.innerWidth >= 768) setSidebarOpen(false);
     };
-
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
   }, []);
 
-  // ── Handlers ─────────────────────────────────────────────────────────────
+  // ── Handlers ──────────────────────────────────────────────────────────
 
-  const handleCreate = useCallback(async () => {
-    const conv = await createConversation();
-    if (conv) {
-      setActiveId(conv.id);
-      // Close sidebar on mobile after creating
-      if (window.innerWidth < 768) {
-        setSidebarOpen(false);
+  // Enter draft mode (new conversation).
+  const handleCreate = useCallback(() => {
+    setActiveId(DRAFT_ID);
+    if (window.innerWidth < 768) setSidebarOpen(false);
+  }, []);
+
+  const handleSelectConversation = useCallback(
+    (id: string) => {
+      if (id !== activeId) {
+        setActiveId(id);
+        if (window.innerWidth < 768) setSidebarOpen(false);
       }
-    }
-  }, [createConversation]);
+    },
+    [activeId],
+  );
 
   const handleDelete = useCallback(
     async (id: string) => {
       const ok = await deleteConversation(id);
       if (ok && activeId === id) {
-        setActiveId(null);
+        setActiveId(DRAFT_ID);
       }
     },
     [deleteConversation, activeId],
@@ -156,27 +175,23 @@ export function ChatPage() {
   );
 
   const handleSend = useCallback(
-    (text: string) => {
-      if (!activeId) return;
-      send(text);
-    },
-    [activeId, send],
+    (text: string) => { send(text); },
+    [send],
   );
 
   const handleInterrupt = useCallback(
-    (text: string) => {
-      interrupt(text);
-    },
+    (text: string) => { interrupt(text); },
     [interrupt],
   );
 
-  const handleAbort = useCallback(() => {
-    abort();
-  }, [abort]);
+  const handleAbort = useCallback(() => { abort(); }, [abort]);
 
-  // ── Derive UI state ─────────────────────────────────────────────────────
+  // ── Derive UI state ────────────────────────────────────────────────────
 
   const isStreaming = status === "connecting" || status === "streaming";
+  const isDraft = activeId === DRAFT_ID;
+  // For the sidebar, treat the draft as no active selection.
+  const sidebarActiveId = isDraft ? null : activeId;
   const activeConv = conversations.find((c) => c.id === activeId);
 
   return (
@@ -184,7 +199,7 @@ export function ChatPage() {
       {/* Sidebar overlay for mobile */}
       <div
         className={`${styles.sidebarOverlay} ${sidebarOpen ? styles.visible : ""}`}
-        onClick={handleOverlayClick}
+        onClick={() => setSidebarOpen(false)}
         aria-hidden="true"
       />
 
@@ -192,7 +207,7 @@ export function ChatPage() {
       <div className={`${styles.sidebarContainer} ${sidebarVisible ? "" : styles.sidebarHidden}`}>
         <Sidebar
           conversations={conversations}
-          activeId={activeId}
+          activeId={sidebarActiveId}
           loading={convsLoading}
           onSelect={handleSelectConversation}
           onCreate={handleCreate}
@@ -209,6 +224,7 @@ export function ChatPage() {
       <main className={styles.main}>
         {/* Header */}
         <header className={styles.header}>
+          {/* Mobile: hamburger */}
           <button
             className={styles.menuBtn}
             onClick={() => setSidebarOpen(true)}
@@ -216,6 +232,8 @@ export function ChatPage() {
           >
             <MenuIcon />
           </button>
+
+          {/* Desktop: sidebar toggle */}
           <button
             className={styles.sidebarToggle}
             onClick={() => setSidebarVisible(!sidebarVisible)}
@@ -223,30 +241,38 @@ export function ChatPage() {
           >
             {sidebarVisible ? <SidebarCloseIcon /> : <SidebarOpenIcon />}
           </button>
+
           <h2 className={styles.convTitle}>
-            {activeConv ? activeConv.name : "Familiar"}
+            {isDraft ? "新对话" : (activeConv?.name ?? "Familiar")}
           </h2>
+
+          {/* Mobile: new conversation button */}
+          <button
+            className={styles.newConvBtn}
+            onClick={handleCreate}
+            aria-label="新建对话"
+            title="新建对话"
+          >
+            <NewChatIcon />
+          </button>
         </header>
 
         {/* Message area */}
         <div className={styles.messages}>
-          {!activeId && !convsLoading && (
+          {isDraft && bubbles.length === 0 && (
             <div className={styles.empty}>
               <img src="/favicon.svg" width={52} height={52} alt="" />
-              <p className={styles.emptyTitle}>欢迎使用 Familiar</p>
-              <p className={styles.emptyHint}>
-                点击左上角菜单图标开始对话
-              </p>
+              <p className={styles.emptyTitle}>有什么可以帮你？</p>
             </div>
           )}
 
-          {activeId && historyLoading && (
+          {!isDraft && historyLoading && (
             <div className={styles.empty}>
               <p className={styles.emptyHint}>加载消息中…</p>
             </div>
           )}
 
-          {activeId && !historyLoading && bubbles.length === 0 && (
+          {!isDraft && !historyLoading && bubbles.length === 0 && (
             <div className={styles.empty}>
               <img src="/favicon.svg" width={44} height={44} alt="" />
               <p className={styles.emptyHint}>发送消息开始对话</p>
@@ -261,51 +287,37 @@ export function ChatPage() {
             />
           ))}
 
-          {/* Error banner */}
           {errorMsg && (
             <div className={styles.errorBanner} role="alert">
               ⚠️ {errorMsg}
             </div>
           )}
 
-          {/* Scroll anchor */}
           <div ref={bottomRef} />
         </div>
 
-        {/* Input */}
+        {/* Input — always enabled in draft mode */}
         <ChatInput
           onSend={handleSend}
           onInterrupt={handleInterrupt}
           onAbort={handleAbort}
           streaming={isStreaming}
-          disabled={!activeId}
+          disabled={false}
           token={token}
-          placeholder={
-            !activeId
-              ? "请先选择或新建一个对话"
-              : "发消息… (Enter 发送，Shift+Enter 换行)"
-          }
+          placeholder="发消息… (Enter 发送，Shift+Enter 换行)"
         />
       </main>
     </div>
   );
 }
 
-/* ─── Icons ─────────────────────────────────────────────────────────────── */
+/* ─── Icons ──────────────────────────────────────────────────────────────── */
 
 function MenuIcon() {
   return (
-    <svg
-      width="20"
-      height="20"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+      aria-hidden="true">
       <line x1="3" y1="12" x2="21" y2="12" />
       <line x1="3" y1="6" x2="21" y2="6" />
       <line x1="3" y1="18" x2="21" y2="18" />
@@ -315,17 +327,9 @@ function MenuIcon() {
 
 function SidebarOpenIcon() {
   return (
-    <svg
-      width="18"
-      height="18"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+      aria-hidden="true">
       <rect x="3" y="3" width="18" height="18" rx="2" />
       <line x1="9" y1="3" x2="9" y2="21" />
     </svg>
@@ -334,19 +338,21 @@ function SidebarOpenIcon() {
 
 function SidebarCloseIcon() {
   return (
-    <svg
-      width="18"
-      height="18"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+      aria-hidden="true">
       <rect x="3" y="3" width="18" height="18" rx="2" />
       <line x1="15" y1="3" x2="15" y2="21" />
+    </svg>
+  );
+}
+
+function NewChatIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+      aria-hidden="true">
+      <path d="M12 5v14M5 12h14" />
     </svg>
   );
 }

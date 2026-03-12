@@ -95,6 +95,8 @@ export interface ToolBubble {
   key: string;
   role: "tool";
   name: string;
+  /** Human-readable description written by the model at call time, shown in the collapsed header. */
+  description: string;
   /** Accumulated args JSON string; complete (parseable) once all chunks arrive. */
   argsRaw: string;
   result: unknown | null;

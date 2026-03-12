@@ -546,6 +546,12 @@ async fn run_generation(
     info!(conversation = %conversation_id, "[TIMING] chat_from_history returned in {:?}", t_start.elapsed());
     let mut reply_buf = String::new();
     let mut poll_count = 0u32;
+    // Accumulate tool calls for the current turn.
+    // key = tool call id, value = (name, args, result_json)
+    // result_json is None until the ToolResult arrives.
+    let mut pending_tools: std::collections::HashMap<String, (String, String, Option<String>)> = std::collections::HashMap::new();
+    // Preserve insertion order so the assistant message has tool_calls in the right order.
+    let mut pending_tool_order: Vec<String> = Vec::new();
 
     loop {
         // Check abort flag before polling the next event.
@@ -598,6 +604,16 @@ async fn run_generation(
                     }
                     Ok(AgentEvent::ToolCall(c)) => {
                         info!(conversation = %conversation_id, "[TIMING] poll #{poll_count}: stream.next() -> ToolCall name={} id={} delta_len={} in {elapsed:?}", c.name, c.id, c.delta.len());
+                        // Accumulate args by id, preserving insertion order.
+                        if !c.id.is_empty() {
+                            let order = &mut pending_tool_order;
+                            let tools = &mut pending_tools;
+                            let entry = tools.entry(c.id.clone()).or_insert_with(|| {
+                                order.push(c.id.clone());
+                                (c.name.clone(), String::new(), None)
+                            });
+                            entry.1.push_str(&c.delta);
+                        }
                         json!({
                             "type": "tool_call",
                             "id": c.id,
@@ -607,15 +623,77 @@ async fn run_generation(
                     }
                     Ok(AgentEvent::ToolResult(res)) => {
                         info!(conversation = %conversation_id, "[TIMING] poll #{poll_count}: stream.next() -> ToolResult name={} id={} in {elapsed:?}", res.name, res.id);
-                        // The agent will drain its interrupt channel before the next
-                        // sampling turn. Clear our queue so we don't double-process
-                        // any interrupts that were consumed mid-generation.
+                        // Drain queued interrupts.
                         {
                             let mut map = state.chats.lock().unwrap();
                             if let Some(entry) = map.get_mut(&conversation_id) {
                                 entry.queued_interrupts.clear();
                             }
                         }
+
+                        {
+                            use ds_api::raw::request::message::{FunctionCall, ToolCall, ToolType};
+
+                            // Overwrite accumulated args with the complete args from ToolCallResult.
+                            if let Some(entry) = pending_tools.get_mut(&res.id) {
+                                entry.1 = res.args.clone();
+                                let result_str = serde_json::to_string(&res.result).unwrap_or_default();
+                                entry.2 = Some(result_str);
+                            }
+
+                            // Flush only when every pending tool call has received its result.
+                            let all_done = !pending_tool_order.is_empty()
+                                && pending_tool_order.iter()
+                                    .all(|id| pending_tools.get(id).and_then(|e| e.2.as_ref()).is_some());
+
+                            if all_done {
+                                // One assistant message with all tool_calls for this turn.
+                                let tool_calls: Vec<ToolCall> = pending_tool_order.iter()
+                                    .filter_map(|id| {
+                                        pending_tools.get(id).map(|(name, args, _)| ToolCall {
+                                            id: id.clone(),
+                                            r#type: ToolType::Function,
+                                            function: FunctionCall {
+                                                name: name.clone(),
+                                                arguments: args.clone(),
+                                            },
+                                        })
+                                    })
+                                    .collect();
+
+                                let assistant_msg = AgentMessage {
+                                    role: Role::Assistant,
+                                    content: if reply_buf.is_empty() { None } else { Some(reply_buf.clone()) },
+                                    name: None,
+                                    tool_call_id: None,
+                                    tool_calls: Some(tool_calls),
+                                    reasoning_content: None,
+                                    prefix: None,
+                                };
+                                state.persist_message(conversation_id, &assistant_msg);
+                                reply_buf.clear();
+
+                                // Persist each tool result in order.
+                                for id in &pending_tool_order {
+                                    if let Some((name, _, Some(result_str))) = pending_tools.get(id) {
+                                        let tool_msg = AgentMessage {
+                                            role: Role::Tool,
+                                            content: Some(result_str.clone()),
+                                            name: Some(name.clone()),
+                                            tool_call_id: Some(id.clone()),
+                                            tool_calls: None,
+                                            reasoning_content: None,
+                                            prefix: None,
+                                        };
+                                        state.persist_message(conversation_id, &tool_msg);
+                                    }
+                                }
+
+                                pending_tools.clear();
+                                pending_tool_order.clear();
+                            }
+                        }
+
                         json!({
                             "type": "tool_result",
                             "id": res.id,

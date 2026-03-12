@@ -6,7 +6,7 @@ async function request<T>(
   method: string,
   path: string,
   body?: unknown,
-  token?: string | null
+  token?: string | null,
 ): Promise<T> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -100,12 +100,27 @@ export const api = {
     return del<{ ok: boolean }>(`/api/conversations/${id}`, token);
   },
 
-  renameConversation(token: string, id: string, body: RenameConversationRequest) {
+  renameConversation(
+    token: string,
+    id: string,
+    body: RenameConversationRequest,
+  ) {
     return patch<Conversation>(`/api/conversations/${id}`, body, token);
   },
 
-  // ── Messages ─────────────────────────────────────────────────────────────
+  // ── Auto-title ────────────────────────────────────────────────────────────
+  autoTitle(token: string, conversationId: string, prompt: string) {
+    return post<{ title: string }>(
+      `/api/conversations/${conversationId}/title`,
+      { prompt },
+      token,
+    );
+  },
+
   listMessages(token: string, conversationId: string) {
-    return get<Message[]>(`/api/conversations/${conversationId}/messages`, token);
+    return get<Message[]>(
+      `/api/conversations/${conversationId}/messages`,
+      token,
+    );
   },
 };

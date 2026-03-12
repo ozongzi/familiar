@@ -5,17 +5,15 @@ import type { Conversation } from "../api/types";
 export function useConversations(token: string | null) {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   const fetchConversations = useCallback(async () => {
     if (!token) return;
     setLoading(true);
-    setError(null);
     try {
       const data = await api.listConversations(token);
       setConversations(data);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "加载失败");
+    } catch {
+      // silently ignore — UI will just show empty list
     } finally {
       setLoading(false);
     }
@@ -32,12 +30,11 @@ export function useConversations(token: string | null) {
         const conv = await api.createConversation(token, name ? { name } : {});
         setConversations((prev) => [conv, ...prev]);
         return conv;
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "创建失败");
+      } catch {
         return null;
       }
     },
-    [token]
+    [token],
   );
 
   const deleteConversation = useCallback(
@@ -47,12 +44,11 @@ export function useConversations(token: string | null) {
         await api.deleteConversation(token, id);
         setConversations((prev) => prev.filter((c) => c.id !== id));
         return true;
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "删除失败");
+      } catch {
         return false;
       }
     },
-    [token]
+    [token],
   );
 
   const renameConversation = useCallback(
@@ -61,21 +57,19 @@ export function useConversations(token: string | null) {
       try {
         const updated = await api.renameConversation(token, id, { name });
         setConversations((prev) =>
-          prev.map((c) => (c.id === id ? updated : c))
+          prev.map((c) => (c.id === id ? updated : c)),
         );
         return true;
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "重命名失败");
+      } catch {
         return false;
       }
     },
-    [token]
+    [token],
   );
 
   return {
     conversations,
     loading,
-    error,
     refresh: fetchConversations,
     createConversation,
     deleteConversation,

@@ -68,7 +68,6 @@
     border: none;
     border-bottom-left-radius: var(--radius-sm);
     color: var(--text-primary);
-    padding-left: 0;
 }
 
 /* ─── User text ──────────────────────────────────────────────────────────── */
@@ -202,149 +201,120 @@
     overflow-y: auto;
 }
 
-/* ─── Tool call bubble ───────────────────────────────────────────────────── */
+/* ─── Tool call row ──────────────────────────────────────────────────────── */
 
 .toolRow {
     max-width: 820px;
-    margin: 6px auto;
+    margin: 2px auto;
     width: 100%;
-    padding: 0 44px;
+    padding: 0 16px;
 }
 
-.toolBubble {
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-md);
-    overflow: hidden;
-    font-size: 0.84em;
-}
-
-/* Inline variant — no expand toggle, specialised view shown directly */
+/* Single unified bubble — no border, no background card */
+.toolBubble,
 .toolBubbleInline {
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-md);
-    overflow: hidden;
-    font-size: 0.84em;
+    background: none;
+    border: none;
+    border-radius: 0;
+    overflow: visible;
+    font-size: 0.875em;
     display: flex;
     flex-direction: column;
-    gap: 0;
 }
 
+/* ── Shared header (both inline and generic) ── */
+.toolHeader,
 .toolHeaderInline {
-    display: flex;
+    display: inline-flex;
     align-items: center;
-    gap: 8px;
-    padding: 8px 14px;
-    color: var(--text-secondary);
-    border-bottom: 1px solid var(--border-subtle);
-}
-
-.toolHeaderInline:last-child {
-    border-bottom: none;
-}
-
-/* ─── Script preview (run_py / run_ts pending state) ─────────────────────── */
-
-.scriptPreview {
-    background: var(--bg-elevated);
-    border-top: 1px solid var(--border-subtle);
-    overflow: hidden;
-}
-
-/* Override prose margins inside the script preview — no extra padding needed */
-.scriptPreview .prose {
-    line-height: 1;
-}
-
-.scriptPreview .prose .code-block {
-    margin: 0;
-    border-radius: 0;
-    border: none;
-    font-size: 0.92em;
-}
-
-.scriptPreview .prose .code-header {
-    border-radius: 0;
-}
-
-.scriptPreview .prose .code-pre {
-    max-height: 400px;
-    overflow-y: auto;
-}
-
-.toolHeader {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    width: 100%;
-    padding: 8px 14px;
+    gap: 6px;
+    padding: 3px 6px 3px 2px;
     background: none;
     border: none;
     cursor: pointer;
     color: var(--text-secondary);
-    text-align: left;
-    transition:
-        background var(--transition),
-        color var(--transition);
     font-family: var(--font-sans);
-    font-size: inherit;
+    font-size: 0.875em;
+    text-align: left;
+    border-radius: var(--radius-sm);
+    transition: color var(--transition), background var(--transition);
+    width: auto;
+    align-self: flex-start;
 }
 
-.toolHeader:hover {
-    background: var(--bg-elevated);
+.toolHeader:hover,
+.toolHeaderInline:hover {
     color: var(--text-primary);
+    background: var(--bg-hover);
 }
 
+/* Tool status icon (SVG wrapper) */
 .toolIcon {
-    font-size: 1em;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     flex-shrink: 0;
+    width: 14px;
+    height: 14px;
+    color: var(--text-secondary);
 }
 
+/* Label text */
 .toolName {
-    font-family: var(--font-mono);
-    font-size: 0.95em;
-    color: var(--accent);
-    flex: 1;
+    font-family: var(--font-sans);
+    font-size: 1em;
+    color: inherit;
+    flex: 0 1 auto;
     min-width: 0;
+    max-width: 480px;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    font-weight: 400;
 }
 
-.toolPending {
-    font-size: 0.85em;
-    color: var(--text-muted);
+/* Spinner (pending) */
+.toolSpinner {
     flex-shrink: 0;
-    animation: pulse 1.4s ease-in-out infinite;
+    width: 11px;
+    height: 11px;
+    border: 1.5px solid var(--border);
+    border-top-color: var(--text-muted);
+    border-radius: 50%;
+    animation: toolSpin 0.7s linear infinite;
 }
 
-@keyframes pulse {
-    0%,
-    100% {
-        opacity: 0.4;
-    }
-    50% {
-        opacity: 1;
-    }
+@keyframes toolSpin {
+    to { transform: rotate(360deg); }
 }
 
+/* Chevron (done) */
 .toolChevron {
-    font-size: 0.7em;
-    color: var(--text-muted);
     flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    color: var(--text-muted);
+    opacity: 0.6;
 }
 
+/* Hide old text-based pending */
+.toolPending {
+    display: none;
+}
+
+/* ── Expanded detail body ── */
 .toolBody {
-    border-top: 1px solid var(--border-subtle);
+    margin-top: 2px;
+    margin-left: 20px;
+    padding-left: 10px;
+    border-left: 2px solid var(--border-subtle);
     display: flex;
     flex-direction: column;
     gap: 0;
 }
 
 .toolSection {
-    padding: 10px 14px;
-    border-bottom: 1px solid var(--border-subtle);
+    padding: 5px 0;
 }
 
 .toolSection:last-child {
@@ -352,17 +322,17 @@
 }
 
 .toolSectionLabel {
-    font-size: 0.78em;
+    font-size: 0.75em;
     font-weight: 600;
     color: var(--text-muted);
     letter-spacing: 0.05em;
     text-transform: uppercase;
-    margin-bottom: 6px;
+    margin-bottom: 4px;
 }
 
 .toolCode {
     font-family: var(--font-mono);
-    font-size: 0.88em;
+    font-size: 0.85em;
     color: var(--text-secondary);
     white-space: pre-wrap;
     word-break: break-all;
@@ -370,6 +340,41 @@
     line-height: 1.5;
     max-height: 200px;
     overflow-y: auto;
+}
+
+/* ── Script / diff preview in expanded area ── */
+.scriptPreview {
+    background: none;
+    border-top: none;
+    margin-top: 4px;
+    margin-left: 20px;
+    padding-left: 10px;
+    border-left: 2px solid var(--border-subtle);
+    overflow: hidden;
+}
+
+.scriptPreview .prose {
+    line-height: 1;
+}
+
+.scriptPreview .prose .code-block {
+    margin: 0;
+    border-radius: var(--radius-md);
+    font-size: 0.92em;
+}
+
+.scriptPreview .prose .code-header {
+    border-radius: var(--radius-md) var(--radius-md) 0 0;
+}
+
+.scriptPreview .prose .code-pre {
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 0.4; }
+    50% { opacity: 1; }
 }
 
 /* ─── Ask-user card ──────────────────────────────────────────────────────── */
@@ -557,7 +562,7 @@
 .fileCard {
     background: var(--bg-surface);
     border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
+    border-radius: var(--radius-md);
     overflow: hidden;
     transition: border-color var(--transition);
 }
@@ -567,41 +572,44 @@
 }
 
 .fileCardPending {
-    opacity: 0.7;
+    opacity: 0.6;
 }
 
 .fileCardHeader {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 12px;
-    padding: 14px 16px;
+    gap: 10px;
+    padding: 10px 14px;
 }
 
 .fileCardLeft {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 10px;
     min-width: 0;
     flex: 1;
 }
 
 .fileCardIcon {
-    font-size: 1.5em;
     flex-shrink: 0;
-    line-height: 1;
+    display: flex;
+    align-items: center;
+    color: var(--text-muted);
+    width: 16px;
+    height: 16px;
 }
 
 .fileCardMeta {
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: 1px;
     min-width: 0;
 }
 
 .fileCardName {
     font-family: var(--font-mono);
-    font-size: 0.9em;
+    font-size: 0.88em;
     font-weight: 500;
     color: var(--text-primary);
     white-space: nowrap;
@@ -610,12 +618,12 @@
 }
 
 .fileCardSize {
-    font-size: 0.78em;
+    font-size: 0.76em;
     color: var(--text-muted);
 }
 
 .fileCardPendingLabel {
-    font-size: 0.78em;
+    font-size: 0.76em;
     color: var(--text-muted);
     animation: pulse 1.4s ease-in-out infinite;
 }
@@ -630,14 +638,14 @@
 .fileCardBtn {
     display: flex;
     align-items: center;
-    gap: 5px;
-    padding: 6px 12px;
-    border-radius: var(--radius-md);
+    gap: 4px;
+    padding: 5px 10px;
+    border-radius: var(--radius-sm);
     border: 1px solid var(--border);
-    background: var(--bg-hover);
+    background: var(--bg-elevated);
     color: var(--text-secondary);
     font-family: var(--font-sans);
-    font-size: 0.83em;
+    font-size: 0.8em;
     font-weight: 500;
     cursor: pointer;
     transition:
@@ -650,19 +658,18 @@
 .fileCardBtn:hover {
     background: var(--bg-active);
     color: var(--text-primary);
-    border-color: var(--bg-active);
+    border-color: var(--border);
 }
 
 .fileCardBtnPrimary {
-    background: var(--accent-dim);
-    border-color: var(--accent);
-    color: var(--accent);
+    background: var(--bg-elevated);
+    border-color: var(--border);
+    color: var(--text-secondary);
 }
 
 .fileCardBtnPrimary:hover {
-    background: var(--accent);
-    color: #fff;
-    border-color: var(--accent);
+    background: var(--bg-active);
+    color: var(--text-primary);
 }
 
 /* ─── File preview area ──────────────────────────────────────────────────── */
@@ -769,12 +776,8 @@
         max-width: calc(100% - 60px);
     }
 
-    .bubbleAssistant {
-        padding-left: 0;
-    }
-
     .toolRow {
-        padding: 0 38px;
+        padding: 0 12px;
     }
 
     .askUserCard {

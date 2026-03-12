@@ -64,6 +64,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/conversations", post(create_conversation))
         .route("/api/conversations/{id}", delete(delete_conversation))
         .route("/api/conversations/{id}", patch(rename_conversation))
+        .route("/api/conversations/{id}/title", post(auto_title))
         // ── Messages ──────────────────────────────────────────────────────────
         .route("/api/conversations/{id}/messages", get(list_messages))
         // ── File download / preview ───────────────────────────────────────────

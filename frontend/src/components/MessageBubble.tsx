@@ -157,20 +157,18 @@ function ToolCallBubble({
   onAnswer?: (text: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const autoExpandedRef = useRef(false);
 
-  // Auto-expand the first time args start streaming in.
+  // Auto-expand while pending (args streaming in), auto-collapse when done.
   useEffect(() => {
     let t: number | undefined;
-    if (!autoExpandedRef.current && bubble.argsRaw.length > 0 && !expanded) {
-      autoExpandedRef.current = true;
-      // Defer expanding to avoid calling setState synchronously inside the effect.
+    if (bubble.pending && bubble.argsRaw.length > 0 && !expanded) {
       t = window.setTimeout(() => setExpanded(true), 0);
+    } else if (!bubble.pending && expanded) {
+      t = window.setTimeout(() => setExpanded(false), 0);
     }
-    return () => {
-      if (t !== undefined) clearTimeout(t);
-    };
-  }, [bubble.argsRaw, expanded]);
+    return () => { if (t !== undefined) clearTimeout(t); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bubble.pending, bubble.argsRaw.length > 0]);
 
   // ── All declarations and hooks must come before any early returns ──────────
 
@@ -218,11 +216,6 @@ function ToolCallBubble({
         args?.path !== undefined &&
         args?.content !== undefined));
 
-  const toolIcon = bubble.pending ? "⚙️" : "✅";
-  const toolLabel =
-    bubble.pending && bubble.name === "execute" && args?.command
-      ? String(args.command)
-      : bubble.name;
 
   const isInline = isTerminal || isEditTool;
 
@@ -287,6 +280,25 @@ function ToolCallBubble({
     return extractArgsField(bubble.argsRaw, field);
   }, [isEditTool, bubble.pending, bubble.name, bubble.argsRaw, args]);
 
+  // Header label: prefer the model-written description (arrives early in the
+  // stream because description is always the first parameter).  Fall back to
+  // a per-tool heuristic derived from the args when description is absent.
+  const toolLabel =
+    bubble.description ||
+    (() => {
+      if (bubble.name === "execute") {
+        return streamingCommand
+          ? streamingCommand.trim().slice(0, 60)
+          : bubble.name;
+      }
+      if (bubble.name === "str_replace" || bubble.name === "write") {
+        return streamingEditPath ? streamingEditPath : bubble.name;
+      }
+      if (bubble.name === "run_py") return "Run Python";
+      if (bubble.name === "run_ts") return "Run TypeScript";
+      return bubble.name;
+    })();
+
   // ── Early return: ask_user → question card ───────────────────────────────
   if (bubble.name === "ask_user") {
     const answeredText =
@@ -323,17 +335,23 @@ function ToolCallBubble({
     return (
       <div className={styles.toolRow}>
         <div className={styles.toolBubbleInline}>
-          {/* Header */}
-          <div className={styles.toolHeaderInline}>
+          {/* Header — always clickable to toggle detail */}
+          <button
+            className={styles.toolHeaderInline}
+            onClick={() => setExpanded((v) => !v)}
+            aria-expanded={expanded}
+          >
             <span className={styles.toolIcon} aria-hidden="true">
-              {toolIcon}
+              {bubble.pending ? <ToolRunningIcon /> : <ToolDoneIcon />}
             </span>
             <span className={styles.toolName}>{toolLabel}</span>
-            {bubble.pending && (
-              <span className={styles.toolPending}>运行中…</span>
-            )}
-          </div>
+            {bubble.pending
+              ? <span className={styles.toolSpinner} aria-hidden="true" />
+              : <span className={styles.toolChevron} aria-hidden="true"><ChevronIcon expanded={expanded} /></span>
+            }
+          </button>
 
+          {expanded && (<>
           {/* str_replace: 流式期间 — old_str 到了就渲染 diff（new_str 未到时显示纯删除行） */}
           {isEditTool &&
             bubble.pending &&
@@ -431,6 +449,7 @@ function ToolCallBubble({
               }
             />
           )}
+          </>)}
         </div>
       </div>
     );
@@ -445,15 +464,13 @@ function ToolCallBubble({
           aria-expanded={expanded}
         >
           <span className={styles.toolIcon} aria-hidden="true">
-            {toolIcon}
+            {bubble.pending ? <ToolRunningIcon /> : <ToolDoneIcon />}
           </span>
-          <span className={styles.toolName}>{bubble.name}</span>
-          {bubble.pending && (
-            <span className={styles.toolPending}>运行中…</span>
-          )}
-          <span className={styles.toolChevron} aria-hidden="true">
-            {expanded ? "▲" : "▼"}
-          </span>
+          <span className={styles.toolName}>{toolLabel}</span>
+          {bubble.pending
+            ? <span className={styles.toolSpinner} aria-hidden="true" />
+            : <span className={styles.toolChevron} aria-hidden="true"><ChevronIcon expanded={expanded} /></span>
+          }
         </button>
 
         {expanded && (
@@ -626,10 +643,6 @@ function FileCard({ file, pending }: { file: FileInfo; pending: boolean }) {
     a.click();
   }, [file.path, file.filename, token]);
 
-  const ext = file.filename.includes(".")
-    ? file.filename.split(".").pop()!.toLowerCase()
-    : "";
-
   return (
     <div className={styles.toolRow}>
       <div
@@ -639,7 +652,7 @@ function FileCard({ file, pending }: { file: FileInfo; pending: boolean }) {
         <div className={styles.fileCardHeader}>
           <div className={styles.fileCardLeft}>
             <span className={styles.fileCardIcon} aria-hidden="true">
-              {fileEmoji(ext)}
+              <FileIcon />
             </span>
             <div className={styles.fileCardMeta}>
               <span className={styles.fileCardName}>{file.filename}</span>
@@ -770,40 +783,18 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function fileEmoji(ext: string): string {
-  const map: Record<string, string> = {
-    rs: "🦀",
-    py: "🐍",
-    js: "📜",
-    ts: "📘",
-    tsx: "📘",
-    jsx: "📜",
-    go: "🐹",
-    md: "📝",
-    json: "📋",
-    toml: "⚙️",
-    yaml: "⚙️",
-    yml: "⚙️",
-    sh: "💻",
-    bash: "💻",
-    sql: "🗄️",
-    html: "🌐",
-    css: "🎨",
-    png: "🖼️",
-    jpg: "🖼️",
-    jpeg: "🖼️",
-    gif: "🖼️",
-    svg: "🖼️",
-    pdf: "📕",
-    zip: "📦",
-    tar: "📦",
-    gz: "📦",
-    log: "📋",
-  };
-  return map[ext] ?? "📄";
-}
-
 // ─── Icons ────────────────────────────────────────────────────────────────────
+
+function FileIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+      aria-hidden="true">
+      <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
+      <polyline points="13 2 13 9 20 9" />
+    </svg>
+  );
+}
 
 function EyeIcon() {
   return (
@@ -840,6 +831,39 @@ function DownloadIcon() {
       <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
       <polyline points="7 10 12 15 17 10" />
       <line x1="12" y1="15" x2="12" y2="3" />
+    </svg>
+  );
+}
+
+// ─── Tool call icons ──────────────────────────────────────────────────────────
+
+function ToolRunningIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+      aria-hidden="true">
+      <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
+    </svg>
+  );
+}
+
+function ToolDoneIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+      aria-hidden="true">
+      <polyline points="20 6 9 17 4 12" />
+    </svg>
+  );
+}
+
+function ChevronIcon({ expanded }: { expanded: boolean }) {
+  return (
+    <svg width="10" height="10" viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+      aria-hidden="true"
+      style={{ transform: expanded ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.15s ease" }}>
+      <polyline points="6 9 12 15 18 9" />
     </svg>
   );
 }
