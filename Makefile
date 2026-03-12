@@ -32,7 +32,7 @@ deploy: all
 	ssh $(HOST) "mv /usr/local/bin/familiar.new /usr/local/bin/familiar"
 	ssh $(HOST) "mkdir -p /srv/familiar/frontend/dist"
 	rsync -av --delete frontend/dist/ $(HOST):/srv/familiar/frontend/dist
-	scp backend/config.toml $(HOST):/srv/familiar/config.toml
+	scp backend/config.prod.toml $(HOST):/srv/familiar/config.toml
 	ssh $(HOST) "systemctl restart familiar"
 	@echo "✓ deployed"
 

@@ -8,8 +8,8 @@ export default defineConfig({
     proxy:
       process.env.NODE_ENV === "development"
         ? {
-            "/api": "https://familiar.fhmmt.games",
-            "/ws": { target: "wss://familiar.fhmmt.games", ws: true },
+            "/api": "http://localhost:3000",
+            "/ws": { target: "ws://localhost:3000", ws: true },
           }
         : {
             "/api": {

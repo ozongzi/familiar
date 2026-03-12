@@ -64,7 +64,7 @@ export type WsServerEvent =
   | { type: "token"; content: string; source?: "spawn" }
   | { type: "reasoning_token"; content: string }
   | { type: "tool_call"; id: string; name: string; delta: string; source?: "spawn" }
-  | { type: "tool_result"; id: string; name: string; result: unknown; source?: "spawn" }
+  | { type: "tool_result"; id: string; name: string; args?: string; result: unknown; source?: "spawn" }
   | { type: "user_interrupt"; content: string }
   | { type: "aborted" }
   | { type: "done" }

@@ -324,10 +324,11 @@ function ToolCallBubble({
   // ── Extract command content from streaming argsRaw (bash) ─────────────────
   const streamingCommand = useMemo(() => {
     if (bubble.name !== "bash") return null;
-    if (bubble.pending) {
-      if (!bubble.argsRaw) return null;
-      return extractArgsField(bubble.argsRaw, "command");
-    }
+    if (!bubble.argsRaw) return null;
+    // extractArgsField works even with incomplete/corrupt JSON (streaming or damaged)
+    const extracted = extractArgsField(bubble.argsRaw, "command");
+    if (extracted) return extracted;
+    // Fallback to parsed args
     return args?.command ? String(args.command) : null;
   }, [bubble.pending, bubble.name, bubble.argsRaw, args]);
 

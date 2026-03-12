@@ -621,6 +621,9 @@ async fn run_generation(
         std::collections::HashMap::new();
     // Preserve insertion order so the assistant message has tool_calls in the right order.
     let mut pending_tool_order: Vec<String> = Vec::new();
+    // index -> name, for tool calls whose id hasn't arrived yet
+    let mut pending_name_buf: std::collections::HashMap<u32, (String, String)> =
+        std::collections::HashMap::new();
 
     loop {
         // Check abort flag before polling the next event.
@@ -672,23 +675,45 @@ async fn run_generation(
                         json!({"type": "token", "content": token}).to_string()
                     }
                     Ok(AgentEvent::ToolCall(c)) => {
-                        info!(conversation = %conversation_id, "[TIMING] poll #{poll_count}: stream.next() -> ToolCall name={} id={} delta_len={} in {elapsed:?}", c.name, c.id, c.delta.len());
+                        info!(conversation = %conversation_id, "[TIMING] poll #{poll_count}: stream.next() -> ToolCall name={} id={} index={} delta_len={} in {elapsed:?}", c.name, c.id, c.index, c.delta.len());
                         // Accumulate args by id, preserving insertion order.
-                        if !c.id.is_empty() {
+                        // If id is empty, buffer the name by index until the real id arrives.
+                        eprintln!("[PROBE] ToolCall chunk: id={:?} name={:?} index={} delta={:?}", c.id, c.name, c.index, c.delta);
+                        if c.id.is_empty() {
+                            // MiniMax sends first chunk with empty id — buffer name+delta until real id arrives
+                            let entry = pending_name_buf.entry(c.index).or_insert_with(|| (c.name.clone(), String::new()));
+                            if !c.name.is_empty() { entry.0 = c.name.clone(); }
+                            entry.1.push_str(&c.delta);
+                            eprintln!("[PROBE] buffered (id empty): index={} name={:?} delta={:?} total_buf={:?}", c.index, entry.0, c.delta, entry.1);
+                            String::new()
+                        } else {
+                            // Real id arrived — flush any buffered name/delta from empty-id chunks
+                            let (buffered_name, buffered_delta) = pending_name_buf.remove(&c.index)
+                                .unwrap_or_default();
+                            eprintln!("[PROBE] real id: id={:?} buffered_name={:?} buffered_delta={:?} c.delta={:?}", c.id, buffered_name, buffered_delta, c.delta);
+                            let name = if pending_tools.contains_key(&c.id) {
+                                c.name.clone()
+                            } else if !buffered_name.is_empty() {
+                                buffered_name
+                            } else {
+                                c.name.clone()
+                            };
                             let order = &mut pending_tool_order;
                             let tools = &mut pending_tools;
                             let entry = tools.entry(c.id.clone()).or_insert_with(|| {
                                 order.push(c.id.clone());
-                                (c.name.clone(), String::new(), None)
+                                (name.clone(), String::new(), None)
                             });
-                            entry.1.push_str(&c.delta);
+                            // Prepend buffered delta, then current delta
+                            let full_delta = format!("{}{}", buffered_delta, c.delta);
+                            entry.1.push_str(&full_delta);
+                            json!({
+                                "type": "tool_call",
+                                "id": c.id,
+                                "name": &entry.0,
+                                "delta": full_delta,
+                            }).to_string()
                         }
-                        json!({
-                            "type": "tool_call",
-                            "id": c.id,
-                            "name": c.name,
-                            "delta": c.delta,
-                        }).to_string()
                     }
                     Ok(AgentEvent::ToolResult(res)) => {
                         info!(conversation = %conversation_id, "[TIMING] poll #{poll_count}: stream.next() -> ToolResult name={} id={} in {elapsed:?}", res.name, res.id);
@@ -704,7 +729,9 @@ async fn run_generation(
                             use ds_api::raw::request::message::{FunctionCall, ToolCall, ToolType};
 
                             // Overwrite accumulated args with the complete args from ToolCallResult.
+                            eprintln!("[PROBE] ToolResult: id={:?} args={:?}", res.id, res.args);
                             if let Some(entry) = pending_tools.get_mut(&res.id) {
+                                eprintln!("[PROBE] overwriting entry.1 was={:?} now={:?}", entry.1, res.args);
                                 entry.1 = res.args.clone();
                                 let result_str = serde_json::to_string(&res.result).unwrap_or_default();
                                 entry.2 = Some(result_str);
@@ -767,6 +794,7 @@ async fn run_generation(
                             "type": "tool_result",
                             "id": res.id,
                             "name": res.name,
+                            "args": res.args,
                             "result": res.result,
                         }).to_string()
                     }
@@ -799,7 +827,8 @@ async fn run_generation(
                 };
 
                 // Emit to log + broadcast.
-                {
+                if !payload.is_empty() {
+                    eprintln!("[PROBE] emit payload: {}", &payload[..payload.len().min(200)]);
                     let mut map = state.chats.lock().unwrap();
                     if let Some(entry) = map.get_mut(&conversation_id) {
                         entry.emit(payload);

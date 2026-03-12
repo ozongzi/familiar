@@ -1,4 +1,5 @@
 config.toml
+config.prod.toml
 SPEC.md
 **/target
 **/dist

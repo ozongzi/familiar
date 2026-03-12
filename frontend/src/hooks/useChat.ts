@@ -367,6 +367,8 @@ export function useChat(
                   ...b,
                   result: event.result,
                   pending: false,
+                  // If backend sent complete args (e.g. MiniMax sends no streaming delta), update argsRaw
+                  ...(event.args && event.args.length > 0 ? { argsRaw: event.args } : {}),
                   spawnOutput:
                     b.name === "spawn" &&
                     (!b.spawnOutput || b.spawnOutput.length === 0) &&
