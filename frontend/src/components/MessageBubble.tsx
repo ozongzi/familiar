@@ -133,22 +133,52 @@ function TextChatBubble({
 
 // ── Helper: extract a string field from a partial streaming JSON args string ─
 function extractArgsField(raw: string, key: string): string | null {
-  const match = raw.match(new RegExp(`"${key}"\\s*:\\s*"([\\s\\S]*)`));
-  if (!match) return null;
-  let value = match[1];
-  // Strip a trailing closing quote not preceded by \.
-  value = value.replace(/"$/, "");
-  try {
-    return JSON.parse(`"${value}"`);
-  } catch {
-    try {
-      return JSON.parse(`"${value.replace(/\\$/, "")}"`);
-    } catch {
+  const keyPattern = new RegExp(`"${key}"\s*:\s*"`);
+  const keyMatch = raw.match(keyPattern);
+  if (!keyMatch || keyMatch.index === undefined) return null;
+
+  const valueStart = keyMatch.index + keyMatch[0].length;
+  const rest = raw.slice(valueStart);
+
+  let value = "";
+  let i = 0;
+  while (i < rest.length) {
+    const ch = rest[i];
+    if (ch === "\\") {
+      if (i + 1 < rest.length) {
+        const next = rest[i + 1];
+        const escapes: Record<string, string> = {
+          '"': '"',
+          "\\": "\\",
+          "/": "/",
+          b: "\b",
+          f: "\f",
+          n: "\n",
+          r: "\r",
+          t: "\t",
+        };
+        if (next === "u" && i + 5 < rest.length) {
+          const hex = rest.slice(i + 2, i + 6);
+          if (/^[0-9a-fA-F]{4}$/.test(hex)) {
+            value += String.fromCharCode(parseInt(hex, 16));
+            i += 6;
+            continue;
+          }
+        }
+        value += escapes[next] ?? next;
+        i += 2;
+      } else {
+        break;
+      }
+    } else if (ch === '"') {
       return value;
+    } else {
+      value += ch;
+      i++;
     }
   }
+  return value.length > 0 ? value : null;
 }
-
 function ToolCallBubble({
   bubble,
   onAnswer,
@@ -166,8 +196,10 @@ function ToolCallBubble({
     } else if (!bubble.pending && expanded) {
       t = window.setTimeout(() => setExpanded(false), 0);
     }
-    return () => { if (t !== undefined) clearTimeout(t); };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    return () => {
+      if (t !== undefined) clearTimeout(t);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bubble.pending, bubble.argsRaw.length > 0]);
 
   // ── All declarations and hooks must come before any early returns ──────────
@@ -215,7 +247,6 @@ function ToolCallBubble({
       (bubble.name === "write" &&
         args?.path !== undefined &&
         args?.content !== undefined));
-
 
   const isInline = isTerminal || isEditTool;
 
@@ -345,111 +376,129 @@ function ToolCallBubble({
               {bubble.pending ? <ToolRunningIcon /> : <ToolDoneIcon />}
             </span>
             <span className={styles.toolName}>{toolLabel}</span>
-            {bubble.pending
-              ? <span className={styles.toolSpinner} aria-hidden="true" />
-              : <span className={styles.toolChevron} aria-hidden="true"><ChevronIcon expanded={expanded} /></span>
-            }
+            {bubble.pending ? (
+              <span className={styles.toolSpinner} aria-hidden="true" />
+            ) : (
+              <span className={styles.toolChevron} aria-hidden="true">
+                <ChevronIcon expanded={expanded} />
+              </span>
+            )}
           </button>
 
-          {expanded && (<>
-          {/* str_replace: 流式期间 — old_str 到了就渲染 diff（new_str 未到时显示纯删除行） */}
-          {isEditTool &&
-            bubble.pending &&
-            bubble.name === "str_replace" &&
-            streamingOldStr !== null && (
-              <DiffView
-                mode="str_replace"
-                path={streamingEditPath ?? ""}
-                oldStr={streamingOldStr}
-                newStr={streamingEditContent ?? ""}
-                streaming
-              />
-            )}
+          {expanded && (
+            <>
+              {/* str_replace: 流式期间 — old_str 到了就渲染 diff（new_str 未到时显示纯删除行） */}
+              {isEditTool &&
+                bubble.pending &&
+                bubble.name === "str_replace" &&
+                streamingOldStr !== null && (
+                  <DiffView
+                    mode="str_replace"
+                    path={streamingEditPath ?? ""}
+                    oldStr={streamingOldStr}
+                    newStr={streamingEditContent ?? ""}
+                    streaming
+                  />
+                )}
 
-          {/* write: 流式期间 — content 开始到达就渲染 DiffView（全部为新增行） */}
-          {isEditTool &&
-            bubble.pending &&
-            bubble.name === "write" &&
-            streamingEditContent !== null && (
-              <DiffView
-                mode="write"
-                path={streamingEditPath ?? ""}
-                newStr={streamingEditContent}
-                streaming
-              />
-            )}
+              {/* write: 流式期间 — content 开始到达就渲染 DiffView（全部为新增行） */}
+              {isEditTool &&
+                bubble.pending &&
+                bubble.name === "write" &&
+                streamingEditContent !== null && (
+                  <DiffView
+                    mode="write"
+                    path={streamingEditPath ?? ""}
+                    newStr={streamingEditContent}
+                    streaming
+                  />
+                )}
 
-          {/* edit tools: 完成后显示最终 DiffView */}
-          {isEditTool &&
-            !bubble.pending &&
-            isDiff &&
-            bubble.name === "str_replace" && (
-              <DiffView
-                mode="str_replace"
-                path={String(args!.path)}
-                oldStr={String(args!.old_str)}
-                newStr={String(args!.new_str)}
-              />
-            )}
-          {isEditTool &&
-            !bubble.pending &&
-            isDiff &&
-            bubble.name === "write" && (
-              <DiffView
-                mode="write"
-                path={String(args!.path)}
-                newStr={String(args!.content)}
-              />
-            )}
+              {/* edit tools: 完成后显示最终 DiffView（成功且 args 解析完整） */}
+              {isEditTool &&
+                !bubble.pending &&
+                isDiff &&
+                bubble.name === "str_replace" && (
+                  <DiffView
+                    mode="str_replace"
+                    path={String(args!.path)}
+                    oldStr={String(args!.old_str)}
+                    newStr={String(args!.new_str)}
+                  />
+                )}
+              {isEditTool &&
+                !bubble.pending &&
+                isDiff &&
+                bubble.name === "write" && (
+                  <DiffView
+                    mode="write"
+                    path={String(args!.path)}
+                    newStr={String(args!.content)}
+                  />
+                )}
+              {/* edit tools: fallback — 失败（error 字段）或 args 解析不完整时显示原始结果 */}
+              {isEditTool && !bubble.pending && !isDiff && result && (
+                <div className={styles.toolSection}>
+                  <p className={styles.toolSectionLabel}>
+                    {(result as Record<string, unknown>)["error"]
+                      ? "错误"
+                      : "结果"}
+                  </p>
+                  <pre className={styles.toolCode}>
+                    {JSON.stringify(result, null, 2)}
+                  </pre>
+                </div>
+              )}
 
-          {/* run_py / run_ts: syntax-highlighted script preview (streaming or done) */}
-          {isTerminal && streamingScript !== null && (
-            <div className={styles.scriptPreview}>
-              <MarkdownRenderer
-                content={`\`\`\`${scriptLang}\n${streamingScript}${argsStreaming ? "█" : ""}\n\`\`\``}
-              />
-            </div>
+              {/* run_py / run_ts: syntax-highlighted script preview (streaming or done) */}
+              {isTerminal && streamingScript !== null && (
+                <div className={styles.scriptPreview}>
+                  <MarkdownRenderer
+                    content={`\`\`\`${scriptLang}\n${streamingScript}${argsStreaming ? "█" : ""}\n\`\`\``}
+                  />
+                </div>
+              )}
+
+              {/* execute: sh-highlighted command preview (streaming and done) */}
+              {bubble.name === "execute" && streamingCommand !== null && (
+                <div className={styles.scriptPreview}>
+                  <MarkdownRenderer
+                    content={`\`\`\`sh\n${streamingCommand}${argsStreaming ? "█" : ""}\n\`\`\``}
+                  />
+                </div>
+              )}
+
+              {/* execute: fallback raw args while streaming if command field not yet present */}
+              {bubble.pending &&
+                bubble.name === "execute" &&
+                streamingCommand === null &&
+                argsStr && (
+                  <div className={styles.toolSection}>
+                    <pre className={styles.toolCode}>
+                      {argsStr}
+                      {argsStreaming && (
+                        <span className={styles.cursor} aria-hidden="true" />
+                      )}
+                    </pre>
+                  </div>
+                )}
+
+              {/* Terminal result — shown below the code preview once complete */}
+              {!bubble.pending && isTerminal && (
+                <TerminalView
+                  toolName={bubble.name}
+                  command={args?.command ? String(args.command) : undefined}
+                  stdout={result?.stdout ? String(result.stdout) : undefined}
+                  stderr={result?.stderr ? String(result.stderr) : undefined}
+                  exitCode={
+                    result?.exit_code !== undefined
+                      ? (result.exit_code as number | null)
+                      : undefined
+                  }
+                />
+              )}
+            </>
           )}
-
-          {/* execute: sh-highlighted command preview (streaming and done) */}
-          {bubble.name === "execute" && streamingCommand !== null && (
-            <div className={styles.scriptPreview}>
-              <MarkdownRenderer
-                content={`\`\`\`sh\n${streamingCommand}${argsStreaming ? "█" : ""}\n\`\`\``}
-              />
-            </div>
-          )}
-
-          {/* execute: fallback raw args while streaming if command field not yet present */}
-          {bubble.pending &&
-            bubble.name === "execute" &&
-            streamingCommand === null &&
-            argsStr && (
-              <div className={styles.toolSection}>
-                <pre className={styles.toolCode}>
-                  {argsStr}
-                  {argsStreaming && (
-                    <span className={styles.cursor} aria-hidden="true" />
-                  )}
-                </pre>
-              </div>
-            )}
-
-          {/* Terminal result — shown below the code preview once complete */}
-          {!bubble.pending && isTerminal && (
-            <TerminalView
-              toolName={bubble.name}
-              command={args?.command ? String(args.command) : undefined}
-              stdout={result?.stdout ? String(result.stdout) : undefined}
-              stderr={result?.stderr ? String(result.stderr) : undefined}
-              exitCode={
-                result?.exit_code !== undefined
-                  ? (result.exit_code as number | null)
-                  : undefined
-              }
-            />
-          )}
-          </>)}
         </div>
       </div>
     );
@@ -467,10 +516,13 @@ function ToolCallBubble({
             {bubble.pending ? <ToolRunningIcon /> : <ToolDoneIcon />}
           </span>
           <span className={styles.toolName}>{toolLabel}</span>
-          {bubble.pending
-            ? <span className={styles.toolSpinner} aria-hidden="true" />
-            : <span className={styles.toolChevron} aria-hidden="true"><ChevronIcon expanded={expanded} /></span>
-          }
+          {bubble.pending ? (
+            <span className={styles.toolSpinner} aria-hidden="true" />
+          ) : (
+            <span className={styles.toolChevron} aria-hidden="true">
+              <ChevronIcon expanded={expanded} />
+            </span>
+          )}
         </button>
 
         {expanded && (
@@ -787,9 +839,17 @@ function formatBytes(bytes: number): string {
 
 function FileIcon() {
   return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
-      stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-      aria-hidden="true">
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
       <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
       <polyline points="13 2 13 9 20 9" />
     </svg>
@@ -839,9 +899,17 @@ function DownloadIcon() {
 
 function ToolRunningIcon() {
   return (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
-      stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-      aria-hidden="true">
+    <svg
+      width="13"
+      height="13"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
       <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
     </svg>
   );
@@ -849,9 +917,17 @@ function ToolRunningIcon() {
 
 function ToolDoneIcon() {
   return (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
-      stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
-      aria-hidden="true">
+    <svg
+      width="13"
+      height="13"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
       <polyline points="20 6 9 17 4 12" />
     </svg>
   );
@@ -859,10 +935,21 @@ function ToolDoneIcon() {
 
 function ChevronIcon({ expanded }: { expanded: boolean }) {
   return (
-    <svg width="10" height="10" viewBox="0 0 24 24" fill="none"
-      stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+    <svg
+      width="10"
+      height="10"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
       aria-hidden="true"
-      style={{ transform: expanded ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.15s ease" }}>
+      style={{
+        transform: expanded ? "rotate(180deg)" : "rotate(0deg)",
+        transition: "transform 0.15s ease",
+      }}
+    >
       <polyline points="6 9 12 15 18 9" />
     </svg>
   );
