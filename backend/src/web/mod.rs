@@ -6,7 +6,7 @@ pub mod sessions;
 pub mod users;
 pub mod ws;
 
-use std::sync::Arc;
+use std::{path::Path, sync::Arc};
 
 use axum::{
     Router,
@@ -22,6 +22,8 @@ use history::*;
 use sessions::*;
 use users::*;
 use ws::*;
+
+use crate::config::Config;
 
 /// Web-layer application state — cheaply cloneable.
 #[derive(Clone)]
@@ -47,6 +49,9 @@ pub fn create_router(state: AppState) -> Router {
         .allow_methods(Any)
         .allow_headers(Any);
 
+    let public_path = Config::load().public_path;
+    let public_path = Path::new(&public_path);
+
     Router::new()
         // ── Auth ──────────────────────────────────────────────────────────────
         .route("/api/sessions", post(login))
@@ -69,8 +74,8 @@ pub fn create_router(state: AppState) -> Router {
         .route("/ws/{id}", get(ws_handler))
         // ── Static frontend ───────────────────────────────────────────────────
         .fallback_service(
-            ServeDir::new("client/dist")
-                .not_found_service(ServeFile::new("client/dist/index.html")),
+            ServeDir::new(public_path)
+                .not_found_service(ServeFile::new(public_path.join("index.html"))),
         )
         .layer(cors)
         .with_state(state)

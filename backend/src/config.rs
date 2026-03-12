@@ -10,6 +10,7 @@ use serde::Deserialize;
 ///      `FAMILIAR__SERVER__PORT=8080`
 #[derive(Debug, Deserialize)]
 pub struct Config {
+    pub public_path: String,
     pub secrets: Secrets,
     pub model: ModelConfig,
     pub embedding: ModelConfig,

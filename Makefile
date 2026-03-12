@@ -30,8 +30,8 @@ all: build-client build
 deploy: all
 	scp $(BIN) $(HOST):/usr/local/bin/familiar.new
 	ssh $(HOST) "mv /usr/local/bin/familiar.new /usr/local/bin/familiar"
-	ssh $(HOST) "mkdir -p /srv/familiar/client/dist"
-	rsync -av --delete frontend/dist/ $(HOST):/srv/familiar/client/dist/
+	ssh $(HOST) "mkdir -p /srv/familiar/frontend/dist"
+	rsync -av --delete frontend/dist/ $(HOST):/srv/familiar/frontend/dist
 	scp backend/config.toml $(HOST):/srv/familiar/config.toml
 	ssh $(HOST) "systemctl restart familiar"
 	@echo "✓ deployed"
