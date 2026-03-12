@@ -15,8 +15,7 @@ use uuid::Uuid;
 use crate::db::{Db, to_vector};
 use crate::embedding::EmbeddingClient;
 use crate::spells::{
-    A2aSpell, AskUserSpell, CommandSpell, FileSpell, HistorySpell, ManageMcpSpell, OutlineSpell,
-    PresentFileSpell, ScriptSpell, SearchSpell,
+    FileSpells, HistorySpell, SearchSpells, ShellSpells, SpawnSpell, ToolBundle, UiSpells,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -115,6 +114,7 @@ impl ChatEntry {
 }
 
 /// Shared application state, held behind `Arc`.
+#[allow(unused)]
 #[derive(Clone)]
 pub struct AppState {
     /// Per-conversation agent instances, keyed by conversation UUID.
@@ -234,6 +234,13 @@ impl AppState {
             guard.iter().cloned().collect()
         };
 
+        let (spawn_tx, _) = tokio::sync::broadcast::channel::<String>(256);
+
+        let core_bundle = ToolBundle::new()
+            .add(FileSpells)
+            .add(ShellSpells)
+            .add(SearchSpells);
+
         let mut builder = DeepseekAgent::custom(
             self.deepseek_token.clone(),
             self.model_api_base.clone(),
@@ -241,21 +248,22 @@ impl AppState {
         )
         .with_streaming()
         .with_history(history)
-        .add_tool(CommandSpell)
-        .add_tool(FileSpell)
-        .add_tool(ScriptSpell)
-        .add_tool(PresentFileSpell)
-        .add_tool(A2aSpell)
-        .add_tool(SearchSpell)
-        .add_tool(OutlineSpell)
-        .add_tool(AskUserSpell {
-            pending: Arc::clone(&ask_user_pending),
+        .add_tool(core_bundle)
+        .add_tool(UiSpells {
+            ask_pending: Arc::clone(&ask_user_pending),
         })
-        .add_tool(ManageMcpSpell {
+        .add_tool(SpawnSpell {
+            api_key: self.deepseek_token.clone(),
+            api_base: self.model_api_base.clone(),
+            model_name: self.model_name.clone(),
             mcp_tools: Arc::clone(&self.mcp_tools),
-            agent_stale: Arc::clone(&agent_stale),
-            builtin_tool_count: self.builtin_tool_count,
-            max_tools: self.max_tools,
+            default_tools: vec![
+                "read".to_string(),
+                "search".to_string(),
+                "glob".to_string(),
+                "outline".to_string(),
+            ],
+            broadcast_tx: spawn_tx,
         })
         .add_tool(HistorySpell {
             db: self.db.clone(),
@@ -549,7 +557,8 @@ async fn run_generation(
     // Accumulate tool calls for the current turn.
     // key = tool call id, value = (name, args, result_json)
     // result_json is None until the ToolResult arrives.
-    let mut pending_tools: std::collections::HashMap<String, (String, String, Option<String>)> = std::collections::HashMap::new();
+    let mut pending_tools: std::collections::HashMap<String, (String, String, Option<String>)> =
+        std::collections::HashMap::new();
     // Preserve insertion order so the assistant message has tool_calls in the right order.
     let mut pending_tool_order: Vec<String> = Vec::new();
 

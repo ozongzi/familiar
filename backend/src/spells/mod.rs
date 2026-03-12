@@ -1,33 +1,30 @@
-mod a2a_spell;
-mod ask_user_spell;
-mod command_spell;
-mod file_spell;
+mod file_spells;
 mod history_spell;
-mod manage_mcp_spell;
-mod outline_spell;
-mod present_file_spell;
-mod script_spell;
-mod search_spell;
+mod search_spells;
+mod shell_spells;
+mod spawn_spell;
+mod ui_spells;
 
 use std::time::Duration;
 
-pub use a2a_spell::A2aSpell;
-pub use ask_user_spell::AskUserSpell;
-pub use command_spell::CommandSpell;
-pub use file_spell::FileSpell;
+pub use ds_api::tool_trait::ToolBundle;
+pub use file_spells::FileSpells;
 pub use history_spell::HistorySpell;
-pub use manage_mcp_spell::ManageMcpSpell;
-pub use outline_spell::OutlineSpell;
-pub use present_file_spell::PresentFileSpell;
-pub use script_spell::ScriptSpell;
-pub use search_spell::SearchSpell;
+pub use search_spells::SearchSpells;
+pub use shell_spells::ShellSpells;
+pub use spawn_spell::SpawnSpell;
+pub use ui_spells::UiSpells;
+
 use serde_json::{Value, json};
 use tokio::{process::Command, time::timeout};
 
 pub const MAX_OUTPUT_CHARS: usize = 8_000;
 
+/// 大文件自动降级到 outline 的行数阈值
+pub(crate) const OUTLINE_THRESHOLD: usize = 300;
+
 /// 超长输出保留头尾，中间用省略提示替换
-pub(super) fn truncate_output(s: &str, max_chars: usize) -> String {
+pub(crate) fn truncate_output(s: &str, max_chars: usize) -> String {
     if s.len() <= max_chars {
         return s.to_string();
     }
@@ -43,31 +40,17 @@ pub(super) fn truncate_output(s: &str, max_chars: usize) -> String {
     )
 }
 
-async fn execute_command(mut cmd: Command, timeout_time: Duration) -> Value {
+pub(crate) async fn run_cmd(mut cmd: Command, timeout_time: Duration) -> Value {
     cmd.kill_on_drop(true);
-
-    let result = match timeout(timeout_time, cmd.output()).await {
-        Ok(output_res) => output_res,
-        Err(_) => return json!({ "error": "command timed out" }),
-    };
-
-    let output = match result {
-        Ok(o) => o,
-        Err(e) => return json!({ "error": e.to_string() }),
-    };
-
-    let stdout = truncate_output(
-        String::from_utf8_lossy(&output.stdout).trim(),
-        MAX_OUTPUT_CHARS,
-    );
-    let stderr = truncate_output(
-        String::from_utf8_lossy(&output.stderr).trim(),
-        MAX_OUTPUT_CHARS,
-    );
-
-    json!({
-        "stdout": stdout,
-        "stderr": stderr,
-        "exit_code": output.status.code(),
-    })
+    match timeout(timeout_time, cmd.output()).await {
+        Err(_) => json!({ "error": "命令超时" }),
+        Ok(Err(e)) => json!({ "error": e.to_string() }),
+        Ok(Ok(out)) => json!({
+            "stdout": truncate_output(String::from_utf8_lossy(&out.stdout).trim(), MAX_OUTPUT_CHARS),
+            "stderr": truncate_output(String::from_utf8_lossy(&out.stderr).trim(), MAX_OUTPUT_CHARS),
+            "exit_code": out.status.code(),
+        }),
+    }
 }
+
+pub(crate) use search_spells::outline_value;
