@@ -365,21 +365,24 @@ function ToolCallBubble({
   // Header label: prefer the model-written description (arrives early in the
   // stream because description is always the first parameter).  Fall back to
   // a per-tool heuristic derived from the args when description is absent.
-  const toolLabel =
-    bubble.description ||
-    (() => {
-      if (bubble.name === "bash") {
-        return streamingCommand
-          ? streamingCommand.trim().slice(0, 60)
-          : bubble.name;
-      }
-      if (isReplaceTool || bubble.name === "write") {
-        return streamingEditPath ? streamingEditPath : bubble.name;
-      }
-      if (bubble.name === "run_py") return "Run Python";
-      if (bubble.name === "run_ts") return "Run TypeScript";
-      return bubble.name;
-    })();
+  const toolLabel = useMemo(() => {
+    const placeholders = [
+      "鼓捣鼓捣中",
+      "捯饬捯饬中",
+      "倒腾倒腾中",
+      "琢磨琢磨中",
+      "摆弄摆弄中",
+      "折腾折腾中",
+      "捣鼓捣鼓中",
+      "拾掇拾掇中",
+      "张罗张罗中",
+      "腾挪腾挪中",
+    ];
+    return (
+      bubble.description ||
+      placeholders[Math.floor(Math.random() * placeholders.length)]
+    );
+  }, [bubble.description]);
 
   // ── Early return: ask → question card ────────────────────────────────────
   if (bubble.name === "ask") {
