@@ -419,6 +419,52 @@ impl AppState {
         }
     }
 
+    /// Append a message to the database, awaiting the INSERT before returning.
+    /// This guarantees the BIGSERIAL id is allocated in call order, so that
+    /// assistant messages always get a lower id than the tool messages that follow.
+    /// Embedding is still kicked off asynchronously so it doesn't block the caller.
+    pub async fn persist_message_async(
+        &self,
+        conversation_id: Uuid,
+        msg: &ds_api::raw::request::message::Message,
+    ) {
+        let db = self.db.clone();
+        let embed = self.embed.clone();
+        let msg = msg.clone();
+
+        let row_id = match db.append(conversation_id, &msg, None).await {
+            Ok(id) => id,
+            Err(e) => {
+                error!("db append failed: {e}");
+                return;
+            }
+        };
+
+        let should_embed = matches!(
+            msg.role,
+            ds_api::raw::request::message::Role::User
+                | ds_api::raw::request::message::Role::Assistant
+        );
+
+        if should_embed
+            && let Some(text) = &msg.content
+            && !text.is_empty()
+        {
+            let text = text.clone();
+            tokio::spawn(async move {
+                match embed.embed(&text).await {
+                    Ok(vec) => {
+                        let vector = to_vector(vec);
+                        if let Err(e) = db.set_embedding(row_id, vector).await {
+                            error!("set_embedding failed: {e}");
+                        }
+                    }
+                    Err(e) => error!("embed failed: {e}"),
+                }
+            });
+        }
+    }
+
     /// Append a message to the database and kick off embedding in the background.
     /// Fire-and-forget: errors are logged, never propagated.
     pub fn persist_message(
@@ -693,7 +739,7 @@ async fn run_generation(
                                     reasoning_content: None,
                                     prefix: None,
                                 };
-                                state.persist_message(conversation_id, &assistant_msg);
+                                state.persist_message_async(conversation_id, &assistant_msg).await;
                                 reply_buf.clear();
 
                                 // Persist each tool result in order.
@@ -708,7 +754,7 @@ async fn run_generation(
                                             reasoning_content: None,
                                             prefix: None,
                                         };
-                                        state.persist_message(conversation_id, &tool_msg);
+                                        state.persist_message_async(conversation_id, &tool_msg).await;
                                     }
                                 }
 

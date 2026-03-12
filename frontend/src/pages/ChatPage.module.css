@@ -10,9 +10,11 @@
 /* Sidebar container */
 .sidebarContainer {
     flex-shrink: 0;
+    width: var(--sidebar-width);
+    min-width: var(--sidebar-width);
     transition:
-        width 0.3s ease,
-        min-width 0.3s ease;
+        width 350ms cubic-bezier(0.34, 1.56, 0.64, 1),
+        min-width 350ms cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
 .sidebarHidden {
@@ -61,7 +63,7 @@
     align-items: center;
     padding: 0 16px;
     border-bottom: 1px solid var(--border-subtle);
-    background: var(--bg-surface);
+    background: #faf9f5;
     gap: 12px;
 }
 

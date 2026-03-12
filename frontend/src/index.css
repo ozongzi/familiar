@@ -1,23 +1,26 @@
 /* ─── Anthropic Fonts ───────────────────────────────────────────────────── */
 @font-face {
-    font-family: 'AnthropicSans';
-    src: url('/fonts/69971a00a3295036497e1a28_AnthropicSans-Roman-Web.woff2') format('woff2');
+    font-family: "AnthropicSans";
+    src: url("/fonts/69971a00a3295036497e1a28_AnthropicSans-Roman-Web.woff2")
+        format("woff2");
     font-weight: 400;
     font-style: normal;
     font-display: swap;
 }
 
 @font-face {
-    font-family: 'AnthropicSans';
-    src: url('/fonts/69971a016067bf14b9b8f48d_AnthropicSans-Italic-Web.woff2') format('woff2');
+    font-family: "AnthropicSans";
+    src: url("/fonts/69971a016067bf14b9b8f48d_AnthropicSans-Italic-Web.woff2")
+        format("woff2");
     font-weight: 400;
     font-style: italic;
     font-display: swap;
 }
 
 @font-face {
-    font-family: 'AnthropicMono';
-    src: url('/fonts/69971a2e55d24d61bc045b1a_AnthropicMono-Roman-Web.woff2') format('woff2');
+    font-family: "AnthropicMono";
+    src: url("/fonts/69971a2e55d24d61bc045b1a_AnthropicMono-Roman-Web.woff2")
+        format("woff2");
     font-weight: 400;
     font-style: normal;
     font-display: swap;
@@ -26,7 +29,7 @@
 /* ─── CSS Variables ──────────────────────────────────────────────────────── */
 :root {
     /* Backgrounds */
-    --bg-base: #f7f5ef;
+    --bg-base: #faf9f5;
     --bg-surface: #ffffff;
     --bg-elevated: #f0ede6;
     --bg-hover: #ebe7de;
@@ -39,7 +42,7 @@
     /* Text */
     --text-primary: #1a1915;
     --text-secondary: #6b6651;
-    --text-muted: #a09880;
+    --text-muted: #73726c;
     --text-link: #b85c3a;
 
     /* Accent — Claude's warm terracotta/orange-brown */
@@ -63,7 +66,9 @@
 
     /* Typography */
     --font-sans: "AnthropicSans", "Geist", system-ui, -apple-system, sans-serif;
-    --font-mono: "AnthropicMono", "Geist Mono", "Cascadia Code", "JetBrains Mono", monospace;
+    --font-mono:
+        "AnthropicMono", "Geist Mono", "Cascadia Code", "JetBrains Mono",
+        monospace;
 
     /* Layout */
     --sidebar-width: 280px;
@@ -187,6 +192,7 @@ textarea {
 
 /* ─── Markdown prose ─────────────────────────────────────────────────────── */
 .prose {
+    font-family: var(--font-serif);
     line-height: 1.75;
     word-break: break-word;
     overflow-wrap: break-word;
@@ -459,4 +465,9 @@ textarea {
     clip: rect(0, 0, 0, 0);
     white-space: nowrap;
     border-width: 0;
+}
+
+.prose img {
+    max-width: 100%;
+    height: auto;
 }

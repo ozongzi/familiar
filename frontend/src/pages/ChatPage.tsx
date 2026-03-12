@@ -38,7 +38,9 @@ export function ChatPage() {
   // Creates a real conversation and returns its id.  Does NOT call setActiveId
   // here — that happens in onConversationCreated so we can set the skip flag
   // first.
-  const createDraftConversation = useCallback(async (): Promise<string | null> => {
+  const createDraftConversation = useCallback(async (): Promise<
+    string | null
+  > => {
     const conv = await createConversation();
     if (!conv) return null;
     // Set the flag before setActiveId so the effect sees it synchronously.
@@ -80,11 +82,25 @@ export function ChatPage() {
     { onConversationCreated: autoTitle },
   );
 
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const messagesRef = useRef<HTMLDivElement>(null);
+  const lockedRef = useRef(true);
+
+  // Unlock auto-scroll when the user scrolls up; re-lock when back at bottom.
+  useEffect(() => {
+    const el = messagesRef.current;
+    if (!el) return;
+    const onScroll = () => {
+      lockedRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+    };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+  }, []);
 
   // ── Auto-scroll ────────────────────────────────────────────────────────
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    const el = messagesRef.current;
+    if (!el || !lockedRef.current) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
   }, [bubbles]);
 
   // ── Load history when switching to a real conversation ─────────────────
@@ -121,7 +137,9 @@ export function ChatPage() {
       }
     })();
 
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [activeId, token, clearBubbles, setHistory, reattach]);
 
   // ── On initial load: start in draft mode (not the most recent conv) ────
@@ -176,16 +194,22 @@ export function ChatPage() {
   );
 
   const handleSend = useCallback(
-    (text: string) => { send(text); },
+    (text: string) => {
+      send(text);
+    },
     [send],
   );
 
   const handleInterrupt = useCallback(
-    (text: string) => { interrupt(text); },
+    (text: string) => {
+      interrupt(text);
+    },
     [interrupt],
   );
 
-  const handleAbort = useCallback(() => { abort(); }, [abort]);
+  const handleAbort = useCallback(() => {
+    abort();
+  }, [abort]);
 
   const handleUpload = useCallback(
     (result: { filename: string; path: string; size: number }) => {
@@ -196,7 +220,9 @@ export function ChatPage() {
 
   // Called by ChatInput when it needs a conversation id but we're in draft mode.
   // Creates a real conversation so the upload can be linked to it.
-  const handleRequestConversationId = useCallback(async (): Promise<string | null> => {
+  const handleRequestConversationId = useCallback(async (): Promise<
+    string | null
+  > => {
     if (activeId && activeId !== DRAFT_ID) return activeId;
     return await createDraftConversation();
   }, [activeId, createDraftConversation]);
@@ -219,7 +245,9 @@ export function ChatPage() {
       />
 
       {/* Sidebar */}
-      <div className={`${styles.sidebarContainer} ${sidebarVisible ? "" : styles.sidebarHidden}`}>
+      <div
+        className={`${styles.sidebarContainer} ${sidebarVisible ? "" : styles.sidebarHidden}`}
+      >
         <Sidebar
           conversations={conversations}
           activeId={sidebarActiveId}
@@ -273,7 +301,7 @@ export function ChatPage() {
         </header>
 
         {/* Message area */}
-        <div className={styles.messages}>
+        <div ref={messagesRef} className={styles.messages}>
           {isDraft && bubbles.length === 0 && (
             <div className={styles.empty}>
               <img src="/favicon.svg" width={52} height={52} alt="" />
@@ -307,8 +335,6 @@ export function ChatPage() {
               ⚠️ {errorMsg}
             </div>
           )}
-
-          <div ref={bottomRef} />
         </div>
 
         {/* Input — always enabled in draft mode */}
@@ -333,9 +359,17 @@ export function ChatPage() {
 
 function MenuIcon() {
   return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
-      stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-      aria-hidden="true">
+    <svg
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
       <line x1="3" y1="12" x2="21" y2="12" />
       <line x1="3" y1="6" x2="21" y2="6" />
       <line x1="3" y1="18" x2="21" y2="18" />
@@ -345,9 +379,17 @@ function MenuIcon() {
 
 function SidebarOpenIcon() {
   return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
-      stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-      aria-hidden="true">
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
       <rect x="3" y="3" width="18" height="18" rx="2" />
       <line x1="9" y1="3" x2="9" y2="21" />
     </svg>
@@ -356,9 +398,17 @@ function SidebarOpenIcon() {
 
 function SidebarCloseIcon() {
   return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
-      stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-      aria-hidden="true">
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
       <rect x="3" y="3" width="18" height="18" rx="2" />
       <line x1="15" y1="3" x2="15" y2="21" />
     </svg>
@@ -367,9 +417,17 @@ function SidebarCloseIcon() {
 
 function NewChatIcon() {
   return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
-      stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-      aria-hidden="true">
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
       <path d="M12 5v14M5 12h14" />
     </svg>
   );

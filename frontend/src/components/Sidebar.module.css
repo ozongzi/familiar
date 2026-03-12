@@ -4,8 +4,8 @@
     width: var(--sidebar-width);
     min-width: var(--sidebar-width);
     height: 100%;
-    background: var(--bg-surface);
-    border-right: 1px solid var(--border);
+    background: #faf9f6;
+    border-right: 1px solid #e8e4db;
     display: flex;
     flex-direction: column;
     overflow: hidden;
@@ -44,7 +44,7 @@
     justify-content: space-between;
     padding: 0 16px;
     height: var(--header-height);
-    border-bottom: 1px solid var(--border-subtle);
+    border-bottom: 1px solid #e8e4db;
     flex-shrink: 0;
 }
 
@@ -54,7 +54,7 @@
     gap: 10px;
     font-size: 1em;
     font-weight: 600;
-    color: var(--text-primary);
+    color: #3d3d3a;
     letter-spacing: 0.01em;
     user-select: none;
 }
@@ -66,7 +66,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    color: var(--text-secondary);
+    color: #9a9182;
     transition:
         background var(--transition),
         color var(--transition);
@@ -74,12 +74,12 @@
 }
 
 .newBtn:hover {
-    background: var(--bg-hover);
-    color: var(--text-primary);
+    background: #ebe7de;
+    color: #3d3d3a;
 }
 
 .newBtn:active {
-    background: var(--bg-active);
+    background: #e4dfd4;
     transform: scale(0.95);
 }
 
@@ -96,7 +96,7 @@
 
 .empty {
     font-size: 0.85em;
-    color: var(--text-muted);
+    color: #a09880;
     text-align: center;
     padding: 32px 16px;
     line-height: 1.6;
@@ -120,7 +120,7 @@
 }
 
 .item:hover {
-    background: var(--bg-hover);
+    background: #ebe7de;
 }
 
 .item:focus-visible {
@@ -128,11 +128,11 @@
 }
 
 .itemActive {
-    background: var(--bg-elevated) !important;
+    background: #f0eee6 !important;
 }
 
 .itemActive .convName {
-    color: var(--text-primary);
+    color: #3d3d3a;
     font-weight: 500;
 }
 
@@ -147,7 +147,7 @@
 
 .convName {
     font-size: 0.9em;
-    color: var(--text-secondary);
+    color: #6b6651;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -158,17 +158,17 @@
 }
 
 .item:hover .convName {
-    color: var(--text-primary);
+    color: #3d3d3a;
 }
 
 .renameInput {
     flex: 1;
-    background: var(--bg-base);
+    background: #faf9f6;
     border: 1px solid var(--accent);
     border-radius: var(--radius-sm);
     padding: 4px 8px;
     font-size: 0.9em;
-    color: var(--text-primary);
+    color: #3d3d3a;
     outline: none;
     width: 100%;
     height: 32px;
@@ -200,7 +200,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    color: var(--text-muted);
+    color: #a09880;
     transition:
         background var(--transition),
         color var(--transition);
@@ -208,8 +208,8 @@
 }
 
 .actionBtn:hover {
-    background: var(--border);
-    color: var(--text-primary);
+    background: #ddd8ce;
+    color: #3d3d3a;
 }
 
 .actionBtn:active {
@@ -236,8 +236,8 @@
     gap: 8px;
     padding: 0 16px;
     height: 60px;
-    border-top: 1px solid var(--border-subtle);
-    background: var(--bg-surface);
+    border-top: 1px solid #e8e4db;
+    background: #faf9f6;
 }
 
 .userName {
@@ -245,7 +245,7 @@
     align-items: center;
     gap: 8px;
     font-size: 0.88em;
-    color: var(--text-secondary);
+    color: #6b6651;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -260,7 +260,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    color: var(--text-muted);
+    color: #a09880;
     transition:
         background var(--transition),
         color var(--transition);
@@ -290,15 +290,15 @@
         border-radius: var(--radius-md);
         align-items: center;
         justify-content: center;
-        color: var(--text-secondary);
+        color: #6b6651;
         transition:
             background var(--transition),
             color var(--transition);
     }
 
     .closeBtn:hover {
-        background: var(--bg-hover);
-        color: var(--text-primary);
+        background: #ebe7de;
+        color: #3d3d3a;
     }
 
     .closeBtn:active {

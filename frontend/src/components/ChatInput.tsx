@@ -21,15 +21,8 @@ interface Props {
   disabled?: boolean;
   placeholder?: string;
   token?: string | null;
-  /** Current conversation id — if set, the upload is linked to the conversation. */
   conversationId?: string | null;
-  /**
-   * Called when an upload needs a conversation id but none exists yet
-   * (draft mode). Should create a new conversation and return its id,
-   * or null on failure.
-   */
   requestConversationId?: () => Promise<string | null>;
-  /** Called after a successful upload with the saved file info. */
   onUpload?: (result: UploadResult) => void;
 }
 
@@ -50,10 +43,8 @@ export function ChatInput({
   const [hasText, setHasText] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const MAX_FILE_SIZE = 50 * 1024 * 1024;
 
-  const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50 MB
-
-  // Auto-resize textarea to fit content
   const resize = useCallback(() => {
     const el = textareaRef.current;
     if (!el) return;
@@ -69,9 +60,7 @@ export function ChatInput({
     const el = textareaRef.current;
     if (!el || disabled) return;
     const text = el.value.trim();
-
     if (streaming) {
-      // During streaming: non-empty text → interrupt, empty → abort
       if (text && onInterrupt) {
         onInterrupt(text);
         el.value = "";
@@ -82,7 +71,6 @@ export function ChatInput({
       }
       return;
     }
-
     if (!text) return;
     onSend(text);
     el.value = "";
@@ -92,12 +80,10 @@ export function ChatInput({
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent<HTMLTextAreaElement>) => {
-      // Enter sends/interrupts/aborts; Shift+Enter inserts newline
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
         submit();
       }
-      // Escape aborts during streaming
       if (e.key === "Escape" && streaming && onAbort) {
         onAbort();
       }
@@ -111,78 +97,59 @@ export function ChatInput({
     setHasText((el?.value.trim().length ?? 0) > 0);
   }, [resize]);
 
-  // Handle file upload
   const handleFileUpload = useCallback(async () => {
     const fileInput = fileInputRef.current;
     if (!fileInput || !fileInput.files || fileInput.files.length === 0) return;
-
     const file = fileInput.files[0];
-
-    // Client-side size check before even attempting the upload.
     if (file.size > MAX_FILE_SIZE) {
-      setUploadError(`文件过大（最大 50 MB），当前：${(file.size / 1024 / 1024).toFixed(1)} MB`);
+      setUploadError(
+        `文件过大（最大 50 MB），当前：${(file.size / 1024 / 1024).toFixed(1)} MB`,
+      );
       fileInput.value = "";
       return;
     }
-
-    // Resolve the conversation id: use the existing one, or create a new
-    // conversation on-the-fly so the upload can always be linked to a conversation.
     let convId = conversationId ?? null;
     if (!convId && requestConversationId) {
       convId = await requestConversationId();
     }
-
     const formData = new FormData();
     formData.append("file", file, file.name);
-    if (convId) {
-      formData.append("conversation_id", convId);
-    }
-
+    if (convId) formData.append("conversation_id", convId);
     setIsUploading(true);
     setUploadError(null);
-
     try {
       const authToken = token ?? localStorage.getItem("familiar_token");
       const res = await fetch("/api/files", {
         method: "POST",
-        headers: {
-          Authorization: `Bearer ${authToken}`,
-        },
+        headers: { Authorization: `Bearer ${authToken}` },
         body: formData,
       });
-
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: "上传失败" }));
         throw new Error(err?.error ?? `上传失败 (${res.status})`);
       }
-
       const json = (await res.json()) as {
         filename: string;
         path: string;
         size: number;
       };
-      // Notify parent to display the uploaded file bubble.
       onUpload?.({ filename: json.filename, path: json.path, size: json.size });
     } catch (err) {
       setUploadError(err instanceof Error ? err.message : "上传失败，请重试");
     } finally {
-      // Always reset the input so re-selecting the same file triggers onChange.
       fileInput.value = "";
       setIsUploading(false);
     }
   }, [token, conversationId, requestConversationId, onUpload, MAX_FILE_SIZE]);
 
-  // Derive what the action button does right now
   const isAbortMode = streaming && !hasText;
   const isInterruptMode = streaming && hasText;
   const isSendMode = !streaming;
-
   const btnDisabled = disabled || (isSendMode && !hasText);
 
   return (
     <div className={styles.wrapper}>
       <div className={`${styles.box} ${disabled ? styles.boxDisabled : ""}`}>
-        {/* Hidden file input */}
         <input
           ref={fileInputRef}
           type="file"
@@ -191,21 +158,7 @@ export function ChatInput({
           aria-label="上传文件"
         />
 
-        {/* Upload button */}
-        <button
-          className={`${styles.uploadBtn} ${isUploading ? styles.uploadBtnLoading : ""}`}
-          onClick={() => fileInputRef.current?.click()}
-          disabled={disabled || isUploading}
-          aria-label="上传文件"
-          title="上传文件"
-        >
-          {isUploading ? (
-            <span className={styles.uploadSpinner} />
-          ) : (
-            <UploadIcon />
-          )}
-        </button>
-
+        {/* 上方：textarea */}
         <textarea
           ref={textareaRef}
           className={styles.textarea}
@@ -222,35 +175,51 @@ export function ChatInput({
           aria-label="消息输入框"
         />
 
-        {/* Abort button — shown separately when streaming with no text */}
-        {isAbortMode && (
+        {/* 下方：工具栏 */}
+        <div className={styles.toolbar}>
           <button
-            className={styles.abortBtn}
-            onClick={onAbort}
-            aria-label="停止生成"
-            title="停止生成 (Esc)"
+            className={`${styles.uploadBtn} ${isUploading ? styles.uploadBtnLoading : ""}`}
+            onClick={() => fileInputRef.current?.click()}
+            disabled={disabled || isUploading}
+            aria-label="上传文件"
+            title="上传文件"
           >
-            <StopIcon />
+            {isUploading ? (
+              <span className={styles.uploadSpinner} />
+            ) : (
+              <UploadIcon />
+            )}
           </button>
-        )}
 
-        {/* Send / interrupt button */}
-        {!isAbortMode && (
-          <button
-            className={`${styles.sendBtn} ${isInterruptMode ? styles.sendBtnInterrupt : ""}`}
-            onClick={submit}
-            disabled={btnDisabled}
-            aria-label={isInterruptMode ? "追加消息" : "发送"}
-            title={isInterruptMode ? "追加消息 (Enter)" : "发送 (Enter)"}
-          >
-            {isInterruptMode ? <InterruptIcon /> : <SendIcon />}
-          </button>
-        )}
+          <div className={styles.toolbarRight}>
+            {streaming && <span className={styles.hint}>正在生成…</span>}
+
+            {isAbortMode && (
+              <button
+                className={styles.abortBtn}
+                onClick={onAbort}
+                aria-label="停止生成"
+                title="停止生成 (Esc)"
+              >
+                <StopIcon />
+              </button>
+            )}
+
+            {!isAbortMode && (
+              <button
+                className={`${styles.sendBtn} ${isInterruptMode ? styles.sendBtnInterrupt : ""}`}
+                onClick={submit}
+                disabled={btnDisabled}
+                aria-label={isInterruptMode ? "追加消息" : "发送"}
+                title={isInterruptMode ? "追加消息 (Enter)" : "发送 (Enter)"}
+              >
+                {isInterruptMode ? <InterruptIcon /> : <SendIcon />}
+              </button>
+            )}
+          </div>
+        </div>
       </div>
 
-      {streaming && (
-        <p className={styles.hint}>正在生成回复… 可追加消息或按 Esc 打断</p>
-      )}
       {uploadError && (
         <p className={styles.uploadError} role="alert">
           ⚠️ {uploadError}
@@ -264,18 +233,13 @@ function SendIcon() {
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
-      width="18"
-      height="18"
+      width="16"
+      height="16"
       viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
+      fill="currentColor"
       aria-hidden="true"
     >
-      <line x1="22" y1="2" x2="11" y2="13" />
-      <polygon points="22 2 15 22 11 13 2 9 22 2" />
+      <path d="M2 12L22 2L13 22L11 13L2 12Z" />
     </svg>
   );
 }

@@ -148,11 +148,11 @@ pub async fn auto_title(
         return Err(AppError::not_found("对话不存在"));
     }
 
-    use ds_api::{ApiClient, ApiRequest};
     use ds_api::raw::request::message::{Message, Role};
+    use ds_api::{ApiClient, ApiRequest};
 
-    let client = ApiClient::new(state.deepseek_token.clone())
-        .with_base_url(state.model_api_base.clone());
+    let client =
+        ApiClient::new(state.deepseek_token.clone()).with_base_url(state.model_api_base.clone());
 
     let system = Message::new(
         Role::System,
@@ -161,10 +161,14 @@ pub async fn auto_title(
     );
     let user = Message::new(Role::User, &req.prompt);
 
-    let api_req = ApiRequest::builder()
+    let mut api_req = ApiRequest::builder()
         .with_model(state.model_name.clone())
         .messages(vec![system, user])
         .max_tokens(32);
+
+    for (k, v) in state.model_extra_body.iter() {
+        api_req.add_extra_field(k, v.clone());
+    }
 
     let resp = client
         .send(api_req)
