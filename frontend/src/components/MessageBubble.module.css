@@ -845,6 +845,17 @@
     color: var(--text-primary);
 }
 
+/* spawn bubble 内嵌的子工具调用，去掉外层 padding */
+.toolRowNested {
+    margin: 2px 0;
+    width: 100%;
+}
+
+.spawnTextBlock {
+    padding: 4px 0 2px;
+    font-size: 0.9em;
+}
+
 /* ─── Spawn bubble ───────────────────────────────────────────────────────── */
 
 .spawnWrap {
@@ -930,6 +941,9 @@
     padding-top: 8px;
     border-top: 0.5px solid color-mix(in srgb, #5DCAA5 30%, transparent);
     font-size: 0.875em;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
 }
 
 /* ─── Mobile styles ──────────────────────────────────────────────────────── */

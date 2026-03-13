@@ -6,6 +6,7 @@ import type {
   UploadBubble,
   WsServerEvent,
   Message,
+  // SpawnEvent,
 } from "../api/types";
 
 type ChatStatus = "idle" | "connecting" | "streaming" | "error";
@@ -116,24 +117,54 @@ export function useChat(
     return key;
   }
 
-  function appendSpawnOutput(chunk: string): boolean {
-    let updated = false;
+  // 向最近一个 pending spawn bubble 追加一条子事件（tool 或 text），保持到达顺序。
+  function appendSpawnText(chunk: string) {
     setBubbles((prev) => {
       for (let i = prev.length - 1; i >= 0; i--) {
         const b = prev[i];
-        if (b.kind === "tool" && b.name === "spawn" && b.pending) {
-          updated = true;
-          const next = [...prev];
+        if (b.kind !== "tool" || b.name !== "spawn" || !b.pending) continue;
+        const events = b.spawnEvents ?? [];
+        // 如果最后一个事件是 text，追加内容；否则新建一条
+        const last = events[events.length - 1];
+        const next = [...prev];
+        if (last?.kind === "text") {
           next[i] = {
             ...b,
-            spawnOutput: (b.spawnOutput ?? "") + chunk,
+            spawnEvents: [
+              ...events.slice(0, -1),
+              { kind: "text", key: last.key, content: last.content + chunk },
+            ],
           };
-          return next;
+        } else {
+          next[i] = {
+            ...b,
+            spawnEvents: [...events, { kind: "text", key: uid(), content: chunk }],
+          };
         }
+        return next;
       }
       return prev;
     });
-    return updated;
+  }
+
+  function upsertSpawnChild(child: ToolBubble) {
+    setBubbles((prev) => {
+      for (let i = prev.length - 1; i >= 0; i--) {
+        const b = prev[i];
+        if (b.kind !== "tool" || b.name !== "spawn" || !b.pending) continue;
+        const events = b.spawnEvents ?? [];
+        const idx = events.findIndex((e) => e.kind === "tool" && e.bubble.key === child.key);
+        const next = [...prev];
+        next[i] = {
+          ...b,
+          spawnEvents: idx >= 0
+              ? events.map((e, j) => j === idx ? { kind: "tool" as const, bubble: child } : e)
+              : [...events, { kind: "tool" as const, bubble: child }],
+        };
+        return next;
+      }
+      return prev;
+    });
   }
 
   // ── Public API ─────────────────────────────────────────────────────────────
@@ -176,7 +207,6 @@ export function useChat(
             argsRaw,
             result,
             pending: result === null,
-            spawnOutput: undefined,
           };
           history.push(toolBubble);
         }
@@ -318,8 +348,7 @@ export function useChat(
         );
       } else if (event.type === "token") {
         if (event.source === "spawn") {
-          // 无论有没有找到 pending spawn bubble，spawn token 都不进主文本流
-          appendSpawnOutput(event.content);
+          appendSpawnText(event.content);
           return false;
         }
         const key = ensureActiveText();
@@ -332,10 +361,20 @@ export function useChat(
         );
       } else if (event.type === "tool_call") {
         if (event.source === "spawn") {
-          // 累积子 Agent 工具调用的流式 args，等 tool_result 再渲染
+          // 流式 args 累积 + 创建/更新子 ToolBubble
           const acc = spawnToolArgsRef.current.get(event.id) ?? { name: event.name, argsRaw: "" };
           acc.argsRaw += event.delta;
           spawnToolArgsRef.current.set(event.id, acc);
+          upsertSpawnChild({
+            kind: "tool",
+            key: `spawn-tool-${event.id}`,
+            role: "tool",
+            name: event.name,
+            description: extractDescription(acc.argsRaw) ?? "",
+            argsRaw: acc.argsRaw,
+            result: null,
+            pending: true,
+          });
           return false;
         }
         setBubbles((prev) => {
@@ -369,28 +408,25 @@ export function useChat(
             argsRaw: event.delta,
             result: null,
             pending: true,
-            spawnOutput: event.name === "spawn" ? "" : undefined,
+
           };
           return [...prev, toolBubble];
         });
       } else if (event.type === "tool_result") {
         if (event.source === "spawn") {
-          // 子 Agent 工具完成：在 spawnOutput 里追加一行摘要
+          // 子 Agent 工具完成：更新 spawnChildren 里对应的 child bubble
           const acc = spawnToolArgsRef.current.get(event.id);
           spawnToolArgsRef.current.delete(event.id);
-          const toolName = acc?.name ?? event.name;
-          // 尝试解析 result，截取前 120 字符作为摘要
-          let resultSummary = "";
-          if (event.result !== null && event.result !== undefined) {
-            const raw = typeof event.result === "string"
-                ? event.result
-                : JSON.stringify(event.result);
-            resultSummary = raw.length > 120 ? raw.slice(0, 120) + "…" : raw;
-          }
-          const line = resultSummary
-              ? `\n> \`${toolName}\` → ${resultSummary}`
-              : `\n> \`${toolName}\` ✓`;
-          appendSpawnOutput(line);
+          upsertSpawnChild({
+            kind: "tool",
+            key: `spawn-tool-${event.id}`,
+            role: "tool",
+            name: acc?.name ?? event.name,
+            description: extractDescription(acc?.argsRaw ?? "") ?? "",
+            argsRaw: acc?.argsRaw ?? "",
+            result: event.result,
+            pending: false,
+          });
           return false;
         }
         setBubbles((prev) =>
@@ -402,14 +438,6 @@ export function useChat(
                       pending: false,
                       // If backend sent complete args (e.g. MiniMax sends no streaming delta), update argsRaw
                       ...(event.args && event.args.length > 0 ? { argsRaw: event.args } : {}),
-                      spawnOutput:
-                          b.name === "spawn" &&
-                          (!b.spawnOutput || b.spawnOutput.length === 0) &&
-                          event.result &&
-                          typeof event.result === "object" &&
-                          "result" in (event.result as Record<string, unknown>)
-                              ? String((event.result as Record<string, unknown>).result ?? "")
-                              : b.spawnOutput,
                     }
                     : b,
             ),

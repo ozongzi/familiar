@@ -61,21 +61,21 @@ export interface Message {
 // ─── WebSocket events ─────────────────────────────────────────────────────
 
 export type WsServerEvent =
-  | { type: "token"; content: string; source?: "spawn" }
-  | { type: "reasoning_token"; content: string }
-  | { type: "tool_call"; id: string; name: string; delta: string; source?: "spawn" }
-  | { type: "tool_result"; id: string; name: string; args?: string; result: unknown; source?: "spawn" }
-  | { type: "user_interrupt"; content: string }
-  | { type: "aborted" }
-  | { type: "done" }
-  | { type: "error"; message: string };
+    | { type: "token"; content: string; source?: "spawn" }
+    | { type: "reasoning_token"; content: string }
+    | { type: "tool_call"; id: string; name: string; delta: string; source?: "spawn" }
+    | { type: "tool_result"; id: string; name: string; args?: string; result: unknown; source?: "spawn" }
+    | { type: "user_interrupt"; content: string }
+    | { type: "aborted" }
+    | { type: "done" }
+    | { type: "error"; message: string };
 
 export type WsClientMsg =
-  | { token: string }
-  | { content: string }
-  | { type: "interrupt"; content: string }
-  | { type: "answer"; content: string }
-  | { type: "abort" };
+    | { token: string }
+    | { content: string }
+    | { type: "interrupt"; content: string }
+    | { type: "answer"; content: string }
+    | { type: "abort" };
 
 // ─── UI-only chat bubble ──────────────────────────────────────────────────
 
@@ -90,6 +90,11 @@ export interface TextBubble {
   streaming: boolean;
 }
 
+/** A single event in a sub-agent's execution, in arrival order. */
+export type SpawnEvent =
+    | { kind: "tool"; bubble: ToolBubble }
+    | { kind: "text"; key: string; content: string };
+
 export interface ToolBubble {
   kind: "tool";
   key: string;
@@ -102,8 +107,8 @@ export interface ToolBubble {
   result: unknown | null;
   /** Still waiting for the tool_result event */
   pending: boolean;
-  /** Live token stream emitted by spawn 子 Agent。 */
-  spawnOutput?: string;
+  /** Ordered sequence of sub-agent events, preserving interleaving of tool calls and text. */
+  spawnEvents?: SpawnEvent[];
 }
 
 /** A file the user uploaded — rendered as a right-aligned user bubble. */

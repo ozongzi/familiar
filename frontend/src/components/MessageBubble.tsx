@@ -225,9 +225,11 @@ function extractArgsField(raw: string, key: string): string | null {
 function ToolCallBubble({
                           bubble,
                           onAnswer,
+                          nested = false,
                         }: {
   bubble: Extract<ChatBubble, { kind: "tool" }>;
   onAnswer?: (text: string) => void;
+  nested?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
 
@@ -303,11 +305,7 @@ function ToolCallBubble({
           ? JSON.stringify(bubble.result, null, 2)
           : null;
 
-  const spawnOutput = bubble.name === "spawn" ? (bubble.spawnOutput ?? "") : "";
-  const spawnResultText =
-      bubble.name === "spawn" && result && typeof result.result === "string"
-          ? String(result.result)
-          : "";
+  const spawnEvents = bubble.name === "spawn" ? (bubble.spawnEvents ?? []) : [];
 
   // ── Extract script content from streaming argsRaw (run_py / run_ts) ───────
   const streamingScript = useMemo(() => {
@@ -478,11 +476,19 @@ function ToolCallBubble({
               )}
             </button>
 
-            {expanded && (spawnOutput.length > 0 || spawnResultText.length > 0) && (
+            {expanded && spawnEvents.length > 0 && (
                 <div className={styles.spawnBody}>
-                  <MarkdownRenderer
-                      content={`${spawnOutput || spawnResultText}${bubble.pending ? "\n\n█" : ""}`}
-                  />
+                  {spawnEvents.map((ev, i) =>
+                      ev.kind === "tool" ? (
+                          <ToolCallBubble key={ev.bubble.key} bubble={ev.bubble} nested />
+                      ) : (
+                          <div key={ev.key} className={styles.spawnTextBlock}>
+                            <MarkdownRenderer
+                                content={ev.content + (bubble.pending && i === spawnEvents.length - 1 ? "█" : "")}
+                            />
+                          </div>
+                      )
+                  )}
                 </div>
             )}
           </div>
@@ -492,7 +498,7 @@ function ToolCallBubble({
 
   if (isInline) {
     return (
-        <div className={styles.toolRow}>
+        <div className={nested ? styles.toolRowNested : styles.toolRow}>
           <div className={styles.toolBubbleInline}>
             {/* Header — always clickable to toggle detail */}
             <button
@@ -578,16 +584,6 @@ function ToolCallBubble({
                       </div>
                   )}
 
-                  {/* spawn: 子 Agent 流式输出 */}
-                  {isSpawn &&
-                      (spawnOutput.length > 0 || spawnResultText.length > 0) && (
-                          <div className={styles.toolSection}>
-                            <p className={styles.toolSectionLabel}>子 Agent 输出</p>
-                            <MarkdownRenderer
-                                content={`${spawnOutput || spawnResultText}${bubble.pending ? "\n\n█" : ""}`}
-                            />
-                          </div>
-                      )}
                   {/* run_py / run_ts: syntax-highlighted script preview (streaming or done) */}
                   {isTerminal && streamingScript !== null && (
                       <div className={styles.scriptPreview}>
@@ -643,7 +639,7 @@ function ToolCallBubble({
   }
 
   return (
-      <div className={styles.toolRow}>
+      <div className={nested ? styles.toolRowNested : styles.toolRow}>
         <div className={styles.toolBubble}>
           <button
               className={styles.toolHeader}
