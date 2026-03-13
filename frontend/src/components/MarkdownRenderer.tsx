@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef } from "react";
 import { marked, type Renderer } from "marked";
+import markedKatex from "marked-katex-extension";
 import hljs from "highlight.js";
 import DOMPurify from "dompurify";
 
@@ -15,15 +16,15 @@ function buildRenderer(): Partial<Renderer> {
     code({ text, lang }) {
       const language = lang && hljs.getLanguage(lang) ? lang : "";
       const highlighted = language
-        ? hljs.highlight(text, { language }).value
-        : text
-            .replace(/&/g, "&amp;")
-            .replace(/</g, "&lt;")
-            .replace(/>/g, "&gt;");
+          ? hljs.highlight(text, { language }).value
+          : text
+              .replace(/&/g, "&amp;")
+              .replace(/</g, "&lt;")
+              .replace(/>/g, "&gt;");
 
       const langLabel = language
-        ? `<span class="code-lang">${language}</span>`
-        : "";
+          ? `<span class="code-lang">${language}</span>`
+          : "";
 
       // The copy button uses a data attribute; the actual click handler is
       // wired up imperatively in a useEffect after the HTML is injected.
@@ -53,6 +54,7 @@ function buildRenderer(): Partial<Renderer> {
 
 // Build once, reuse across renders.
 const renderer = buildRenderer();
+marked.use(markedKatex({ throwOnError: false, output: "html" }));
 marked.use({
   renderer,
   breaks: true,
@@ -98,6 +100,20 @@ export function MarkdownRenderer({ content, className }: Props) {
         "span",
         "div",
         "button",
+        "annotation",
+        "semantics",
+        "math",
+        "mrow",
+        "mi",
+        "mn",
+        "mo",
+        "msup",
+        "msub",
+        "mfrac",
+        "msqrt",
+        "mtable",
+        "mtr",
+        "mtd",
         "svg",
         "path",
         "rect",
@@ -126,6 +142,7 @@ export function MarkdownRenderer({ content, className }: Props) {
         "ry",
         "d",
         "data-code",
+        "style",
       ],
       FORCE_BODY: false,
       RETURN_DOM_FRAGMENT: false,
@@ -138,7 +155,7 @@ export function MarkdownRenderer({ content, className }: Props) {
     if (!container) return;
 
     const buttons =
-      container.querySelectorAll<HTMLButtonElement>(".code-copy-btn");
+        container.querySelectorAll<HTMLButtonElement>(".code-copy-btn");
 
     function handleCopy(e: MouseEvent) {
       const btn = e.currentTarget as HTMLButtonElement;
@@ -164,10 +181,10 @@ export function MarkdownRenderer({ content, className }: Props) {
   }, [html]);
 
   return (
-    <div
-      ref={containerRef}
-      className={`prose${className ? ` ${className}` : ""}`}
-      dangerouslySetInnerHTML={{ __html: html }}
-    />
+      <div
+          ref={containerRef}
+          className={`prose${className ? ` ${className}` : ""}`}
+          dangerouslySetInnerHTML={{ __html: html }}
+      />
   );
 }

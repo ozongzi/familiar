@@ -49,6 +49,7 @@ pub struct ServerConfig {
     pub port: u16,
     /// Path to a file whose contents become the system prompt.
     pub system_prompt: Option<String>,
+    pub subagent_prompt: Option<String>,
 }
 
 /// A single MCP server to launch at startup.
@@ -94,8 +95,79 @@ impl Config {
         cfg.try_deserialize().expect("invalid configuration")
     }
 
-    /// Read the system prompt from disk if `server.system_prompt_file` is set.
+    /// Returns the system prompt. Falls back to a built-in default if none is configured.
+    /// Appends skills summary if any skills are found in /srv/familiar/skills/.
     pub fn system_prompt(&self) -> Option<String> {
-        self.server.system_prompt.clone()
+        let base = self.server.system_prompt.clone();
+        if let Some(summary) = Self::skills_summary() {
+            let base = base.unwrap_or_default();
+            Some(format!("{base}{summary}"))
+        } else {
+            base
+        }
     }
+
+    /// Scans /srv/familiar/skills/ and returns a summary string listing
+    /// available skills (name + description from frontmatter), or None if
+    /// the directory is empty or missing.
+    pub fn skills_summary() -> Option<String> {
+        let dir = std::path::Path::new("/srv/familiar/skills");
+        let entries = std::fs::read_dir(dir).ok()?;
+        let mut skills = Vec::new();
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("md") {
+                continue;
+            }
+            let content = std::fs::read_to_string(&path).unwrap_or_default();
+            let (name, description) = parse_skill_meta(&content);
+            let name = name.unwrap_or_else(|| {
+                path.file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("unknown")
+                    .to_string()
+            });
+            if let Some(desc) = description {
+                skills.push(format!("- {name}: {desc}"));
+            } else {
+                skills.push(format!("- {name}"));
+            }
+        }
+        if skills.is_empty() {
+            return None;
+        }
+        skills.sort();
+        Some(format!(
+            "\n\n可用 Skills（需要时调用 load_skill 获取详细指令）：\n{}",
+            skills.join("\n")
+        ))
+    }
+
+    pub(crate) fn subagent_prompt(&self) -> Option<String> {
+        self.server.subagent_prompt.clone()
+    }
+}
+
+/// Extract `name` and `description` from YAML frontmatter of a skill file.
+fn parse_skill_meta(content: &str) -> (Option<String>, Option<String>) {
+    let content = content.trim_start();
+    if !content.starts_with("---") {
+        return (None, None);
+    }
+    let inner = &content[3..];
+    let end = match inner.find("\n---") {
+        Some(i) => i,
+        None => return (None, None),
+    };
+    let frontmatter = &inner[..end];
+    let mut name = None;
+    let mut description = None;
+    for line in frontmatter.lines() {
+        if let Some(v) = line.strip_prefix("name:") {
+            name = Some(v.trim().to_string());
+        } else if let Some(v) = line.strip_prefix("description:") {
+            description = Some(v.trim().to_string());
+        }
+    }
+    (name, description)
 }

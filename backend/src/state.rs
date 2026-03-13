@@ -142,6 +142,8 @@ pub struct AppState {
     /// Optional system prompt applied to every freshly created agent.
     pub system_prompt: Option<String>,
 
+    pub subagent_prompt: Option<String>,
+
     /// PostgreSQL connection pool.
     pub pool: PgPool,
 
@@ -173,6 +175,7 @@ impl AppState {
             // Extra model request body fields (JSON values) loaded directly from config.
             model_extra_body: cfg.model.extra_body.clone(),
             system_prompt: cfg.system_prompt(),
+            subagent_prompt: cfg.subagent_prompt(),
             pool,
             db,
             embed: EmbeddingClient::new(
@@ -253,6 +256,7 @@ impl AppState {
         let (spawn_tx, _) = tokio::sync::broadcast::channel::<String>(256);
 
         let spell_deps = SpellDeps {
+            subagent_prompt: self.subagent_prompt.clone(),
             ask_pending: Arc::clone(&ask_user_pending),
             api_key: self.deepseek_token.clone(),
             api_base: self.model_api_base.clone(),

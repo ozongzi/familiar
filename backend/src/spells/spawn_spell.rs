@@ -4,7 +4,6 @@ use ds_api::{AgentEvent, DeepseekAgent, McpTool, tool, tool_trait::ToolBundle};
 use futures::StreamExt;
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
-
 use super::a2a_spell::A2aSpell;
 use super::file_spells::FileSpells;
 use super::search_spells::SearchSpells;
@@ -15,6 +14,7 @@ pub struct SpawnSpell {
     pub api_base: String,
     pub model_name: String,
     pub extra_body: HashMap<String, Value>,
+    pub subagent_prompt: Option<String>,
     /// 与主 Agent 共享的 MCP 工具列表，子 Agent 全部继承
     pub mcp_tools: Arc<Mutex<Vec<(String, McpTool)>>>,
     /// 子 Agent 事件广播频道，供 UI 实时显示子 Agent 输出和工具调用
@@ -40,10 +40,7 @@ impl Tool for SpawnSpell {
         )
             .with_streaming()
             .with_system_prompt(
-                r#"你是专注完成单一子任务的 Agent。
-             完成后直接输出结果摘要，不要闲聊。
-             请始终用中文回复。"#
-                    .to_string(),
+                self.subagent_prompt.clone().unwrap_or("".to_string()),
             )
             .add_tool(
                 ToolBundle::new()

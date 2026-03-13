@@ -5,6 +5,7 @@ mod manage_mcp_spell;
 mod search_spells;
 mod shell_spells;
 mod spawn_spell;
+mod skill_spell;
 mod ui_spells;
 
 use std::collections::HashMap;
@@ -25,8 +26,8 @@ use manage_mcp_spell::ManageMcpSpell;
 use search_spells::SearchSpells;
 use shell_spells::ShellSpells;
 use spawn_spell::SpawnSpell;
+use skill_spell::SkillSpell;
 use ui_spells::UiSpells;
-
 use crate::db::Db;
 use crate::embedding::EmbeddingClient;
 
@@ -75,6 +76,7 @@ pub(crate) use search_spells::outline_value;
 pub struct SpellDeps {
     // UiSpells
     pub ask_pending: Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<String>>>>,
+    pub subagent_prompt: Option<String>,
     // SpawnSpell
     pub api_key: String,
     pub api_base: String,
@@ -93,11 +95,13 @@ pub struct SpellDeps {
 /// Build the complete built-in spell bundle from the given dependencies.
 /// Returns a `ToolBundle` ready to be passed to `builder.add_tool(...)`.
 pub fn build_all_spells(deps: SpellDeps) -> ToolBundle {
-    ToolBundle::new()
+    let bundle = ToolBundle::new()
         .add(FileSpells)
         .add(ShellSpells)
         .add(SearchSpells)
-        .add(A2aSpell)
+        .add(SkillSpell { skills_dir: std::path::PathBuf::from("/srv/familiar/skills") });
+
+    bundle.add(A2aSpell)
         .add(UiSpells {
             ask_pending: deps.ask_pending,
         })
@@ -106,6 +110,7 @@ pub fn build_all_spells(deps: SpellDeps) -> ToolBundle {
             api_base: deps.api_base,
             model_name: deps.model_name,
             extra_body: deps.extra_body,
+            subagent_prompt: deps.subagent_prompt,
             mcp_tools: Arc::clone(&deps.mcp_tools),
             broadcast_tx: deps.spawn_tx,
         })
