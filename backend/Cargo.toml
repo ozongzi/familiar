@@ -14,7 +14,6 @@ ds-api = { path = "../../ds-api-workspace/ds-api", features = ["mcp"] }
 axum = { version = "0.8", features = ["macros", "ws", "multipart"] }
 axum-extra = { version = "0.10", features = ["typed-header"] }
 tower-http = { version = "0.6", features = ["cors", "fs"] }
-tower = { version = "0.5" }
 
 # Async
 tokio = { version = "1", features = ["full"] }
@@ -55,26 +54,6 @@ anyhow = "1"
 
 # Random token generation
 getrandom = "0.2"
-# A2A — core types only (a2a-rs-client pulls in native-tls which breaks musl cross-compile;
-# we implement the thin HTTP calls ourselves using the existing reqwest + rustls-tls dep)
-a2a-rs-core = "1.0.0"
-
-# Configuration (layered: config.toml → secrets.toml → env vars)
-config = { version = "0.15", default-features = false, features = ["toml"] }
-
-# In-place TOML editing (preserves formatting when modifying config.toml)
-toml_edit = "0.22"
-
-# Code outline / symbol extraction
-tree-sitter = "0.26"
-tree-sitter-rust = "0.24"
-tree-sitter-python = "0.25"
-tree-sitter-javascript = "0.25"
-tree-sitter-typescript = "0.23"
-tree-sitter-go = "0.25"
-tree-sitter-java = "0.23"
-tree-sitter-c = "0.24"
-tree-sitter-cpp = "0.23"
-tree-sitter-toml-ng = "0.7"
 glob = "0.3.3"
 bytes = "1.11.1"
+config = "0.15.21"

@@ -3,9 +3,8 @@ use std::time::Duration;
 use ds_api::tool;
 use glob::glob as glob_walk;
 use serde_json::{Value, json};
-use tokio::fs;
 use tokio::process::Command;
-use tree_sitter::{Language, Node, Parser};
+use crate::spells::count_lines;
 
 pub struct SearchSpells;
 
@@ -126,234 +125,63 @@ impl Tool for SearchSpells {
     ///
     /// description: 本次操作意图（供 UI 渲染，可不填）
     /// path: 源文件路径
-    async fn outline(&self, description: Option<String>, path: String) -> Value {
+    async fn outline(&self, description: Option<String>, path: String) -> String {
         let _ = description;
-        let content = match fs::read_to_string(&path).await {
-            Ok(s) => s,
-            Err(e) => return json!({ "error": e.to_string() }),
-        };
-        let total = content.lines().count();
-        tokio::task::spawn_blocking(move || super::outline_value(&path, &content, total))
-            .await
-            .unwrap_or_else(|_| json!({ "error": "outline task panicked" }))
+        let total = count_lines(&path).await;
+        outline_value(&path, total).await
     }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tree-sitter outline helpers (shared with file_spells via super::outline_value)
 // ─────────────────────────────────────────────────────────────────────────────
-
-pub(crate) fn outline_value(path: &str, content: &str, total_lines: usize) -> Value {
-    let ext = std::path::Path::new(path)
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("")
-        .to_lowercase();
-
-    let Some(language) = lang_for_ext(&ext) else {
-        return json!({
-            "path": path,
-            "total_lines": total_lines,
-            "note": format!("不支持 .{ext} 的符号提取，请用 read(from, to) 按段读取"),
-        });
+pub(crate) async fn outline_value(path: &str, total_lines: usize) -> String {
+    let output = match tokio::time::timeout(
+        Duration::from_secs(10),
+        Command::new("ctags")
+            .args(["--fields=+ne", "--extras=-F", "-f", "-", path])
+            .output(),
+    )
+        .await
+    {
+        Err(_) => return "error: ctags 超时".into(),
+        Ok(Err(e)) => return format!("error: ctags 启动失败: {e}"),
+        Ok(Ok(o)) => o,
     };
 
-    let src = content.as_bytes();
-    let mut parser = Parser::new();
-    if parser.set_language(&language).is_err() {
-        return json!({ "error": "tree-sitter 语言初始化失败" });
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if !stderr.is_empty() {
+            return format!("error: {stderr}");
+        }
     }
-    let Some(tree) = parser.parse(src, None) else {
-        return json!({ "error": "解析失败（文件可能为空或编码异常）" });
-    };
 
-    let symbols = extract_symbols(tree.root_node(), src, &ext);
-    let items: Vec<Value> = symbols
-        .iter()
-        .map(|s| {
-            json!({
-                "kind": s.kind, "name": s.name, "line": s.line, "end_line": s.end_line,
-            })
+    let mut symbols: Vec<(u64, String)> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter(|l| !l.starts_with('!'))
+        .filter_map(|line| {
+            let fields: Vec<&str> = line.split('\t').collect();
+            if fields.len() < 4 { return None; }
+            let name = fields[0];
+            let kind = fields[3];
+            let mut start = 0u64;
+            let mut end = 0u64;
+            for f in &fields[4..] {
+                if let Some(v) = f.strip_prefix("line:") { start = v.parse().unwrap_or(0); }
+                if let Some(v) = f.strip_prefix("end:")  { end   = v.parse().unwrap_or(0); }
+            }
+            if start == 0 { return None; }
+            if end == 0 { end = start; }
+            Some((start, format!("{kind} {name} ({start}-{end})")))
         })
         .collect();
 
-    json!({
-        "path": path,
-        "language": ext,
-        "total_lines": total_lines,
-        "symbols": items,
-        "symbol_count": items.len(),
-        "hint": "文件较大，已返回符号大纲。用 read(path, from, to) 读取具体段落。",
-    })
-}
-
-fn lang_for_ext(ext: &str) -> Option<Language> {
-    match ext {
-        "rs" => Some(tree_sitter_rust::LANGUAGE.into()),
-        "py" | "pyw" => Some(tree_sitter_python::LANGUAGE.into()),
-        "js" | "mjs" | "cjs" => Some(tree_sitter_javascript::LANGUAGE.into()),
-        "ts" | "mts" | "cts" => Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
-        "tsx" => Some(tree_sitter_typescript::LANGUAGE_TSX.into()),
-        "go" => Some(tree_sitter_go::LANGUAGE.into()),
-        "java" => Some(tree_sitter_java::LANGUAGE.into()),
-        "c" | "h" => Some(tree_sitter_c::LANGUAGE.into()),
-        "cpp" | "cc" | "cxx" | "hpp" | "hxx" | "hh" => Some(tree_sitter_cpp::LANGUAGE.into()),
-        "toml" => Some(tree_sitter_toml_ng::LANGUAGE.into()),
-        _ => None,
+    if symbols.is_empty() {
+        return format!("{path} ({total_lines} lines) — ctags 未提取到符号，请用 read(from, to) 按段读取");
     }
-}
 
-struct Symbol {
-    kind: &'static str,
-    name: String,
-    line: usize,
-    end_line: usize,
-}
+    symbols.sort_by_key(|(line, _)| *line);
 
-fn extract_symbols(root: Node, src: &[u8], ext: &str) -> Vec<Symbol> {
-    match ext {
-        "rs" => walk(
-            root,
-            src,
-            &[
-                ("function_item", "fn", Some("name")),
-                ("impl_item", "impl", None),
-                ("struct_item", "struct", Some("name")),
-                ("enum_item", "enum", Some("name")),
-                ("trait_item", "trait", Some("name")),
-                ("type_item", "type", Some("name")),
-                ("const_item", "const", Some("name")),
-                ("mod_item", "mod", Some("name")),
-                ("macro_definition", "macro", Some("name")),
-            ],
-        ),
-        "py" | "pyw" => walk(
-            root,
-            src,
-            &[
-                ("function_definition", "def", Some("name")),
-                ("async_function_definition", "async def", Some("name")),
-                ("class_definition", "class", Some("name")),
-            ],
-        ),
-        "js" | "mjs" | "cjs" => walk(
-            root,
-            src,
-            &[
-                ("function_declaration", "function", Some("name")),
-                ("class_declaration", "class", Some("name")),
-                ("method_definition", "method", Some("name")),
-            ],
-        ),
-        "ts" | "mts" | "cts" | "tsx" => walk(
-            root,
-            src,
-            &[
-                ("function_declaration", "function", Some("name")),
-                ("class_declaration", "class", Some("name")),
-                ("interface_declaration", "interface", Some("name")),
-                ("type_alias_declaration", "type", Some("name")),
-                ("enum_declaration", "enum", Some("name")),
-                ("method_definition", "method", Some("name")),
-            ],
-        ),
-        "go" => walk(
-            root,
-            src,
-            &[
-                ("function_declaration", "func", Some("name")),
-                ("method_declaration", "method", Some("name")),
-                ("type_declaration", "type", None),
-            ],
-        ),
-        "java" => walk(
-            root,
-            src,
-            &[
-                ("class_declaration", "class", Some("name")),
-                ("interface_declaration", "interface", Some("name")),
-                ("method_declaration", "method", Some("name")),
-                ("constructor_declaration", "constructor", Some("name")),
-            ],
-        ),
-        "c" | "h" => walk(
-            root,
-            src,
-            &[
-                ("function_definition", "function", Some("declarator")),
-                ("struct_specifier", "struct", Some("name")),
-                ("enum_specifier", "enum", Some("name")),
-            ],
-        ),
-        "cpp" | "cc" | "cxx" | "hpp" | "hxx" | "hh" => walk(
-            root,
-            src,
-            &[
-                ("function_definition", "function", Some("declarator")),
-                ("class_specifier", "class", Some("name")),
-                ("namespace_definition", "namespace", Some("name")),
-            ],
-        ),
-        "toml" => walk(
-            root,
-            src,
-            &[
-                ("table", "table", None),
-                ("table_array_element", "[[table]]", None),
-            ],
-        ),
-        _ => vec![],
-    }
-}
-
-fn walk(
-    root: Node,
-    src: &[u8],
-    rules: &[(&'static str, &'static str, Option<&'static str>)],
-) -> Vec<Symbol> {
-    let mut out = vec![];
-    let mut cursor = root.walk();
-    walk_rec(root, src, rules, &mut out, &mut cursor);
-    out
-}
-
-fn walk_rec(
-    node: Node,
-    src: &[u8],
-    rules: &[(&'static str, &'static str, Option<&'static str>)],
-    out: &mut Vec<Symbol>,
-    cursor: &mut tree_sitter::TreeCursor,
-) {
-    for &(node_kind, label, name_field) in rules {
-        if node.kind() == node_kind {
-            let name = match name_field {
-                Some(f) => node
-                    .child_by_field_name(f)
-                    .and_then(|n| n.utf8_text(src).ok())
-                    .unwrap_or("<anonymous>")
-                    .to_string(),
-                None => node
-                    .utf8_text(src)
-                    .unwrap_or("<anonymous>")
-                    .chars()
-                    .take(80)
-                    .collect(),
-            };
-            out.push(Symbol {
-                kind: label,
-                name,
-                line: node.start_position().row + 1,
-                end_line: node.end_position().row + 1,
-            });
-        }
-    }
-    if cursor.goto_first_child() {
-        loop {
-            walk_rec(cursor.node(), src, rules, out, cursor);
-            if !cursor.goto_next_sibling() {
-                break;
-            }
-        }
-        cursor.goto_parent();
-    }
+    let body = symbols.into_iter().map(|(_, s)| s).collect::<Vec<_>>().join("\n");
+    format!("{path} ({total_lines} lines)\n{body}")
 }

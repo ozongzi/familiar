@@ -12,6 +12,7 @@ use axum::{
     Router,
     routing::{delete, get, patch, post},
 };
+use axum::extract::DefaultBodyLimit;
 use sqlx::PgPool;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::{ServeDir, ServeFile};
@@ -79,5 +80,6 @@ pub fn create_router(state: AppState) -> Router {
                 .not_found_service(ServeFile::new(public_path.join("index.html"))),
         )
         .layer(cors)
+        .layer(DefaultBodyLimit::max(50 * 1024 * 1024))
         .with_state(state)
 }

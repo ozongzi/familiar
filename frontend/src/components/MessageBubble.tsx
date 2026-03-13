@@ -476,6 +476,9 @@ function ToolCallBubble({
 
           {expanded && (
             <>
+              <div className={styles.toolSection}>
+                <p className={styles.toolSectionLabel}>工具: {bubble.name}</p>
+              </div>
               {/* edit: 流式期间 — old_str 到了就渲染 diff（new_str 未到时显示纯删除行） */}
               {isEditTool &&
                 bubble.pending &&
@@ -623,6 +626,9 @@ function ToolCallBubble({
 
         {expanded && (
           <div className={styles.toolBody}>
+            <div className={styles.toolSection}>
+              <p className={styles.toolSectionLabel}>工具: {bubble.name}</p>
+            </div>
             {argsStr && (
               <div className={styles.toolSection}>
                 <p className={styles.toolSectionLabel}>参数</p>

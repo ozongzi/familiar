@@ -1,6 +1,9 @@
+use std::time::Duration;
 use ds_api::tool;
 use serde_json::{Value, json};
 use tokio::fs;
+use tokio::process::Command;
+use crate::spells::{count_lines, outline_value};
 
 pub struct FileSpells;
 
@@ -20,37 +23,40 @@ impl Tool for FileSpells {
         path: String,
         from: Option<usize>,
         to: Option<usize>,
-    ) -> Value {
+    ) -> String {
         let _ = description;
+
+        if path.ends_with(".pdf") {
+            return read_pdf_as_markdown(&path).await;
+        }
+
+        if from.is_none() && to.is_none() {
+            let total = count_lines(&path).await;
+
+            if total > super::OUTLINE_THRESHOLD {
+                return outline_value(&path, total).await;
+            }
+        }
+
         let content = match fs::read_to_string(&path).await {
             Ok(s) => s,
-            Err(e) => return json!({ "error": e.to_string() }),
+            Err(e) => return format!("error: {e}"),
         };
         let lines: Vec<&str> = content.lines().collect();
         let total = lines.len();
-
-        // 未指定行范围 + 文件大 → 在阻塞线程上做 tree-sitter 解析，避免卡住 async executor
-        if from.is_none() && to.is_none() && total > super::OUTLINE_THRESHOLD {
-            return tokio::task::spawn_blocking(move || {
-                super::outline_value(&path, &content, total)
-            })
-            .await
-            .unwrap_or_else(|_| serde_json::json!({ "error": "outline task panicked" }));
-        }
 
         let from_1 = from.unwrap_or(1).max(1);
         let to_1 = to.unwrap_or(total).min(total);
 
         if from_1 > total {
-            return json!({ "error": format!("from ({from_1}) 超出总行数 {total}") });
+            return format!("error: from ({from_1}) 超出总行数 {total}");
         }
         if from_1 > to_1 {
-            return json!({ "error": format!("from ({from_1}) > to ({to_1})") });
+            return format!("error: from ({from_1}) > to ({to_1})");
         }
 
-        let slice =
-            super::truncate_output(&lines[from_1 - 1..to_1].join("\n"), super::MAX_OUTPUT_CHARS);
-        json!({ "content": slice, "from": from_1, "to": to_1, "total_lines": total })
+        let slice = super::truncate_output(&lines[from_1 - 1..to_1].join("\n"), super::MAX_OUTPUT_CHARS);
+        format!("{path} (lines {from_1}-{to_1}/{total})\n{slice}")
     }
 
     /// 写入文件（新建或完全覆盖）。
@@ -131,5 +137,91 @@ impl Tool for FileSpells {
             Ok(_) => json!({ "status": "success" }),
             Err(e) => json!({ "error": e.to_string() }),
         }
+    }
+
+    /// 将 Typst 文件编译为 PDF。
+    ///
+    /// description: 本次操作意图
+    /// path: .typ 文件路径
+    /// output: 输出 PDF 路径，可选（默认同目录同名）
+    async fn typst_to_pdf(
+        &self,
+        description: Option<String>,
+        path: String,
+        output: Option<String>,
+    ) -> String {
+        let _ = description;
+        let out = output.unwrap_or_else(|| path.replace(".typ", ".pdf"));
+
+        match tokio::time::timeout(
+            Duration::from_secs(60),
+            Command::new("typst")
+                .args(["compile", &path, &out])
+                .output(),
+        )
+            .await
+        {
+            Err(_) => "error: typst 编译超时".into(),
+            Ok(Err(e)) => format!("error: typst 启动失败: {e}"),
+            Ok(Ok(o)) => {
+                if !o.status.success() {
+                    return format!("error: {}", String::from_utf8_lossy(&o.stderr).trim());
+                }
+                format!("编译完成: {out}")
+            }
+        }
+    }
+}
+
+async fn read_pdf_as_markdown(path: &str) -> String {
+    let md_path = format!("{path}.md");
+    let img_dir = format!("{path}_images");
+
+    // 已转过，直接走 read 逻辑
+    if tokio::fs::metadata(&md_path).await.is_ok() {
+        let total = count_lines(&md_path).await;
+        if total > super::OUTLINE_THRESHOLD {
+            return outline_value(&md_path, total).await;
+        }
+        return match tokio::fs::read_to_string(&md_path).await {
+            Ok(s) => format!("[PDF 已转换为 Markdown: {md_path}，图片: {img_dir}]\n\n{s}"),
+            Err(e) => format!("error: {e}"),
+        };
+    }
+
+    let status = match tokio::time::timeout(
+        Duration::from_secs(300),
+        Command::new("sh")
+            .args([
+                "-c",
+                &format!(
+                    "uvx --from pymupdf4llm python -c \
+                    'import pymupdf4llm, sys; print(pymupdf4llm.to_markdown(sys.argv[1], write_images=True, image_path=sys.argv[2]))' \
+                    '{path}' '{img_dir}' > '{md_path}'"
+                ),
+            ])
+            .status(),
+    )
+        .await
+    {
+        Err(_) => return "error: pymupdf4llm 超时".into(),
+        Ok(Err(e)) => return format!("error: 启动失败: {e}"),
+        Ok(Ok(s)) => s,
+    };
+
+    if !status.success() {
+        return format!("error: pymupdf4llm 失败 (exit {})", status.code().unwrap_or(-1));
+    }
+
+    let total = count_lines(&md_path).await;
+    if total > super::OUTLINE_THRESHOLD {
+        return outline_value(&md_path, total).await;
+    }
+
+    match tokio::fs::read_to_string(&md_path).await {
+        Ok(s) => format!(
+            "[PDF 已转换为 Markdown: {md_path}，图片: {img_dir}]\n[翻译后用 write 写成 .typ，再用 typst_to_pdf 编译]\n\n{s}"
+        ),
+        Err(e) => format!("error: 读取 markdown 失败: {e}"),
     }
 }

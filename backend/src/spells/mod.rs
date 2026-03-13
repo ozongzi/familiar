@@ -119,3 +119,19 @@ pub fn build_all_spells(deps: SpellDeps) -> ToolBundle {
             agent_stale: deps.agent_stale,
         })
 }
+
+async fn count_lines(path: &str) -> usize {
+    Command::new("wc")
+        .args(["-l", path])
+        .output()
+        .await
+        .ok()
+        .and_then(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .split_whitespace()
+                .next()?
+                .parse()
+                .ok()
+        })
+        .unwrap_or(0)
+}

@@ -355,12 +355,6 @@ pub async fn upload_file(
         _ => return Err(AppError::bad_request("未包含 file 字段")),
     };
 
-    // Simple size limit (50MB)
-    const MAX_UPLOAD: usize = 50 * 1024 * 1024;
-    if data.len() > MAX_UPLOAD {
-        return Err(AppError::bad_request("上传文件过大"));
-    }
-
     // Compose a unique safe filename (timestamp + sanitized original)
     let uniq = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
