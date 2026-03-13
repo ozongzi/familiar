@@ -49,13 +49,13 @@ interface UseChatOptions {
 }
 
 export function useChat(
-  conversationId: string | null,
-  token: string | null,
-  /** Factory that creates a real conversation and returns its id, used when
-   *  the chat is in draft mode (conversationId === null) and the user sends
-   *  the first message. */
-  createConversation: () => Promise<string | null>,
-  options: UseChatOptions = {},
+    conversationId: string | null,
+    token: string | null,
+    /** Factory that creates a real conversation and returns its id, used when
+     *  the chat is in draft mode (conversationId === null) and the user sends
+     *  the first message. */
+    createConversation: () => Promise<string | null>,
+    options: UseChatOptions = {},
 ) {
   const [bubbles, setBubbles] = useState<ChatBubble[]>([]);
   const [status, setStatus] = useState<ChatStatus>("idle");
@@ -69,6 +69,8 @@ export function useChat(
   const activeTextKeyRef = useRef<string | null>(null);
   const statusRef = useRef<ChatStatus>("idle");
   const onConversationCreatedRef = useRef(options.onConversationCreated);
+  // 子 Agent 流式工具调用参数累积：id -> {name, argsRaw}
+  const spawnToolArgsRef = useRef<Map<string, { name: string; argsRaw: string }>>(new Map());
   useEffect(() => {
     onConversationCreatedRef.current = options.onConversationCreated;
   });
@@ -91,9 +93,9 @@ export function useChat(
     const key = activeTextKeyRef.current;
     if (!key) return;
     setBubbles((prev) =>
-      prev.map((b) =>
-        b.key === key && b.kind === "text" ? { ...b, streaming: false } : b,
-      ),
+        prev.map((b) =>
+            b.key === key && b.kind === "text" ? { ...b, streaming: false } : b,
+        ),
     );
     activeTextKeyRef.current = null;
   }
@@ -192,19 +194,19 @@ export function useChat(
       }
 
       if (
-        (m.role === "user" || m.role === "assistant") &&
-        m.content &&
-        m.content.trim().length > 0
+          (m.role === "user" || m.role === "assistant") &&
+          m.content &&
+          m.content.trim().length > 0
       ) {
         // Detect special file-upload user messages saved by the upload endpoint.
         if (m.role === "user") {
           try {
             const parsed = JSON.parse(m.content) as Record<string, unknown>;
             if (
-              parsed.__type === "file_upload" &&
-              typeof parsed.filename === "string" &&
-              typeof parsed.path === "string" &&
-              typeof parsed.size === "number"
+                parsed.__type === "file_upload" &&
+                typeof parsed.filename === "string" &&
+                typeof parsed.path === "string" &&
+                typeof parsed.size === "number"
             ) {
               const uploadBubble: UploadBubble = {
                 kind: "upload",
@@ -240,6 +242,7 @@ export function useChat(
   const clearBubbles = useCallback(() => {
     setBubbles([]);
     activeTextKeyRef.current = null;
+    spawnToolArgsRef.current.clear();
     updateStatus("idle");
     setErrorMsg(null);
     attachedConvRef.current = null;
@@ -248,18 +251,18 @@ export function useChat(
 
   /** Add a file-upload bubble to the chat (called after a successful upload). */
   const addUploadBubble = useCallback(
-    (filename: string, path: string, size: number) => {
-      const bubble: UploadBubble = {
-        kind: "upload",
-        key: uid(),
-        role: "user",
-        filename,
-        path,
-        size,
-      };
-      setBubbles((prev) => [...prev, bubble]);
-    },
-    [],
+      (filename: string, path: string, size: number) => {
+        const bubble: UploadBubble = {
+          kind: "upload",
+          key: uid(),
+          role: "user",
+          filename,
+          path,
+          size,
+        };
+        setBubbles((prev) => [...prev, bubble]);
+      },
+      [],
   );
 
   // ── Interrupt / abort ──────────────────────────────────────────────────────
@@ -307,29 +310,37 @@ export function useChat(
       } else if (event.type === "reasoning_token") {
         const key = ensureActiveText();
         setBubbles((prev) =>
-          prev.map((b) =>
-            b.key === key && b.kind === "text"
-              ? { ...b, reasoning: b.reasoning + event.content }
-              : b,
-          ),
+            prev.map((b) =>
+                b.key === key && b.kind === "text"
+                    ? { ...b, reasoning: b.reasoning + event.content }
+                    : b,
+            ),
         );
       } else if (event.type === "token") {
-        if (event.source === "spawn" && appendSpawnOutput(event.content)) {
+        if (event.source === "spawn") {
+          // 无论有没有找到 pending spawn bubble，spawn token 都不进主文本流
+          appendSpawnOutput(event.content);
           return false;
         }
         const key = ensureActiveText();
         setBubbles((prev) =>
-          prev.map((b) =>
-            b.key === key && b.kind === "text"
-              ? { ...b, content: b.content + event.content }
-              : b,
-          ),
+            prev.map((b) =>
+                b.key === key && b.kind === "text"
+                    ? { ...b, content: b.content + event.content }
+                    : b,
+            ),
         );
       } else if (event.type === "tool_call") {
-        if (event.source === "spawn") return false;
+        if (event.source === "spawn") {
+          // 累积子 Agent 工具调用的流式 args，等 tool_result 再渲染
+          const acc = spawnToolArgsRef.current.get(event.id) ?? { name: event.name, argsRaw: "" };
+          acc.argsRaw += event.delta;
+          spawnToolArgsRef.current.set(event.id, acc);
+          return false;
+        }
         setBubbles((prev) => {
           const exists = prev.some(
-            (b) => b.key === `tool-${event.id}` && b.kind === "tool",
+              (b) => b.key === `tool-${event.id}` && b.kind === "tool",
           );
           console.log(`[tool_call] id=${event.id}, exists=${exists}, currentBubbles=${prev.length}`, prev.map(b => b.key));
           if (exists) {
@@ -363,27 +374,45 @@ export function useChat(
           return [...prev, toolBubble];
         });
       } else if (event.type === "tool_result") {
-        if (event.source === "spawn") return false;
+        if (event.source === "spawn") {
+          // 子 Agent 工具完成：在 spawnOutput 里追加一行摘要
+          const acc = spawnToolArgsRef.current.get(event.id);
+          spawnToolArgsRef.current.delete(event.id);
+          const toolName = acc?.name ?? event.name;
+          // 尝试解析 result，截取前 120 字符作为摘要
+          let resultSummary = "";
+          if (event.result !== null && event.result !== undefined) {
+            const raw = typeof event.result === "string"
+                ? event.result
+                : JSON.stringify(event.result);
+            resultSummary = raw.length > 120 ? raw.slice(0, 120) + "…" : raw;
+          }
+          const line = resultSummary
+              ? `\n> \`${toolName}\` → ${resultSummary}`
+              : `\n> \`${toolName}\` ✓`;
+          appendSpawnOutput(line);
+          return false;
+        }
         setBubbles((prev) =>
-          prev.map((b) =>
-            b.key === `tool-${event.id}` && b.kind === "tool"
-              ? {
-                  ...b,
-                  result: event.result,
-                  pending: false,
-                  // If backend sent complete args (e.g. MiniMax sends no streaming delta), update argsRaw
-                  ...(event.args && event.args.length > 0 ? { argsRaw: event.args } : {}),
-                  spawnOutput:
-                    b.name === "spawn" &&
-                    (!b.spawnOutput || b.spawnOutput.length === 0) &&
-                    event.result &&
-                    typeof event.result === "object" &&
-                    "result" in (event.result as Record<string, unknown>)
-                      ? String((event.result as Record<string, unknown>).result ?? "")
-                      : b.spawnOutput,
-                }
-              : b,
-          ),
+            prev.map((b) =>
+                b.key === `tool-${event.id}` && b.kind === "tool"
+                    ? {
+                      ...b,
+                      result: event.result,
+                      pending: false,
+                      // If backend sent complete args (e.g. MiniMax sends no streaming delta), update argsRaw
+                      ...(event.args && event.args.length > 0 ? { argsRaw: event.args } : {}),
+                      spawnOutput:
+                          b.name === "spawn" &&
+                          (!b.spawnOutput || b.spawnOutput.length === 0) &&
+                          event.result &&
+                          typeof event.result === "object" &&
+                          "result" in (event.result as Record<string, unknown>)
+                              ? String((event.result as Record<string, unknown>).result ?? "")
+                              : b.spawnOutput,
+                    }
+                    : b,
+            ),
         );
       } else if (event.type === "done") {
         sealActiveText();
@@ -430,10 +459,10 @@ export function useChat(
       console.log("[WS] parsed event:", event);
 
       if (
-        statusRef.current === "idle" &&
-        event.type !== "done" &&
-        event.type !== "aborted" &&
-        event.type !== "error"
+          statusRef.current === "idle" &&
+          event.type !== "done" &&
+          event.type !== "aborted" &&
+          event.type !== "error"
       ) {
         reattachingRef.current = false;
         updateStatus("streaming");
@@ -464,116 +493,116 @@ export function useChat(
   // ── Send ───────────────────────────────────────────────────────────────────
 
   const send = useCallback(
-    async (text: string) => {
-      if (!token) return;
-      if (statusRef.current === "connecting") return;
+      async (text: string) => {
+        if (!token) return;
+        if (statusRef.current === "connecting") return;
 
-      if (statusRef.current === "streaming") {
-        interrupt(text);
-        return;
-      }
-
-      if (reattachingRef.current) {
-        const existing = wsLiveRef.current;
-        if (existing && existing.readyState === WebSocket.OPEN) {
-          existing.close(1000);
+        if (statusRef.current === "streaming") {
+          interrupt(text);
+          return;
         }
-        reattachingRef.current = false;
-        wsRef.current = null;
-        wsLiveRef.current = null;
-        attachedConvRef.current = null;
-      }
 
-      // Draft mode: create the conversation first, then send.
-      let convId = conversationId;
-      if (!convId) {
-        convId = await createConversation();
+        if (reattachingRef.current) {
+          const existing = wsLiveRef.current;
+          if (existing && existing.readyState === WebSocket.OPEN) {
+            existing.close(1000);
+          }
+          reattachingRef.current = false;
+          wsRef.current = null;
+          wsLiveRef.current = null;
+          attachedConvRef.current = null;
+        }
+
+        // Draft mode: create the conversation first, then send.
+        let convId = conversationId;
         if (!convId) {
-          setErrorMsg("创建对话失败，请重试");
-          return;
+          convId = await createConversation();
+          if (!convId) {
+            setErrorMsg("创建对话失败，请重试");
+            return;
+          }
+          // Notify caller so it can fire auto-title logic.
+          onConversationCreatedRef.current?.(convId, text);
         }
-        // Notify caller so it can fire auto-title logic.
-        onConversationCreatedRef.current?.(convId, text);
-      }
 
-      setErrorMsg(null);
-      activeTextKeyRef.current = null;
+        setErrorMsg(null);
+        activeTextKeyRef.current = null;
 
-      // Optimistically add user bubble.
-      const userBubble: TextBubble = {
-        kind: "text",
-        key: uid(),
-        role: "user",
-        content: text,
-        reasoning: "",
-        streaming: false,
-      };
-      setBubbles((prev) => [...prev, userBubble]);
+        // Optimistically add user bubble.
+        const userBubble: TextBubble = {
+          kind: "text",
+          key: uid(),
+          role: "user",
+          content: text,
+          reasoning: "",
+          streaming: false,
+        };
+        setBubbles((prev) => [...prev, userBubble]);
 
-      updateStatus("connecting");
+        updateStatus("connecting");
 
-      const wsProtocol = location.protocol === "https:" ? "wss" : "ws";
-      const ws = new WebSocket(`${wsProtocol}://${location.host}/ws/${convId}`);
-      wsRef.current = ws;
-      wsLiveRef.current = ws;
-      attachedConvRef.current = convId;
+        const wsProtocol = location.protocol === "https:" ? "wss" : "ws";
+        const ws = new WebSocket(`${wsProtocol}://${location.host}/ws/${convId}`);
+        wsRef.current = ws;
+        wsLiveRef.current = ws;
+        attachedConvRef.current = convId;
 
-      ws.addEventListener("open", () => {
-        ws.send(JSON.stringify({ token }));
-        ws.send(JSON.stringify({ content: text }));
-        updateStatus("streaming");
-      });
+        ws.addEventListener("open", () => {
+          ws.send(JSON.stringify({ token }));
+          ws.send(JSON.stringify({ content: text }));
+          updateStatus("streaming");
+        });
 
-      ws.addEventListener("message", (ev) => {
-        console.log("[WS] raw message:", ev.data);
-        let event: WsServerEvent;
-        try { event = JSON.parse(ev.data as string) as WsServerEvent; }
-        catch { return; }
-        console.log("[WS] parsed event:", event);
+        ws.addEventListener("message", (ev) => {
+          console.log("[WS] raw message:", ev.data);
+          let event: WsServerEvent;
+          try { event = JSON.parse(ev.data as string) as WsServerEvent; }
+          catch { return; }
+          console.log("[WS] parsed event:", event);
 
-        const finished = processEventRef.current(event);
-        if (finished) {
-          ws.close(1000);
-          wsRef.current = null;
-          wsLiveRef.current = null;
-        }
-      });
+          const finished = processEventRef.current(event);
+          if (finished) {
+            ws.close(1000);
+            wsRef.current = null;
+            wsLiveRef.current = null;
+          }
+        });
 
-      ws.addEventListener("error", () => {
-        // The browser fires an error event before every close, including
-        // normal closes initiated by ws.close(1000) after "done".  Only
-        // treat it as a real error if we're still actively streaming.
-        if (statusRef.current !== "streaming" && statusRef.current !== "connecting") {
-          wsRef.current = null;
-          wsLiveRef.current = null;
-          return;
-        }
-        const key = activeTextKeyRef.current;
-        if (key) {
-          setBubbles((prev) => prev.filter((b) => b.key !== key));
-          activeTextKeyRef.current = null;
-        }
-        updateStatus("error");
-        setErrorMsg("连接出错，请重试");
-        wsRef.current = null;
-        wsLiveRef.current = null;
-      });
-
-      ws.addEventListener("close", (ev) => {
-        wsRef.current = null;
-        wsLiveRef.current = null;
-        if (ev.code !== 1000 && ev.code !== 1001 && statusRef.current === "streaming") {
+        ws.addEventListener("error", () => {
+          // The browser fires an error event before every close, including
+          // normal closes initiated by ws.close(1000) after "done".  Only
+          // treat it as a real error if we're still actively streaming.
+          if (statusRef.current !== "streaming" && statusRef.current !== "connecting") {
+            wsRef.current = null;
+            wsLiveRef.current = null;
+            return;
+          }
           const key = activeTextKeyRef.current;
           if (key) {
             setBubbles((prev) => prev.filter((b) => b.key !== key));
             activeTextKeyRef.current = null;
           }
           updateStatus("error");
-          setErrorMsg("连接已断开，请重试");
-        }
-      });
-    },
-    [conversationId, token, interrupt, createConversation],
+          setErrorMsg("连接出错，请重试");
+          wsRef.current = null;
+          wsLiveRef.current = null;
+        });
+
+        ws.addEventListener("close", (ev) => {
+          wsRef.current = null;
+          wsLiveRef.current = null;
+          if (ev.code !== 1000 && ev.code !== 1001 && statusRef.current === "streaming") {
+            const key = activeTextKeyRef.current;
+            if (key) {
+              setBubbles((prev) => prev.filter((b) => b.key !== key));
+              activeTextKeyRef.current = null;
+            }
+            updateStatus("error");
+            setErrorMsg("连接已断开，请重试");
+          }
+        });
+      },
+      [conversationId, token, interrupt, createConversation],
   );
 
   return {

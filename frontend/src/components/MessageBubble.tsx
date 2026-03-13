@@ -21,9 +21,9 @@ interface Props {
 }
 
 export const MessageBubble = memo(function MessageBubble({
-  bubble,
-  onAnswer,
-}: Props) {
+                                                           bubble,
+                                                           onAnswer,
+                                                         }: Props) {
   if (bubble.kind === "tool") {
     return <ToolCallBubble bubble={bubble} onAnswer={onAnswer} />;
   }
@@ -36,8 +36,8 @@ export const MessageBubble = memo(function MessageBubble({
 // ─── Text bubble (user / assistant) ──────────────────────────────────────────
 
 function TextChatBubble({
-  bubble,
-}: {
+                          bubble,
+                        }: {
   bubble: Extract<ChatBubble, { kind: "text" }>;
 }) {
   const isUser = bubble.role === "user";
@@ -75,60 +75,60 @@ function TextChatBubble({
   }, [bubble.content, bubble.streaming]);
 
   return (
-    <div
-      className={`${styles.row} ${isUser ? styles.rowUser : styles.rowAssistant}`}
-    >
       <div
-        className={`${styles.bubble} ${isUser ? styles.bubbleUser : styles.bubbleAssistant}`}
+          className={`${styles.row} ${isUser ? styles.rowUser : styles.rowAssistant}`}
       >
-        {isUser ? (
-          <p className={styles.userText}>{bubble.content}</p>
-        ) : (
-          <>
-            {hasReasoning && (
-              <div className={styles.reasoningBlock}>
-                <button
-                  className={styles.reasoningToggle}
-                  onClick={() => setReasoningOpen((o) => !o)}
-                  aria-expanded={reasoningOpen}
-                >
-                  <span className={styles.reasoningIcon}>💭</span>
-                  <span className={styles.reasoningLabel}>
+        <div
+            className={`${styles.bubble} ${isUser ? styles.bubbleUser : styles.bubbleAssistant}`}
+        >
+          {isUser ? (
+              <p className={styles.userText}>{bubble.content}</p>
+          ) : (
+              <>
+                {hasReasoning && (
+                    <div className={styles.reasoningBlock}>
+                      <button
+                          className={styles.reasoningToggle}
+                          onClick={() => setReasoningOpen((o) => !o)}
+                          aria-expanded={reasoningOpen}
+                      >
+                        <span className={styles.reasoningIcon}>💭</span>
+                        <span className={styles.reasoningLabel}>
                     {bubble.streaming && bubble.content.length === 0
-                      ? "思考中…"
-                      : "思考过程"}
+                        ? "思考中…"
+                        : "思考过程"}
                   </span>
-                  <span className={styles.reasoningChevron}>
+                        <span className={styles.reasoningChevron}>
                     {reasoningOpen ? "▲" : "▼"}
                   </span>
-                </button>
-                {reasoningOpen && (
-                  <div className={styles.reasoningContent}>
-                    <MarkdownRenderer content={bubble.reasoning} />
-                    {bubble.streaming && bubble.content.length === 0 && (
-                      <span className={styles.cursor} aria-hidden="true" />
-                    )}
-                  </div>
+                      </button>
+                      {reasoningOpen && (
+                          <div className={styles.reasoningContent}>
+                            <MarkdownRenderer content={bubble.reasoning} />
+                            {bubble.streaming && bubble.content.length === 0 && (
+                                <span className={styles.cursor} aria-hidden="true" />
+                            )}
+                          </div>
+                      )}
+                    </div>
                 )}
-              </div>
-            )}
-            <MarkdownRenderer content={bubble.content} />
-            {bubble.streaming &&
-              bubble.content.length === 0 &&
-              !hasReasoning && (
-                <span className={styles.typingDots} aria-label="正在输入">
+                <MarkdownRenderer content={bubble.content} />
+                {bubble.streaming &&
+                    bubble.content.length === 0 &&
+                    !hasReasoning && (
+                        <span className={styles.typingDots} aria-label="正在输入">
                   <span />
                   <span />
                   <span />
                 </span>
-              )}
-            {bubble.streaming && bubble.content.length > 0 && (
-              <span className={styles.cursor} aria-hidden="true" />
-            )}
-          </>
-        )}
+                    )}
+                {bubble.streaming && bubble.content.length > 0 && (
+                    <span className={styles.cursor} aria-hidden="true" />
+                )}
+              </>
+          )}
+        </div>
       </div>
-    </div>
   );
 }
 
@@ -146,29 +146,29 @@ function UploadChatBubble({ bubble }: { bubble: UploadBubble }) {
   }, [bubble.path, bubble.filename, token]);
 
   return (
-    <div className={`${styles.row} ${styles.rowUser}`}>
-      <div className={styles.uploadBubble}>
-        <div className={styles.uploadBubbleInner}>
+      <div className={`${styles.row} ${styles.rowUser}`}>
+        <div className={styles.uploadBubble}>
+          <div className={styles.uploadBubbleInner}>
           <span className={styles.uploadBubbleIcon} aria-hidden="true">
             <FileIcon />
           </span>
-          <div className={styles.uploadBubbleMeta}>
-            <span className={styles.uploadBubbleName}>{bubble.filename}</span>
-            <span className={styles.uploadBubbleSize}>
+            <div className={styles.uploadBubbleMeta}>
+              <span className={styles.uploadBubbleName}>{bubble.filename}</span>
+              <span className={styles.uploadBubbleSize}>
               {formatBytes(bubble.size)}
             </span>
+            </div>
+            <button
+                className={styles.uploadBubbleDownload}
+                onClick={handleDownload}
+                aria-label={`下载 ${bubble.filename}`}
+                title="下载"
+            >
+              <DownloadIcon />
+            </button>
           </div>
-          <button
-            className={styles.uploadBubbleDownload}
-            onClick={handleDownload}
-            aria-label={`下载 ${bubble.filename}`}
-            title="下载"
-          >
-            <DownloadIcon />
-          </button>
         </div>
       </div>
-    </div>
   );
 }
 
@@ -223,9 +223,9 @@ function extractArgsField(raw: string, key: string): string | null {
   return value.length > 0 ? value : null;
 }
 function ToolCallBubble({
-  bubble,
-  onAnswer,
-}: {
+                          bubble,
+                          onAnswer,
+                        }: {
   bubble: Extract<ChatBubble, { kind: "tool" }>;
   onAnswer?: (text: string) => void;
 }) {
@@ -259,22 +259,22 @@ function ToolCallBubble({
 
   // Detect present result
   const fileResult =
-    bubble.result &&
-    typeof bubble.result === "object" &&
-    (bubble.result as Record<string, unknown>)["display"] === "file"
-      ? (bubble.result as {
-          display: "file";
-          filename: string;
-          path: string;
-          size: number;
-        })
-      : null;
+      bubble.result &&
+      typeof bubble.result === "object" &&
+      (bubble.result as Record<string, unknown>)["display"] === "file"
+          ? (bubble.result as {
+            display: "file";
+            filename: string;
+            path: string;
+            size: number;
+          })
+          : null;
 
   // Terminal tools: bash, run_ts, run_py
   const isTerminal =
-    bubble.name === "bash" ||
-    bubble.name === "run_ts" ||
-    bubble.name === "run_py";
+      bubble.name === "bash" ||
+      bubble.name === "run_ts" ||
+      bubble.name === "run_py";
 
   // Edit tools: edit / write
   const isReplaceTool = bubble.name === "edit";
@@ -282,32 +282,32 @@ function ToolCallBubble({
 
   // Diff view only shown when edit completed successfully with parsed args
   const isDiff =
-    !bubble.pending &&
-    isEditTool &&
-    result?.status === "success" &&
-    ((isReplaceTool &&
-      args?.old_str !== undefined &&
-      args?.new_str !== undefined) ||
-      (bubble.name === "write" &&
-        args?.path !== undefined &&
-        args?.content !== undefined));
+      !bubble.pending &&
+      isEditTool &&
+      result?.status === "success" &&
+      ((isReplaceTool &&
+              args?.old_str !== undefined &&
+              args?.new_str !== undefined) ||
+          (bubble.name === "write" &&
+              args?.path !== undefined &&
+              args?.content !== undefined));
 
   const isSpawn = bubble.name === "spawn";
-  const isInline = isTerminal || isEditTool || isSpawn;
+  const isInline = isTerminal || isEditTool;
 
   // Streaming args display (generic view only)
   const argsStr = args ? JSON.stringify(args, null, 2) : bubble.argsRaw || "";
   const argsStreaming = !args && bubble.argsRaw.length > 0;
   const resultStr =
-    !isInline && bubble.result && !fileResult
-      ? JSON.stringify(bubble.result, null, 2)
-      : null;
+      !isInline && bubble.result && !fileResult
+          ? JSON.stringify(bubble.result, null, 2)
+          : null;
 
   const spawnOutput = bubble.name === "spawn" ? (bubble.spawnOutput ?? "") : "";
   const spawnResultText =
-    bubble.name === "spawn" && result && typeof result.result === "string"
-      ? String(result.result)
-      : "";
+      bubble.name === "spawn" && result && typeof result.result === "string"
+          ? String(result.result)
+          : "";
 
   // ── Extract script content from streaming argsRaw (run_py / run_ts) ───────
   const streamingScript = useMemo(() => {
@@ -395,47 +395,47 @@ function ToolCallBubble({
       "腾挪腾挪中",
     ];
     return (
-      bubble.description ||
-      placeholders[Math.floor(Math.random() * placeholders.length)]
+        bubble.description ||
+        placeholders[Math.floor(Math.random() * placeholders.length)]
     );
   }, [bubble.description]);
 
   // ── Early return: ask → question card ────────────────────────────────────
   if (bubble.name === "ask") {
     const answeredText =
-      !bubble.pending && bubble.result
-        ? ((bubble.result as Record<string, unknown>)["answer"] as
-            | string
-            | undefined)
-        : undefined;
+        !bubble.pending && bubble.result
+            ? ((bubble.result as Record<string, unknown>)["answer"] as
+                | string
+                | undefined)
+            : undefined;
 
     // While args are still streaming in (can't parse JSON yet), show a
     // generic loading header instead of a card with "…" as the question.
     if (bubble.pending && args === null) {
       return (
-        <div className={styles.toolRow}>
-          <div className={styles.toolBubbleInline}>
-            <div className={styles.toolHeaderInline}>
+          <div className={styles.toolRow}>
+            <div className={styles.toolBubbleInline}>
+              <div className={styles.toolHeaderInline}>
               <span className={styles.toolIcon} aria-hidden="true">
                 <ToolRunningIcon />
               </span>
-              <span className={styles.toolName}>{toolLabel}</span>
-              <span className={styles.toolSpinner} aria-hidden="true" />
+                <span className={styles.toolName}>{toolLabel}</span>
+                <span className={styles.toolSpinner} aria-hidden="true" />
+              </div>
             </div>
           </div>
-        </div>
       );
     }
 
     return (
-      <div className={styles.toolRow}>
-        <AskUserCard
-          question={streamingAskQuestion ?? "…"}
-          options={askOptions}
-          onAnswer={onAnswer}
-          answered={answeredText}
-        />
-      </div>
+        <div className={styles.toolRow}>
+          <AskUserCard
+              question={streamingAskQuestion ?? "…"}
+              options={askOptions}
+              onAnswer={onAnswer}
+              answered={answeredText}
+          />
+        </div>
     );
   }
 
@@ -445,222 +445,261 @@ function ToolCallBubble({
   }
 
   const scriptLang =
-    bubble.name === "run_py"
-      ? "python"
-      : bubble.name === "run_ts"
-        ? "typescript"
-        : "";
+      bubble.name === "run_py"
+          ? "python"
+          : bubble.name === "run_ts"
+              ? "typescript"
+              : "";
+
+  if (isSpawn) {
+    return (
+        <div className={styles.toolRow}>
+          <div className={`${styles.spawnWrap} ${!bubble.pending ? styles.spawnWrapDone : ""}`}>
+            <button
+                className={styles.spawnHeader}
+                onClick={() => setExpanded((v) => !v)}
+                aria-expanded={expanded}
+            >
+            <span className={`${styles.spawnBadge} ${!bubble.pending ? styles.spawnBadgeDone : ""}`}>
+              {bubble.pending ? (
+                  <span className={styles.spawnBadgeDot} aria-hidden="true" />
+              ) : (
+                  <ToolDoneIcon />
+              )}
+              子任务
+            </span>
+              <span className={styles.spawnTitle}>{toolLabel}</span>
+              {bubble.pending ? (
+                  <span className={styles.toolSpinner} aria-hidden="true" />
+              ) : (
+                  <span className={styles.toolChevron} aria-hidden="true">
+                <ChevronIcon expanded={expanded} />
+              </span>
+              )}
+            </button>
+
+            {expanded && (spawnOutput.length > 0 || spawnResultText.length > 0) && (
+                <div className={styles.spawnBody}>
+                  <MarkdownRenderer
+                      content={`${spawnOutput || spawnResultText}${bubble.pending ? "\n\n█" : ""}`}
+                  />
+                </div>
+            )}
+          </div>
+        </div>
+    );
+  }
 
   if (isInline) {
     return (
-      <div className={styles.toolRow}>
-        <div className={styles.toolBubbleInline}>
-          {/* Header — always clickable to toggle detail */}
-          <button
-            className={styles.toolHeaderInline}
-            onClick={() => setExpanded((v) => !v)}
-            aria-expanded={expanded}
-          >
+        <div className={styles.toolRow}>
+          <div className={styles.toolBubbleInline}>
+            {/* Header — always clickable to toggle detail */}
+            <button
+                className={styles.toolHeaderInline}
+                onClick={() => setExpanded((v) => !v)}
+                aria-expanded={expanded}
+            >
             <span className={styles.toolIcon} aria-hidden="true">
               {bubble.pending ? <ToolRunningIcon /> : <ToolDoneIcon />}
             </span>
-            <span className={styles.toolName}>{toolLabel}</span>
-            {bubble.pending ? (
-              <span className={styles.toolSpinner} aria-hidden="true" />
-            ) : (
-              <span className={styles.toolChevron} aria-hidden="true">
+              <span className={styles.toolName}>{toolLabel}</span>
+              {bubble.pending ? (
+                  <span className={styles.toolSpinner} aria-hidden="true" />
+              ) : (
+                  <span className={styles.toolChevron} aria-hidden="true">
                 <ChevronIcon expanded={expanded} />
               </span>
-            )}
-          </button>
-
-          {expanded && (
-            <>
-              <div className={styles.toolSection}>
-                <p className={styles.toolSectionLabel}>工具: {bubble.name}</p>
-              </div>
-              {/* edit: 流式期间 — old_str 到了就渲染 diff（new_str 未到时显示纯删除行） */}
-              {isEditTool &&
-                bubble.pending &&
-                isReplaceTool &&
-                streamingOldStr !== null && (
-                  <DiffView
-                    mode="str_replace"
-                    path={streamingEditPath ?? ""}
-                    oldStr={streamingOldStr}
-                    newStr={streamingEditContent ?? ""}
-                    streaming
-                  />
-                )}
-
-              {/* write: 流式期间 — content 开始到达就渲染 DiffView（全部为新增行） */}
-              {isEditTool &&
-                bubble.pending &&
-                bubble.name === "write" &&
-                streamingEditContent !== null && (
-                  <DiffView
-                    mode="write"
-                    path={streamingEditPath ?? ""}
-                    newStr={streamingEditContent}
-                    streaming
-                  />
-                )}
-
-              {/* edit tools: 完成后显示最终 DiffView（成功且 args 解析完整） */}
-              {isEditTool && !bubble.pending && isDiff && isReplaceTool && (
-                <DiffView
-                  mode="str_replace"
-                  path={String(args!.path)}
-                  oldStr={String(args!.old_str)}
-                  newStr={String(args!.new_str)}
-                />
               )}
-              {isEditTool &&
-                !bubble.pending &&
-                isDiff &&
-                bubble.name === "write" && (
-                  <DiffView
-                    mode="write"
-                    path={String(args!.path)}
-                    newStr={String(args!.content)}
-                  />
-                )}
-              {/* edit tools: fallback — 失败（error 字段）或 args 解析不完整时显示原始结果 */}
-              {isEditTool && !bubble.pending && !isDiff && result && (
-                <div className={styles.toolSection}>
-                  <p className={styles.toolSectionLabel}>
-                    {(result as Record<string, unknown>)["error"]
-                      ? "错误"
-                      : "结果"}
-                  </p>
-                  <pre className={styles.toolCode}>
+            </button>
+
+            {expanded && (
+                <>
+                  <div className={styles.toolSection}>
+                    <p className={styles.toolSectionLabel}>工具: {bubble.name}</p>
+                  </div>
+                  {/* edit: 流式期间 — old_str 到了就渲染 diff（new_str 未到时显示纯删除行） */}
+                  {isEditTool &&
+                      bubble.pending &&
+                      isReplaceTool &&
+                      streamingOldStr !== null && (
+                          <DiffView
+                              mode="str_replace"
+                              path={streamingEditPath ?? ""}
+                              oldStr={streamingOldStr}
+                              newStr={streamingEditContent ?? ""}
+                              streaming
+                          />
+                      )}
+
+                  {/* write: 流式期间 — content 开始到达就渲染 DiffView（全部为新增行） */}
+                  {isEditTool &&
+                      bubble.pending &&
+                      bubble.name === "write" &&
+                      streamingEditContent !== null && (
+                          <DiffView
+                              mode="write"
+                              path={streamingEditPath ?? ""}
+                              newStr={streamingEditContent}
+                              streaming
+                          />
+                      )}
+
+                  {/* edit tools: 完成后显示最终 DiffView（成功且 args 解析完整） */}
+                  {isEditTool && !bubble.pending && isDiff && isReplaceTool && (
+                      <DiffView
+                          mode="str_replace"
+                          path={String(args!.path)}
+                          oldStr={String(args!.old_str)}
+                          newStr={String(args!.new_str)}
+                      />
+                  )}
+                  {isEditTool &&
+                      !bubble.pending &&
+                      isDiff &&
+                      bubble.name === "write" && (
+                          <DiffView
+                              mode="write"
+                              path={String(args!.path)}
+                              newStr={String(args!.content)}
+                          />
+                      )}
+                  {/* edit tools: fallback — 失败（error 字段）或 args 解析不完整时显示原始结果 */}
+                  {isEditTool && !bubble.pending && !isDiff && result && (
+                      <div className={styles.toolSection}>
+                        <p className={styles.toolSectionLabel}>
+                          {(result as Record<string, unknown>)["error"]
+                              ? "错误"
+                              : "结果"}
+                        </p>
+                        <pre className={styles.toolCode}>
                     {JSON.stringify(result, null, 2)}
                   </pre>
-                </div>
-              )}
+                      </div>
+                  )}
 
-              {/* spawn: 子 Agent 流式输出 */}
-              {isSpawn &&
-                (spawnOutput.length > 0 || spawnResultText.length > 0) && (
-                  <div className={styles.toolSection}>
-                    <p className={styles.toolSectionLabel}>子 Agent 输出</p>
-                    <MarkdownRenderer
-                      content={`${spawnOutput || spawnResultText}${bubble.pending ? "\n\n█" : ""}`}
-                    />
-                  </div>
-                )}
-              {/* run_py / run_ts: syntax-highlighted script preview (streaming or done) */}
-              {isTerminal && streamingScript !== null && (
-                <div className={styles.scriptPreview}>
-                  <MarkdownRenderer
-                    content={`\`\`\`${scriptLang}\n${streamingScript}${argsStreaming ? "█" : ""}\n\`\`\``}
-                  />
-                </div>
-              )}
+                  {/* spawn: 子 Agent 流式输出 */}
+                  {isSpawn &&
+                      (spawnOutput.length > 0 || spawnResultText.length > 0) && (
+                          <div className={styles.toolSection}>
+                            <p className={styles.toolSectionLabel}>子 Agent 输出</p>
+                            <MarkdownRenderer
+                                content={`${spawnOutput || spawnResultText}${bubble.pending ? "\n\n█" : ""}`}
+                            />
+                          </div>
+                      )}
+                  {/* run_py / run_ts: syntax-highlighted script preview (streaming or done) */}
+                  {isTerminal && streamingScript !== null && (
+                      <div className={styles.scriptPreview}>
+                        <MarkdownRenderer
+                            content={`\`\`\`${scriptLang}\n${streamingScript}${argsStreaming ? "█" : ""}\n\`\`\``}
+                        />
+                      </div>
+                  )}
 
-              {/* bash: sh-highlighted command preview (streaming and done) */}
-              {bubble.name === "bash" && streamingCommand !== null && (
-                <div className={styles.scriptPreview}>
-                  <MarkdownRenderer
-                    content={`\`\`\`sh\n${streamingCommand}${argsStreaming ? "█" : ""}\n\`\`\``}
-                  />
-                </div>
-              )}
+                  {/* bash: sh-highlighted command preview (streaming and done) */}
+                  {bubble.name === "bash" && streamingCommand !== null && (
+                      <div className={styles.scriptPreview}>
+                        <MarkdownRenderer
+                            content={`\`\`\`sh\n${streamingCommand}${argsStreaming ? "█" : ""}\n\`\`\``}
+                        />
+                      </div>
+                  )}
 
-              {/* bash: fallback raw args while streaming if command field not yet present */}
-              {bubble.pending &&
-                bubble.name === "bash" &&
-                streamingCommand === null &&
-                argsStr && (
-                  <div className={styles.toolSection}>
+                  {/* bash: fallback raw args while streaming if command field not yet present */}
+                  {bubble.pending &&
+                      bubble.name === "bash" &&
+                      streamingCommand === null &&
+                      argsStr && (
+                          <div className={styles.toolSection}>
                     <pre className={styles.toolCode}>
                       {argsStr}
                       {argsStreaming && (
-                        <span className={styles.cursor} aria-hidden="true" />
+                          <span className={styles.cursor} aria-hidden="true" />
                       )}
                     </pre>
-                  </div>
-                )}
+                          </div>
+                      )}
 
-              {/* Terminal result — shown below the code preview once complete */}
-              {!bubble.pending && isTerminal && (
-                <TerminalView
-                  toolName={bubble.name}
-                  command={args?.command ? String(args.command) : undefined}
-                  stdout={result?.stdout ? String(result.stdout) : undefined}
-                  stderr={result?.stderr ? String(result.stderr) : undefined}
-                  exitCode={
-                    result?.exit_code !== undefined
-                      ? (result.exit_code as number | null)
-                      : undefined
-                  }
-                />
-              )}
-            </>
-          )}
+                  {/* Terminal result — shown below the code preview once complete */}
+                  {!bubble.pending && isTerminal && (
+                      <TerminalView
+                          toolName={bubble.name}
+                          command={args?.command ? String(args.command) : undefined}
+                          stdout={result?.stdout ? String(result.stdout) : undefined}
+                          stderr={result?.stderr ? String(result.stderr) : undefined}
+                          exitCode={
+                            result?.exit_code !== undefined
+                                ? (result.exit_code as number | null)
+                                : undefined
+                          }
+                      />
+                  )}
+                </>
+            )}
+          </div>
         </div>
-      </div>
     );
   }
 
   return (
-    <div className={styles.toolRow}>
-      <div className={styles.toolBubble}>
-        <button
-          className={styles.toolHeader}
-          onClick={() => setExpanded((v) => !v)}
-          aria-expanded={expanded}
-        >
+      <div className={styles.toolRow}>
+        <div className={styles.toolBubble}>
+          <button
+              className={styles.toolHeader}
+              onClick={() => setExpanded((v) => !v)}
+              aria-expanded={expanded}
+          >
           <span className={styles.toolIcon} aria-hidden="true">
             {bubble.pending ? <ToolRunningIcon /> : <ToolDoneIcon />}
           </span>
-          <span className={styles.toolName}>{toolLabel}</span>
-          {bubble.pending ? (
-            <span className={styles.toolSpinner} aria-hidden="true" />
-          ) : (
-            <span className={styles.toolChevron} aria-hidden="true">
+            <span className={styles.toolName}>{toolLabel}</span>
+            {bubble.pending ? (
+                <span className={styles.toolSpinner} aria-hidden="true" />
+            ) : (
+                <span className={styles.toolChevron} aria-hidden="true">
               <ChevronIcon expanded={expanded} />
             </span>
-          )}
-        </button>
+            )}
+          </button>
 
-        {expanded && (
-          <div className={styles.toolBody}>
-            <div className={styles.toolSection}>
-              <p className={styles.toolSectionLabel}>工具: {bubble.name}</p>
-            </div>
-            {argsStr && (
-              <div className={styles.toolSection}>
-                <p className={styles.toolSectionLabel}>参数</p>
-                <pre className={styles.toolCode}>
+          {expanded && (
+              <div className={styles.toolBody}>
+                <div className={styles.toolSection}>
+                  <p className={styles.toolSectionLabel}>工具: {bubble.name}</p>
+                </div>
+                {argsStr && (
+                    <div className={styles.toolSection}>
+                      <p className={styles.toolSectionLabel}>参数</p>
+                      <pre className={styles.toolCode}>
                   {argsStr}
-                  {argsStreaming && (
-                    <span className={styles.cursor} aria-hidden="true" />
-                  )}
+                        {argsStreaming && (
+                            <span className={styles.cursor} aria-hidden="true" />
+                        )}
                 </pre>
+                    </div>
+                )}
+                {resultStr !== null && (
+                    <div className={styles.toolSection}>
+                      <p className={styles.toolSectionLabel}>结果</p>
+                      <pre className={styles.toolCode}>{resultStr}</pre>
+                    </div>
+                )}
               </div>
-            )}
-            {resultStr !== null && (
-              <div className={styles.toolSection}>
-                <p className={styles.toolSectionLabel}>结果</p>
-                <pre className={styles.toolCode}>{resultStr}</pre>
-              </div>
-            )}
-          </div>
-        )}
+          )}
+        </div>
       </div>
-    </div>
   );
 }
 
 // ─── Ask-user card ────────────────────────────────────────────────────────────
 
 function AskUserCard({
-  question,
-  options,
-  onAnswer,
-  answered,
-}: {
+                       question,
+                       options,
+                       onAnswer,
+                       answered,
+                     }: {
   question: string;
   options?: string[];
   onAnswer?: (text: string) => void;
@@ -670,79 +709,79 @@ function AskUserCard({
   const [submitted, setSubmitted] = useState(false);
 
   const handleAnswer = useCallback(
-    (text: string) => {
-      if (!onAnswer) return;
-      setSubmitted(true);
-      onAnswer(text);
-    },
-    [onAnswer],
+      (text: string) => {
+        if (!onAnswer) return;
+        setSubmitted(true);
+        onAnswer(text);
+      },
+      [onAnswer],
   );
 
   if (answered !== undefined) {
     return (
-      <div className={styles.askUserCard}>
-        <p className={styles.askUserQuestion}>{question}</p>
-        <div className={styles.askUserAnswered}>
-          <span className={styles.askUserAnsweredLabel}>已回答：</span>
-          <span className={styles.askUserAnsweredText}>{answered}</span>
+        <div className={styles.askUserCard}>
+          <p className={styles.askUserQuestion}>{question}</p>
+          <div className={styles.askUserAnswered}>
+            <span className={styles.askUserAnsweredLabel}>已回答：</span>
+            <span className={styles.askUserAnsweredText}>{answered}</span>
+          </div>
         </div>
-      </div>
     );
   }
 
   if (submitted) {
     return (
-      <div className={styles.askUserCard}>
-        <p className={styles.askUserQuestion}>{question}</p>
-        <div className={styles.askUserAnswered}>
-          <span className={styles.askUserAnsweredLabel}>已发送，等待回应…</span>
+        <div className={styles.askUserCard}>
+          <p className={styles.askUserQuestion}>{question}</p>
+          <div className={styles.askUserAnswered}>
+            <span className={styles.askUserAnsweredLabel}>已发送，等待回应…</span>
+          </div>
         </div>
-      </div>
     );
   }
 
   return (
-    <div className={styles.askUserCard}>
-      <p className={styles.askUserQuestion}>{question}</p>
-      {options && options.length > 0 && (
-        <div className={styles.askUserOptions}>
-          {options.map((opt, i) => (
-            <button
-              key={i}
-              className={styles.askUserOption}
-              onClick={() => handleAnswer(opt)}
-            >
-              {opt}
-            </button>
-          ))}
-        </div>
-      )}
-      <form
-        className={styles.askUserForm}
-        onSubmit={(e) => {
-          e.preventDefault();
-          const val = custom.trim();
-          if (val) {
-            handleAnswer(val);
-          }
-        }}
-      >
-        <input
-          className={styles.askUserInput}
-          value={custom}
-          onChange={(e) => setCustom(e.target.value)}
-          placeholder="自定义回答…"
-          autoFocus
-        />
-        <button
-          type="submit"
-          className={styles.askUserSubmit}
-          disabled={!custom.trim()}
+      <div className={styles.askUserCard}>
+        <p className={styles.askUserQuestion}>{question}</p>
+        {options && options.length > 0 && (
+            <div className={styles.askUserOptions}>
+              {options.map((opt, i) => (
+                  <button
+                      key={i}
+                      className={styles.askUserOption}
+                      onClick={() => handleAnswer(opt)}
+                  >
+                    {opt}
+                  </button>
+              ))}
+            </div>
+        )}
+        <form
+            className={styles.askUserForm}
+            onSubmit={(e) => {
+              e.preventDefault();
+              const val = custom.trim();
+              if (val) {
+                handleAnswer(val);
+              }
+            }}
         >
-          发送
-        </button>
-      </form>
-    </div>
+          <input
+              className={styles.askUserInput}
+              value={custom}
+              onChange={(e) => setCustom(e.target.value)}
+              placeholder="自定义回答…"
+              autoFocus
+          />
+          <button
+              type="submit"
+              className={styles.askUserSubmit}
+              disabled={!custom.trim()}
+          >
+            发送
+          </button>
+        </form>
+      </div>
   );
 }
 
@@ -756,17 +795,17 @@ interface FileInfo {
 }
 
 type PreviewState =
-  | { status: "idle" }
-  | { status: "loading" }
-  | {
-      status: "ready";
-      content: string;
-      lang: string;
-      lineCount: number;
-      truncated: boolean;
-    }
-  | { status: "error"; message: string }
-  | { status: "binary" };
+    | { status: "idle" }
+    | { status: "loading" }
+    | {
+  status: "ready";
+  content: string;
+  lang: string;
+  lineCount: number;
+  truncated: boolean;
+}
+    | { status: "error"; message: string }
+    | { status: "binary" };
 
 function FileCard({ file, pending }: { file: FileInfo; pending: boolean }) {
   const [preview, setPreview] = useState<PreviewState>({ status: "idle" });
@@ -818,100 +857,100 @@ function FileCard({ file, pending }: { file: FileInfo; pending: boolean }) {
   }, [file.path, file.filename, token]);
 
   return (
-    <div className={styles.toolRow}>
-      <div
-        className={`${styles.fileCard} ${pending ? styles.fileCardPending : ""}`}
-      >
-        {/* ── Card header ── */}
-        <div className={styles.fileCardHeader}>
-          <div className={styles.fileCardLeft}>
+      <div className={styles.toolRow}>
+        <div
+            className={`${styles.fileCard} ${pending ? styles.fileCardPending : ""}`}
+        >
+          {/* ── Card header ── */}
+          <div className={styles.fileCardHeader}>
+            <div className={styles.fileCardLeft}>
             <span className={styles.fileCardIcon} aria-hidden="true">
               <FileIcon />
             </span>
-            <div className={styles.fileCardMeta}>
-              <span className={styles.fileCardName}>{file.filename}</span>
-              {!pending && (
-                <span className={styles.fileCardSize}>
+              <div className={styles.fileCardMeta}>
+                <span className={styles.fileCardName}>{file.filename}</span>
+                {!pending && (
+                    <span className={styles.fileCardSize}>
                   {formatBytes(file.size)}
                 </span>
-              )}
-              {pending && (
-                <span className={styles.fileCardPendingLabel}>准备中…</span>
+                )}
+                {pending && (
+                    <span className={styles.fileCardPendingLabel}>准备中…</span>
+                )}
+              </div>
+            </div>
+
+            <div className={styles.fileCardActions}>
+              {!pending && (
+                  <>
+                    <button
+                        className={styles.fileCardBtn}
+                        onClick={toggleExpand}
+                        aria-label={expanded ? "收起预览" : "展开预览"}
+                        title={expanded ? "收起" : "预览"}
+                    >
+                      <EyeIcon />
+                      <span>{expanded ? "收起" : "预览"}</span>
+                    </button>
+                    <button
+                        className={`${styles.fileCardBtn} ${styles.fileCardBtnPrimary}`}
+                        onClick={handleDownload}
+                        aria-label={`下载 ${file.filename}`}
+                        title="下载"
+                    >
+                      <DownloadIcon />
+                      <span>下载</span>
+                    </button>
+                  </>
               )}
             </div>
           </div>
 
-          <div className={styles.fileCardActions}>
-            {!pending && (
-              <>
-                <button
-                  className={styles.fileCardBtn}
-                  onClick={toggleExpand}
-                  aria-label={expanded ? "收起预览" : "展开预览"}
-                  title={expanded ? "收起" : "预览"}
-                >
-                  <EyeIcon />
-                  <span>{expanded ? "收起" : "预览"}</span>
-                </button>
-                <button
-                  className={`${styles.fileCardBtn} ${styles.fileCardBtnPrimary}`}
-                  onClick={handleDownload}
-                  aria-label={`下载 ${file.filename}`}
-                  title="下载"
-                >
-                  <DownloadIcon />
-                  <span>下载</span>
-                </button>
-              </>
-            )}
-          </div>
-        </div>
-
-        {/* ── Preview area ── */}
-        {expanded && (
-          <div className={styles.filePreview}>
-            {preview.status === "loading" && (
-              <div className={styles.filePreviewLoading}>加载中…</div>
-            )}
-            {preview.status === "binary" && (
-              <div className={styles.filePreviewBinary}>
-                <span aria-hidden="true">📦</span>
-                <span>二进制文件，请下载后查看</span>
-              </div>
-            )}
-            {preview.status === "error" && (
-              <div className={styles.filePreviewError}>
-                ⚠️ {preview.message}
-              </div>
-            )}
-            {preview.status === "ready" && (
-              <>
-                <FilePreviewContent
-                  content={preview.content}
-                  lang={preview.lang}
-                  lineCount={preview.lineCount}
-                />
-                {preview.truncated && (
-                  <div className={styles.filePreviewTruncated}>
-                    文件过大，仅显示前 100 KB
-                  </div>
+          {/* ── Preview area ── */}
+          {expanded && (
+              <div className={styles.filePreview}>
+                {preview.status === "loading" && (
+                    <div className={styles.filePreviewLoading}>加载中…</div>
                 )}
-              </>
-            )}
-          </div>
-        )}
+                {preview.status === "binary" && (
+                    <div className={styles.filePreviewBinary}>
+                      <span aria-hidden="true">📦</span>
+                      <span>二进制文件，请下载后查看</span>
+                    </div>
+                )}
+                {preview.status === "error" && (
+                    <div className={styles.filePreviewError}>
+                      ⚠️ {preview.message}
+                    </div>
+                )}
+                {preview.status === "ready" && (
+                    <>
+                      <FilePreviewContent
+                          content={preview.content}
+                          lang={preview.lang}
+                          lineCount={preview.lineCount}
+                      />
+                      {preview.truncated && (
+                          <div className={styles.filePreviewTruncated}>
+                            文件过大，仅显示前 100 KB
+                          </div>
+                      )}
+                    </>
+                )}
+              </div>
+          )}
+        </div>
       </div>
-    </div>
   );
 }
 
 // ─── File preview content (with highlight.js) ─────────────────────────────────
 
 function FilePreviewContent({
-  content,
-  lang,
-  lineCount,
-}: {
+                              content,
+                              lang,
+                              lineCount,
+                            }: {
   content: string;
   lang: string;
   lineCount: number;
@@ -935,17 +974,17 @@ function FilePreviewContent({
   }, [content, lang]);
 
   return (
-    <div ref={containerRef} className={styles.filePreviewCode}>
-      <div className={styles.filePreviewCodeHeader}>
-        {lang && <span className={styles.filePreviewLang}>{lang}</span>}
-        <span className={styles.filePreviewLines}>{lineCount} 行</span>
-      </div>
-      <pre className={styles.filePreviewPre}>
+      <div ref={containerRef} className={styles.filePreviewCode}>
+        <div className={styles.filePreviewCodeHeader}>
+          {lang && <span className={styles.filePreviewLang}>{lang}</span>}
+          <span className={styles.filePreviewLines}>{lineCount} 行</span>
+        </div>
+        <pre className={styles.filePreviewPre}>
         <code className={`hljs ${lang ? `language-${lang}` : ""}`}>
           {content}
         </code>
       </pre>
-    </div>
+      </div>
   );
 }
 
@@ -961,59 +1000,59 @@ function formatBytes(bytes: number): string {
 
 function FileIcon() {
   return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
-      <polyline points="13 2 13 9 20 9" />
-    </svg>
+      <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+      >
+        <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
+        <polyline points="13 2 13 9 20 9" />
+      </svg>
   );
 }
 
 function EyeIcon() {
   return (
-    <svg
-      width="13"
-      height="13"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-      <circle cx="12" cy="12" r="3" />
-    </svg>
+      <svg
+          width="13"
+          height="13"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+      >
+        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+        <circle cx="12" cy="12" r="3" />
+      </svg>
   );
 }
 
 function DownloadIcon() {
   return (
-    <svg
-      width="13"
-      height="13"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-      <polyline points="7 10 12 15 17 10" />
-      <line x1="12" y1="15" x2="12" y2="3" />
-    </svg>
+      <svg
+          width="13"
+          height="13"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+      >
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+        <polyline points="7 10 12 15 17 10" />
+        <line x1="12" y1="15" x2="12" y2="3" />
+      </svg>
   );
 }
 
@@ -1021,58 +1060,58 @@ function DownloadIcon() {
 
 function ToolRunningIcon() {
   return (
-    <svg
-      width="13"
-      height="13"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
-    </svg>
+      <svg
+          width="13"
+          height="13"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+      >
+        <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
+      </svg>
   );
 }
 
 function ToolDoneIcon() {
   return (
-    <svg
-      width="13"
-      height="13"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <polyline points="20 6 9 17 4 12" />
-    </svg>
+      <svg
+          width="13"
+          height="13"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+      >
+        <polyline points="20 6 9 17 4 12" />
+      </svg>
   );
 }
 
 function ChevronIcon({ expanded }: { expanded: boolean }) {
   return (
-    <svg
-      width="10"
-      height="10"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-      style={{
-        transform: expanded ? "rotate(180deg)" : "rotate(0deg)",
-        transition: "transform 0.15s ease",
-      }}
-    >
-      <polyline points="6 9 12 15 18 9" />
-    </svg>
+      <svg
+          width="10"
+          height="10"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+          style={{
+            transform: expanded ? "rotate(180deg)" : "rotate(0deg)",
+            transition: "transform 0.15s ease",
+          }}
+      >
+        <polyline points="6 9 12 15 18 9" />
+      </svg>
   );
 }

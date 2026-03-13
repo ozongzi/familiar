@@ -38,20 +38,20 @@ impl Tool for SpawnSpell {
             self.api_base.clone(),
             self.model_name.clone(),
         )
-        .with_streaming()
-        .with_system_prompt(
-            r#"你是专注完成单一子任务的 Agent。
+            .with_streaming()
+            .with_system_prompt(
+                r#"你是专注完成单一子任务的 Agent。
              完成后直接输出结果摘要，不要闲聊。
              请始终用中文回复。"#
-                .to_string(),
-        )
-        .add_tool(
-            ToolBundle::new()
-                .add(FileSpells)
-                .add(ShellSpells)
-                .add(SearchSpells)
-                .add(A2aSpell),
-        );
+                    .to_string(),
+            )
+            .add_tool(
+                ToolBundle::new()
+                    .add(FileSpells)
+                    .add(ShellSpells)
+                    .add(SearchSpells)
+                    .add(A2aSpell),
+            );
 
         for (k, v) in &self.extra_body {
             builder = builder.extra_field(k.clone(), v.clone());
@@ -61,7 +61,7 @@ impl Tool for SpawnSpell {
             builder = builder.add_tool(tool);
         }
 
-        let (agent, _) = builder.with_interrupt_channel();
+        let (agent, _interrupt_tx) = builder.with_interrupt_channel();
         let mut stream = agent.chat(&goal);
 
         let mut result = String::new();
@@ -75,7 +75,7 @@ impl Tool for SpawnSpell {
                             "content": t,
                             "source": "spawn",
                         })
-                        .to_string(),
+                            .to_string(),
                     );
                 }
                 Ok(AgentEvent::ToolCall(c)) => {
@@ -87,7 +87,7 @@ impl Tool for SpawnSpell {
                             "delta": c.delta,
                             "source": "spawn",
                         })
-                        .to_string(),
+                            .to_string(),
                     );
                 }
                 Ok(AgentEvent::ToolResult(res)) => {
@@ -99,7 +99,7 @@ impl Tool for SpawnSpell {
                             "result": res.result,
                             "source": "spawn",
                         })
-                        .to_string(),
+                            .to_string(),
                     );
                 }
                 Ok(AgentEvent::ReasoningToken(_)) => {}

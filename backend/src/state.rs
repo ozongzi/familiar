@@ -71,6 +71,11 @@ pub struct ChatEntry {
     /// Cleared after each ToolResult (the agent drains its channel then).
     /// Any messages remaining after "done" are processed as a new generation.
     pub queued_interrupts: Vec<String>,
+
+    /// Broadcast sender for sub-agent (SpawnSpell) events.
+    /// start_generation subscribes a fresh receiver each turn and forwards
+    /// events into the main WS broadcast stream.
+    pub spawn_tx: tokio::sync::broadcast::Sender<String>,
 }
 
 impl ChatEntry {
@@ -79,6 +84,7 @@ impl ChatEntry {
         interrupt_tx: UnboundedSender<String>,
         ask_user_pending: Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<String>>>>,
         agent_stale: Arc<AtomicBool>,
+        spawn_tx: tokio::sync::broadcast::Sender<String>,
     ) -> Self {
         let (broadcast_tx, _) = broadcast::channel(BROADCAST_CAP);
         Self {
@@ -91,6 +97,7 @@ impl ChatEntry {
             ask_user_pending,
             agent_stale,
             queued_interrupts: Vec::new(),
+            spawn_tx,
         }
     }
 
@@ -219,6 +226,7 @@ impl AppState {
         UnboundedSender<String>,
         Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<String>>>>,
         Arc<AtomicBool>,
+        tokio::sync::broadcast::Sender<String>,
     ) {
         let history = match self.db.restore(conversation_id).await {
             Ok(h) => {
@@ -251,7 +259,7 @@ impl AppState {
             model_name: self.model_name.clone(),
             extra_body: self.model_extra_body.clone(),
             mcp_tools: Arc::clone(&self.mcp_tools),
-            spawn_tx,
+            spawn_tx: spawn_tx.clone(),
             db: self.db.clone(),
             embed: self.embed.clone(),
             conversation_id,
@@ -263,9 +271,9 @@ impl AppState {
             self.model_api_base.clone(),
             self.model_name.clone(),
         )
-        .with_streaming()
-        .with_history(history)
-        .add_tool(build_all_spells(spell_deps));
+            .with_streaming()
+            .with_history(history)
+            .add_tool(build_all_spells(spell_deps));
 
         for (_, tool) in mcp_snapshot {
             builder = builder.add_tool(tool);
@@ -282,7 +290,7 @@ impl AppState {
         }
 
         let (agent, tx) = builder.with_interrupt_channel();
-        (agent, tx, ask_user_pending, agent_stale)
+        (agent, tx, ask_user_pending, agent_stale, spawn_tx)
     }
 
     /// Deliver a user's answer to a waiting `ask_user` spell.
@@ -319,8 +327,8 @@ impl AppState {
         }
 
         // Slow path — build agent outside the lock.
-        let (agent, tx, ask_user_pending, agent_stale) = self.build_agent(conversation_id).await;
-        let entry = ChatEntry::new(agent, tx, ask_user_pending, agent_stale);
+        let (agent, tx, ask_user_pending, agent_stale, spawn_tx) = self.build_agent(conversation_id).await;
+        let entry = ChatEntry::new(agent, tx, ask_user_pending, agent_stale, spawn_tx);
         let rx = entry.broadcast_tx.subscribe();
         let log = entry.event_log.clone();
         let generating = entry.generating;
@@ -362,14 +370,15 @@ impl AppState {
             Some(a) => a,
             None => {
                 // Agent was dropped because MCP tools changed — rebuild outside lock.
-                let (fresh_agent, fresh_tx, fresh_pending, fresh_stale) =
+                let (fresh_agent, fresh_tx, fresh_pending, fresh_stale, fresh_spawn_tx) =
                     self.build_agent(conversation_id).await;
                 let mut map = self.chats.lock().unwrap();
                 if let Some(entry) = map.get_mut(&conversation_id) {
-                    // Swap in the new interrupt channel and stale flag.
+                    // Swap in the new interrupt channel, stale flag, and spawn sender.
                     entry.interrupt_tx = fresh_tx;
                     entry.ask_user_pending = fresh_pending;
                     entry.agent_stale = Arc::clone(&fresh_stale);
+                    entry.spawn_tx = fresh_spawn_tx;
                 }
                 fresh_agent
             }
@@ -378,6 +387,37 @@ impl AppState {
         agent.push_user_message_with_name(&user_text, None);
 
         let state = self.clone();
+
+        // 把子 Agent（SpawnSpell）的流式事件转发到主 WS 广播流。
+        // 每次 generation 开始时订阅一个新 receiver，转发任务在 sender drop 后自动退出。
+        {
+            let relay_state = state.clone();
+            let mut rx = {
+                let map = relay_state.chats.lock().unwrap();
+                map.get(&conversation_id)
+                    .map(|e| e.spawn_tx.subscribe())
+            };
+            if let Some(mut rx) = rx.take() {
+                tokio::spawn(async move {
+                    loop {
+                        match rx.recv().await {
+                            Ok(payload) => {
+                                let mut map = relay_state.chats.lock().unwrap();
+                                if let Some(entry) = map.get_mut(&conversation_id) {
+                                    entry.emit(payload);
+                                }
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                                continue;
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                                break;
+                            }
+                        }
+                    }
+                });
+            }
+        }
 
         tokio::spawn(async move {
             generation_loop(state, conversation_id, agent, abort_flag, agent_stale).await;
@@ -522,7 +562,7 @@ async fn generation_loop(
             abort_flag,
             agent_stale,
         )
-        .await;
+            .await;
 
         let text = match pending_text {
             None => break,
@@ -555,13 +595,14 @@ async fn generation_loop(
             Some(a) => a,
             None => {
                 // Agent was stale; rebuild from history.
-                let (a, tx, pend, s) = state.build_agent(conversation_id).await;
+                let (a, tx, pend, s, new_spawn_tx) = state.build_agent(conversation_id).await;
                 {
                     let mut map = state.chats.lock().unwrap();
                     if let Some(entry) = map.get_mut(&conversation_id) {
                         entry.interrupt_tx = tx;
                         entry.ask_user_pending = pend;
                         entry.agent_stale = Arc::clone(&s);
+                        entry.spawn_tx = new_spawn_tx;
                     }
                 }
                 new_stale = s;
