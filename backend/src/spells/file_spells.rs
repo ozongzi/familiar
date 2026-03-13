@@ -61,13 +61,11 @@ impl Tool for FileSpells {
     /// content: 写入的完整内容
     async fn write(&self, description: Option<String>, path: String, content: String) -> Value {
         let _ = description;
-        if let Some(parent) = std::path::Path::new(&path).parent() {
-            if !parent.as_os_str().is_empty() {
-                if let Err(e) = fs::create_dir_all(parent).await {
+        if let Some(parent) = std::path::Path::new(&path).parent()
+            && !parent.as_os_str().is_empty()
+                && let Err(e) = fs::create_dir_all(parent).await {
                     return json!({ "error": format!("创建目录失败: {e}") });
                 }
-            }
-        }
         match fs::write(&path, &content).await {
             Ok(_) => json!({ "status": "success", "lines_written": content.lines().count() }),
             Err(e) => json!({ "error": e.to_string() }),

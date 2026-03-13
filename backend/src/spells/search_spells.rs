@@ -84,11 +84,10 @@ impl Tool for SearchSpells {
                     cur_lines.push(json!({ "line": line, "text": text, "is_match": is_match }));
                 }
                 Some("end") => {
-                    if let Some(file) = cur_file.take() {
-                        if !cur_lines.is_empty() {
+                    if let Some(file) = cur_file.take()
+                        && !cur_lines.is_empty() {
                             matches.push(json!({ "file": file, "lines": cur_lines.clone() }));
                         }
-                    }
                     cur_lines.clear();
                 }
                 _ => {}

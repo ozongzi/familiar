@@ -338,11 +338,10 @@ pub async fn upload_file(
                 }
                 "conversation_id" => {
                     // treat as plain text field
-                    if let Ok(text) = field.text().await {
-                        if let Ok(parsed) = Uuid::parse_str(text.trim()) {
+                    if let Ok(text) = field.text().await
+                        && let Ok(parsed) = Uuid::parse_str(text.trim()) {
                             conv_id_opt = Some(parsed);
                         }
-                    }
                 }
                 _ => {
                     // ignore other fields
@@ -426,11 +425,10 @@ pub async fn upload_file(
             // sees the uploaded file without having to rebuild the agent.
             {
                 let mut map = state.chats.lock().unwrap();
-                if let Some(entry) = map.get_mut(&conv_id) {
-                    if let Some(ref mut agent) = entry.agent {
+                if let Some(entry) = map.get_mut(&conv_id)
+                    && let Some(ref mut agent) = entry.agent {
                         agent.push_user_message_with_name(&content_str, None);
                     }
-                }
             }
         } else {
             tracing::warn!(
