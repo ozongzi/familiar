@@ -1,19 +1,22 @@
 use std::{collections::HashMap, sync::Arc};
 
-use ds_api::{AgentEvent, DeepseekAgent, McpTool, tool};
+use ds_api::{AgentEvent, DeepseekAgent, McpTool, tool, tool_trait::ToolBundle};
 use futures::StreamExt;
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
+
+use super::a2a_spell::A2aSpell;
+use super::file_spells::FileSpells;
+use super::search_spells::SearchSpells;
+use super::shell_spells::ShellSpells;
 
 pub struct SpawnSpell {
     pub api_key: String,
     pub api_base: String,
     pub model_name: String,
     pub extra_body: HashMap<String, Value>,
-    /// 可向子 Agent 注入的 MCP 工具快照
+    /// 与主 Agent 共享的 MCP 工具列表，子 Agent 全部继承
     pub mcp_tools: Arc<Mutex<Vec<(String, McpTool)>>>,
-    /// 默认安全工具白名单（无副作用：search/glob/outline/read 等）
-    pub default_tools: Vec<String>,
     /// 子 Agent 事件广播频道，供 UI 实时显示子 Agent 输出和工具调用
     pub broadcast_tx: tokio::sync::broadcast::Sender<String>,
 }
@@ -22,20 +25,12 @@ pub struct SpawnSpell {
 impl Tool for SpawnSpell {
     /// 启动独立子 Agent 完成子目标，子 Agent 有独立上下文，跑完返回结果摘要。
     /// 适合大量搜索 / fetch / 探索但不希望污染主上下文的任务（如 Search Agent）。
-    /// 子 Agent 默认只能用无副作用工具；需要写文件时须在 tools 中显式列出。
+    /// 子 Agent 拥有与主 Agent 相同的工具集（file / shell / search / a2a + 所有 MCP）。
     ///
     /// description: 本次操作意图（供 UI 渲染，可不填）
     /// goal: 子 Agent 的目标，尽量具体
-    /// tools: 允许使用的工具名列表（可选，不填则用默认安全集）
-    /// extra_body: 可选的 JSON 额外字段，会在子 Agent 构建时通过 `extra_field` 注入到 agent 配置中
-    async fn spawn(
-        &self,
-        description: Option<String>,
-        goal: String,
-        tools: Option<Vec<String>>,
-    ) -> Value {
+    async fn spawn(&self, description: Option<String>, goal: String) -> Value {
         let _ = description;
-        let allowed: Vec<String> = tools.unwrap_or_else(|| self.default_tools.clone());
         let mcp_snapshot: Vec<(String, McpTool)> = self.mcp_tools.lock().await.clone();
 
         let mut builder = DeepseekAgent::custom(
@@ -47,19 +42,23 @@ impl Tool for SpawnSpell {
         .with_system_prompt(
             r#"你是专注完成单一子任务的 Agent。
              完成后直接输出结果摘要，不要闲聊。
-             只使用被授权的工具。
              请始终用中文回复。"#
                 .to_string(),
+        )
+        .add_tool(
+            ToolBundle::new()
+                .add(FileSpells)
+                .add(ShellSpells)
+                .add(SearchSpells)
+                .add(A2aSpell),
         );
 
         for (k, v) in &self.extra_body {
             builder = builder.extra_field(k.clone(), v.clone());
         }
 
-        for tool in &mcp_snapshot {
-            if allowed.iter().any(|a| a == &tool.0 || a == "*") {
-                builder = builder.add_tool(tool.1.clone());
-            }
+        for (_, tool) in mcp_snapshot {
+            builder = builder.add_tool(tool);
         }
 
         let (agent, _) = builder.with_interrupt_channel();

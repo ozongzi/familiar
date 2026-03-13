@@ -15,9 +15,7 @@ use uuid::Uuid;
 
 use crate::db::{Db, to_vector};
 use crate::embedding::EmbeddingClient;
-use crate::spells::{
-    FileSpells, HistorySpell, SearchSpells, ShellSpells, SpawnSpell, ToolBundle, UiSpells,
-};
+use crate::spells::{SpellDeps, build_all_spells};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 // How many events to keep in the log for late-joining clients.
@@ -151,12 +149,6 @@ pub struct AppState {
     /// entries without going through AppState.
     pub mcp_tools: Arc<tokio::sync::Mutex<Vec<(String, McpTool)>>>,
 
-    /// Number of raw tool definitions registered by the built-in spells
-    /// (computed once at startup). Used by ManageMcpSpell to enforce max_tools.
-    pub builtin_tool_count: usize,
-
-    /// Maximum total tool definitions (built-in + all MCP). From config.
-    pub max_tools: usize,
 }
 
 impl AppState {
@@ -164,7 +156,6 @@ impl AppState {
         cfg: &Config,
         pool: PgPool,
         mcp_tools: Vec<(String, McpTool)>,
-        builtin_tool_count: usize,
     ) -> Self {
         let db = Db::new(pool.clone());
         Self {
@@ -183,8 +174,6 @@ impl AppState {
                 cfg.embedding.name.clone(),
             ),
             mcp_tools: Arc::new(tokio::sync::Mutex::new(mcp_tools)),
-            builtin_tool_count,
-            max_tools: cfg.limits.max_tools,
         }
     }
 
@@ -195,8 +184,20 @@ impl AppState {
         let mut tools = Vec::new();
 
         for mc in mcp_configs {
-            let args: Vec<&str> = mc.args.iter().map(|s| s.as_str()).collect();
-            match McpTool::stdio(&mc.command, &args).await {
+            // When env vars are specified, prepend them via `env KEY=VAL ... cmd args`
+            // so they are injected into the subprocess without touching the parent process.
+            let env_args: Vec<String>;
+            let (cmd, args): (&str, Vec<&str>) = if mc.env.is_empty() {
+                (&mc.command, mc.args.iter().map(String::as_str).collect())
+            } else {
+                env_args = mc.env.iter()
+                    .map(|(k, v)| format!("{k}={v}"))
+                    .chain(std::iter::once(mc.command.clone()))
+                    .chain(mc.args.iter().cloned())
+                    .collect();
+                ("env", env_args.iter().map(String::as_str).collect())
+            };
+            match McpTool::stdio(cmd, &args).await {
                 Ok(t) => {
                     info!("MCP: {} ready ({} tools)", mc.name, t.raw_tools().len());
                     tools.push((mc.name.clone(), t));
@@ -243,10 +244,19 @@ impl AppState {
 
         let (spawn_tx, _) = tokio::sync::broadcast::channel::<String>(256);
 
-        let core_bundle = ToolBundle::new()
-            .add(FileSpells)
-            .add(ShellSpells)
-            .add(SearchSpells);
+        let spell_deps = SpellDeps {
+            ask_pending: Arc::clone(&ask_user_pending),
+            api_key: self.deepseek_token.clone(),
+            api_base: self.model_api_base.clone(),
+            model_name: self.model_name.clone(),
+            extra_body: self.model_extra_body.clone(),
+            mcp_tools: Arc::clone(&self.mcp_tools),
+            spawn_tx,
+            db: self.db.clone(),
+            embed: self.embed.clone(),
+            conversation_id,
+            agent_stale: Arc::clone(&agent_stale),
+        };
 
         let mut builder = DeepseekAgent::custom(
             self.deepseek_token.clone(),
@@ -255,29 +265,7 @@ impl AppState {
         )
         .with_streaming()
         .with_history(history)
-        .add_tool(core_bundle)
-        .add_tool(UiSpells {
-            ask_pending: Arc::clone(&ask_user_pending),
-        })
-        .add_tool(SpawnSpell {
-            api_key: self.deepseek_token.clone(),
-            api_base: self.model_api_base.clone(),
-            model_name: self.model_name.clone(),
-            extra_body: self.model_extra_body.clone(),
-            mcp_tools: Arc::clone(&self.mcp_tools),
-            default_tools: vec![
-                "read".to_string(),
-                "search".to_string(),
-                "glob".to_string(),
-                "outline".to_string(),
-            ],
-            broadcast_tx: spawn_tx,
-        })
-        .add_tool(HistorySpell {
-            db: self.db.clone(),
-            embed: self.embed.clone(),
-            conversation_id,
-        });
+        .add_tool(build_all_spells(spell_deps));
 
         for (_, tool) in mcp_snapshot {
             builder = builder.add_tool(tool);
@@ -613,6 +601,7 @@ async fn run_generation(
     let mut stream = agent.chat_from_history();
     info!(conversation = %conversation_id, "[TIMING] chat_from_history returned in {:?}", t_start.elapsed());
     let mut reply_buf = String::new();
+    let mut reasoning_buf = String::new();
     let mut poll_count = 0u32;
     // Accumulate tool calls for the current turn.
     // key = tool call id, value = (name, args, result_json)
@@ -621,8 +610,12 @@ async fn run_generation(
         std::collections::HashMap::new();
     // Preserve insertion order so the assistant message has tool_calls in the right order.
     let mut pending_tool_order: Vec<String> = Vec::new();
-    // index -> name, for tool calls whose id hasn't arrived yet
+    // index -> name, for tool calls whose id hasn't arrived yet (MiniMax: empty id first)
     let mut pending_name_buf: std::collections::HashMap<u32, (String, String)> =
+        std::collections::HashMap::new();
+    // index -> id, for tool calls whose id arrived first (DeepSeek: real id in first chunk,
+    // empty id in subsequent chunks).  Used to route continuation deltas correctly.
+    let mut index_to_id: std::collections::HashMap<u32, String> =
         std::collections::HashMap::new();
 
     loop {
@@ -668,6 +661,7 @@ async fn run_generation(
                     break;
                 };
 
+
                 let payload = match event {
                     Ok(AgentEvent::Token(token)) => {
                         info!(conversation = %conversation_id, "[TIMING] poll #{poll_count}: stream.next() -> Token ({} chars) in {elapsed:?}", token.len());
@@ -677,20 +671,43 @@ async fn run_generation(
                     Ok(AgentEvent::ToolCall(c)) => {
                         info!(conversation = %conversation_id, "[TIMING] poll #{poll_count}: stream.next() -> ToolCall name={} id={} index={} delta_len={} in {elapsed:?}", c.name, c.id, c.index, c.delta.len());
                         // Accumulate args by id, preserving insertion order.
-                        // If id is empty, buffer the name by index until the real id arrives.
-                        eprintln!("[PROBE] ToolCall chunk: id={:?} name={:?} index={} delta={:?}", c.id, c.name, c.index, c.delta);
+                        // Both DeepSeek and MiniMax send the real id in the first chunk;
+                        // subsequent chunks have empty id and are routed via index_to_id.
+                        // pending_name_buf is a safety net for the hypothetical case where
+                        // name/delta arrive before the id chunk.
                         if c.id.is_empty() {
-                            // MiniMax sends first chunk with empty id — buffer name+delta until real id arrives
-                            let entry = pending_name_buf.entry(c.index).or_insert_with(|| (c.name.clone(), String::new()));
-                            if !c.name.is_empty() { entry.0 = c.name.clone(); }
-                            entry.1.push_str(&c.delta);
-                            eprintln!("[PROBE] buffered (id empty): index={} name={:?} delta={:?} total_buf={:?}", c.index, entry.0, c.delta, entry.1);
-                            String::new()
+                            // Empty id chunk — continuation delta, route via index_to_id.
+                            if let Some(known_id) = index_to_id.get(&c.index).cloned() {
+                                // DeepSeek continuation — append delta and emit immediately.
+                                if let Some(entry) = pending_tools.get_mut(&known_id) {
+                                    entry.1.push_str(&c.delta);
+                                }
+                                if c.delta.is_empty() {
+                                    String::new()
+                                } else {
+                                    let name = pending_tools.get(&known_id)
+                                        .map(|e| e.0.clone())
+                                        .unwrap_or_default();
+                                    json!({
+                                        "type": "tool_call",
+                                        "id": known_id,
+                                        "name": name,
+                                        "delta": c.delta,
+                                    }).to_string()
+                                }
+                            } else {
+                                // MiniMax: buffer until real id arrives
+                                let entry = pending_name_buf.entry(c.index).or_insert_with(|| (c.name.clone(), String::new()));
+                                if !c.name.is_empty() { entry.0 = c.name.clone(); }
+                                entry.1.push_str(&c.delta);
+                                String::new()
+                            }
                         } else {
-                            // Real id arrived — flush any buffered name/delta from empty-id chunks
+                            // Real id chunk — record index->id mapping for future empty-id chunks.
+                            index_to_id.entry(c.index).or_insert_with(|| c.id.clone());
+                            // Flush any buffered name/delta from empty-id chunks (MiniMax case)
                             let (buffered_name, buffered_delta) = pending_name_buf.remove(&c.index)
                                 .unwrap_or_default();
-                            eprintln!("[PROBE] real id: id={:?} buffered_name={:?} buffered_delta={:?} c.delta={:?}", c.id, buffered_name, buffered_delta, c.delta);
                             let name = if pending_tools.contains_key(&c.id) {
                                 c.name.clone()
                             } else if !buffered_name.is_empty() {
@@ -707,12 +724,16 @@ async fn run_generation(
                             // Prepend buffered delta, then current delta
                             let full_delta = format!("{}{}", buffered_delta, c.delta);
                             entry.1.push_str(&full_delta);
-                            json!({
-                                "type": "tool_call",
-                                "id": c.id,
-                                "name": &entry.0,
-                                "delta": full_delta,
-                            }).to_string()
+                            if full_delta.is_empty() {
+                                String::new()
+                            } else {
+                                json!({
+                                    "type": "tool_call",
+                                    "id": c.id,
+                                    "name": &entry.0,
+                                    "delta": full_delta,
+                                }).to_string()
+                            }
                         }
                     }
                     Ok(AgentEvent::ToolResult(res)) => {
@@ -729,9 +750,7 @@ async fn run_generation(
                             use ds_api::raw::request::message::{FunctionCall, ToolCall, ToolType};
 
                             // Overwrite accumulated args with the complete args from ToolCallResult.
-                            eprintln!("[PROBE] ToolResult: id={:?} args={:?}", res.id, res.args);
                             if let Some(entry) = pending_tools.get_mut(&res.id) {
-                                eprintln!("[PROBE] overwriting entry.1 was={:?} now={:?}", entry.1, res.args);
                                 entry.1 = res.args.clone();
                                 let result_str = serde_json::to_string(&res.result).unwrap_or_default();
                                 entry.2 = Some(result_str);
@@ -763,11 +782,12 @@ async fn run_generation(
                                     name: None,
                                     tool_call_id: None,
                                     tool_calls: Some(tool_calls),
-                                    reasoning_content: None,
+                                    reasoning_content: if reasoning_buf.is_empty() { None } else { Some(reasoning_buf.clone()) },
                                     prefix: None,
                                 };
                                 state.persist_message_async(conversation_id, &assistant_msg).await;
                                 reply_buf.clear();
+                                reasoning_buf.clear();
 
                                 // Persist each tool result in order.
                                 for id in &pending_tool_order {
@@ -800,6 +820,7 @@ async fn run_generation(
                     }
                     Ok(AgentEvent::ReasoningToken(token)) => {
                         info!(conversation = %conversation_id, "[TIMING] poll #{poll_count}: stream.next() -> ReasoningToken ({} chars) in {elapsed:?}", token.len());
+                        reasoning_buf.push_str(&token);
                         json!({"type": "reasoning_token", "content": token}).to_string()
                     }
                     Err(e) => {
@@ -828,7 +849,6 @@ async fn run_generation(
 
                 // Emit to log + broadcast.
                 if !payload.is_empty() {
-                    eprintln!("[PROBE] emit payload: {}", &payload[..payload.len().min(200)]);
                     let mut map = state.chats.lock().unwrap();
                     if let Some(entry) = map.get_mut(&conversation_id) {
                         entry.emit(payload);

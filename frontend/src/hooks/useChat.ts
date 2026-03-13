@@ -149,6 +149,7 @@ export function useChat(
     const history: ChatBubble[] = [];
 
     for (const m of msgs) {
+
       if (m.role === "system" || m.role === "tool") continue;
 
       if (m.role === "assistant" && m.tool_calls) {
@@ -160,6 +161,7 @@ export function useChat(
         let calls: RawToolCall[] = [];
         try { calls = JSON.parse(m.tool_calls) as RawToolCall[]; } catch { /* skip */ }
         for (const tc of calls) {
+          console.warn("tc = ", tc);
           if (!tc.id || !tc.function) continue;
           const result = toolResultMap.get(tc.id) ?? null;
           const argsRaw = tc.function.arguments ?? "";
@@ -329,6 +331,7 @@ export function useChat(
           const exists = prev.some(
             (b) => b.key === `tool-${event.id}` && b.kind === "tool",
           );
+          console.log(`[tool_call] id=${event.id}, exists=${exists}, currentBubbles=${prev.length}`, prev.map(b => b.key));
           if (exists) {
             return prev.map((b) => {
               if (b.key !== `tool-${event.id}` || b.kind !== "tool") return b;
@@ -345,6 +348,7 @@ export function useChat(
             });
           }
           sealActiveText();
+          console.warn("appending", event);
           const toolBubble: ToolBubble = {
             kind: "tool",
             key: `tool-${event.id}`,
@@ -419,9 +423,11 @@ export function useChat(
     });
 
     ws.addEventListener("message", (ev) => {
+      console.log("[WS] raw message:", ev.data);
       let event: WsServerEvent;
       try { event = JSON.parse(ev.data as string) as WsServerEvent; }
       catch { return; }
+      console.log("[WS] parsed event:", event);
 
       if (
         statusRef.current === "idle" &&
@@ -519,9 +525,11 @@ export function useChat(
       });
 
       ws.addEventListener("message", (ev) => {
+        console.log("[WS] raw message:", ev.data);
         let event: WsServerEvent;
         try { event = JSON.parse(ev.data as string) as WsServerEvent; }
         catch { return; }
+        console.log("[WS] parsed event:", event);
 
         const finished = processEventRef.current(event);
         if (finished) {

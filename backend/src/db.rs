@@ -33,6 +33,7 @@ pub struct MessageRow {
     pub content: Option<String>,
     pub spell_casts: Option<String>,
     pub spell_cast_id: Option<String>,
+    pub reasoning: Option<String>,
     pub is_summary: bool,
     pub created_at: i64,
 }
@@ -71,8 +72,8 @@ impl Db {
             r#"
             INSERT INTO messages
                 (conversation_id, role, name, content, spell_casts, spell_cast_id,
-                 is_summary, created_at, embedding)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                 reasoning, is_summary, created_at, embedding)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             RETURNING id
             "#,
         )
@@ -82,6 +83,7 @@ impl Db {
         .bind(&msg.content)
         .bind(&tool_calls)
         .bind(&msg.tool_call_id)
+        .bind(&msg.reasoning_content)
         .bind(is_summary)
         .bind(now)
         .bind(&embedding)
@@ -128,7 +130,7 @@ impl Db {
         let rows: Vec<MessageRow> = sqlx::query_as(
             r#"
             SELECT id, conversation_id, role, name, content,
-                   spell_casts, spell_cast_id, is_summary, created_at
+                   spell_casts, spell_cast_id, reasoning, is_summary, created_at
             FROM messages
             WHERE conversation_id = $1 AND id >= $2
             ORDER BY id ASC
@@ -154,7 +156,7 @@ impl Db {
         let rows: Vec<MessageRow> = sqlx::query_as(
             r#"
             SELECT id, conversation_id, role, name, content,
-                   spell_casts, spell_cast_id, is_summary, created_at
+                   spell_casts, spell_cast_id, reasoning, is_summary, created_at
             FROM messages
             WHERE conversation_id = $1
               AND content_tsv @@ plainto_tsquery('simple', $2)
@@ -184,7 +186,7 @@ impl Db {
         let rows: Vec<(MessageRow, f32)> = sqlx::query_as(
             r#"
             SELECT id, conversation_id, role, name, content,
-                   spell_casts, spell_cast_id, is_summary, created_at,
+                   spell_casts, spell_cast_id, reasoning, is_summary, created_at,
                    (1 - (embedding <=> $2))::float4 AS similarity
             FROM messages
             WHERE conversation_id = $1
@@ -209,6 +211,7 @@ impl Db {
                     content: r.content,
                     spell_casts: r.spell_casts,
                     spell_cast_id: r.spell_cast_id,
+                    reasoning: r.reasoning,
                     is_summary: r.is_summary,
                     created_at: r.created_at,
                 },
@@ -228,7 +231,7 @@ impl Db {
         let rows: Vec<MessageRow> = sqlx::query_as(
             r#"
             SELECT id, conversation_id, role, name, content,
-                   spell_casts, spell_cast_id, is_summary, created_at
+                   spell_casts, spell_cast_id, reasoning, is_summary, created_at
             FROM messages
             WHERE conversation_id = $1
             ORDER BY id ASC
@@ -254,6 +257,7 @@ struct SemanticRow {
     content: Option<String>,
     spell_casts: Option<String>,
     spell_cast_id: Option<String>,
+    reasoning: Option<String>,
     is_summary: bool,
     created_at: i64,
     similarity: f32,
@@ -298,7 +302,7 @@ pub fn row_to_message(row: MessageRow) -> Message {
         name: row.name,
         tool_call_id: row.spell_cast_id,
         tool_calls,
-        reasoning_content: None,
+        reasoning_content: row.reasoning,
         prefix: None,
     }
 }

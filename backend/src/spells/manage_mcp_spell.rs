@@ -13,10 +13,6 @@ pub struct ManageMcpSpell {
     /// recovered agent; the next start_generation will rebuild it with the
     /// updated tool list.
     pub agent_stale: Arc<AtomicBool>,
-    /// Sum of raw_tools().len() for all built-in spells. Used for limit check.
-    pub builtin_tool_count: usize,
-    /// Maximum total tool definitions (built-in + all MCP).
-    pub max_tools: usize,
 }
 
 #[tool]
@@ -58,24 +54,8 @@ impl Tool for ManageMcpSpell {
             Ok(t) => t,
             Err(e) => return json!({ "error": format!("启动失败: {e}") }),
         };
-        let new_tool_count = tool.raw_tools().len();
+        let tool_count = tool.raw_tools().len();
         let new_tools = tool.raw_tools().clone();
-
-        // Limit check: count existing MCP tools + new ones + built-in
-        {
-            let tools = self.mcp_tools.lock().await;
-            let mcp_total: usize = tools.iter().map(|(_, t)| t.raw_tools().len()).sum();
-            let total = self.builtin_tool_count + mcp_total + new_tool_count;
-            if total > self.max_tools {
-                return json!({
-                    "error": format!(
-                        "安装后工具总数 {} 将超过上限 {}（内置 {} + 现有 MCP {} + 新增 {}）",
-                        total, self.max_tools,
-                        self.builtin_tool_count, mcp_total, new_tool_count
-                    )
-                });
-            }
-        }
 
         // Add to running tools
         {
@@ -86,12 +66,9 @@ impl Tool for ManageMcpSpell {
         // Mark agent stale — next generation rebuilds with updated MCP list
         self.agent_stale.store(true, Ordering::Relaxed);
 
-        // NOTE: persistence to config.toml has been removed. MCPs installed this way
-        // are active for the current process lifetime only.
-
         json!({
             "status": "ok",
-            "message": format!("MCP '{}' 已安装（{} 个工具）。此安装为即时生效，进程重启后不会自动恢复，若消失请重新安装", name, new_tool_count),
+            "message": format!("MCP '{}' 已安装（{} 个工具）。此安装为即时生效，进程重启后不会自动恢复，若消失请重新安装", name, tool_count),
             "tools": new_tools
         })
     }

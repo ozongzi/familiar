@@ -29,9 +29,13 @@ impl Tool for FileSpells {
         let lines: Vec<&str> = content.lines().collect();
         let total = lines.len();
 
-        // 未指定行范围 + 文件大 → 返回大纲
+        // 未指定行范围 + 文件大 → 在阻塞线程上做 tree-sitter 解析，避免卡住 async executor
         if from.is_none() && to.is_none() && total > super::OUTLINE_THRESHOLD {
-            return super::outline_value(&path, &content, total);
+            return tokio::task::spawn_blocking(move || {
+                super::outline_value(&path, &content, total)
+            })
+            .await
+            .unwrap_or_else(|_| serde_json::json!({ "error": "outline task panicked" }));
         }
 
         let from_1 = from.unwrap_or(1).max(1);

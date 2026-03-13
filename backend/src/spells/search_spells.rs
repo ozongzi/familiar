@@ -21,7 +21,7 @@ impl Tool for SearchSpells {
     /// context_lines: 每个匹配前后各显示几行（默认 2，最多 10）
     /// case_sensitive: 大小写敏感（默认 false）
     /// literal: 精确字符串匹配而非正则（默认 false）
-    async fn search(
+    async fn grep(
         &self,
         description: Option<String>,
         pattern: String,
@@ -134,7 +134,9 @@ impl Tool for SearchSpells {
             Err(e) => return json!({ "error": e.to_string() }),
         };
         let total = content.lines().count();
-        super::outline_value(&path, &content, total)
+        tokio::task::spawn_blocking(move || super::outline_value(&path, &content, total))
+            .await
+            .unwrap_or_else(|_| json!({ "error": "outline task panicked" }))
     }
 }
 

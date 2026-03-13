@@ -363,6 +363,21 @@ function ToolCallBubble({
     return extractArgsField(bubble.argsRaw, field);
   }, [isEditTool, isReplaceTool, bubble.pending, bubble.argsRaw, args]);
 
+  // ── Extract question text from streaming argsRaw (ask) ───────────────────
+  const streamingAskQuestion = useMemo(() => {
+    if (bubble.name !== "ask") return null;
+    if (args?.question) return String(args.question);
+    if (!bubble.argsRaw) return null;
+    return extractArgsField(bubble.argsRaw, "question");
+  }, [bubble.name, bubble.argsRaw, args]);
+
+  // ── Extract options with runtime array check (ask) ─────────────────────
+  const askOptions = useMemo(() => {
+    if (bubble.name !== "ask") return undefined;
+    const opts = args?.options;
+    return Array.isArray(opts) ? (opts as string[]) : undefined;
+  }, [bubble.name, args]);
+
   // Header label: prefer the model-written description (arrives early in the
   // stream because description is always the first parameter).  Fall back to
   // a per-tool heuristic derived from the args when description is absent.
@@ -393,11 +408,30 @@ function ToolCallBubble({
             | string
             | undefined)
         : undefined;
+
+    // While args are still streaming in (can't parse JSON yet), show a
+    // generic loading header instead of a card with "…" as the question.
+    if (bubble.pending && args === null) {
+      return (
+        <div className={styles.toolRow}>
+          <div className={styles.toolBubbleInline}>
+            <div className={styles.toolHeaderInline}>
+              <span className={styles.toolIcon} aria-hidden="true">
+                <ToolRunningIcon />
+              </span>
+              <span className={styles.toolName}>{toolLabel}</span>
+              <span className={styles.toolSpinner} aria-hidden="true" />
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div className={styles.toolRow}>
         <AskUserCard
-          question={args?.question ? String(args.question) : "…"}
-          options={args?.options as string[] | undefined}
+          question={streamingAskQuestion ?? "…"}
+          options={askOptions}
           onAnswer={onAnswer}
           answered={answeredText}
         />
@@ -627,6 +661,16 @@ function AskUserCard({
   answered?: string;
 }) {
   const [custom, setCustom] = useState("");
+  const [submitted, setSubmitted] = useState(false);
+
+  const handleAnswer = useCallback(
+    (text: string) => {
+      if (!onAnswer) return;
+      setSubmitted(true);
+      onAnswer(text);
+    },
+    [onAnswer],
+  );
 
   if (answered !== undefined) {
     return (
@@ -635,6 +679,17 @@ function AskUserCard({
         <div className={styles.askUserAnswered}>
           <span className={styles.askUserAnsweredLabel}>已回答：</span>
           <span className={styles.askUserAnsweredText}>{answered}</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (submitted) {
+    return (
+      <div className={styles.askUserCard}>
+        <p className={styles.askUserQuestion}>{question}</p>
+        <div className={styles.askUserAnswered}>
+          <span className={styles.askUserAnsweredLabel}>已发送，等待回应…</span>
         </div>
       </div>
     );
@@ -649,7 +704,7 @@ function AskUserCard({
             <button
               key={i}
               className={styles.askUserOption}
-              onClick={() => onAnswer?.(opt)}
+              onClick={() => handleAnswer(opt)}
             >
               {opt}
             </button>
@@ -662,8 +717,7 @@ function AskUserCard({
           e.preventDefault();
           const val = custom.trim();
           if (val) {
-            onAnswer?.(val);
-            setCustom("");
+            handleAnswer(val);
           }
         }}
       >

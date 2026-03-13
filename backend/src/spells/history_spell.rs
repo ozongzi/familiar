@@ -15,9 +15,10 @@ pub struct HistorySpell {
 impl Tool for HistorySpell {
     /// 用关键词全文搜索历史消息（PostgreSQL FTS，精确匹配）。
     /// 适合查找具体命令、文件名、错误信息等。
+    /// description: 本次操作意图（供 UI 渲染，可不填）
     /// query: 搜索关键词，例如 "rust error" 或 "deploy nginx"
     /// limit: 返回最多几条结果，默认 10，最大 50
-    async fn search_history_fts(&self, query: String, limit: Option<u32>) -> Value {
+    async fn search_history_fts(&self, description: Option<String>, query: String, limit: Option<u32>) -> Value {
         let limit = limit.unwrap_or(10).min(50) as usize;
 
         match self
@@ -47,9 +48,10 @@ impl Tool for HistorySpell {
 
     /// 用自然语言语义搜索历史消息（向量相似度）。
     /// 适合模糊查找，例如"上次聊的那个网络问题"、"之前讨论的部署方案"。
+    /// description: 本次操作意图（供 UI 渲染，可不填）
     /// query: 自然语言描述，例如 "上次帮我装的软件"
     /// limit: 返回最多几条结果，默认 5，最大 20
-    async fn search_history_semantic(&self, query: String, limit: Option<u32>) -> Value {
+    async fn search_history_semantic(&self, description: Option<String>, query: String, limit: Option<u32>) -> Value {
         let limit = limit.unwrap_or(5).min(20) as usize;
 
         let query_vec = match self.embed.embed(&query).await {
