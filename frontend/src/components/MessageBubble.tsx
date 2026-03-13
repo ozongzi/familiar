@@ -330,7 +330,7 @@ function ToolCallBubble({
     if (extracted) return extracted;
     // Fallback to parsed args
     return args?.command ? String(args.command) : null;
-  }, [bubble.pending, bubble.name, bubble.argsRaw, args]);
+  }, [bubble.name, bubble.argsRaw, args]);
 
   // ── Extract fields for edit tools (edit / write) ───────────────────────────
   const streamingEditPath = useMemo(() => {

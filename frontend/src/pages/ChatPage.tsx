@@ -118,6 +118,7 @@ export function ChatPage() {
     }
 
     let cancelled = false;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setHistoryLoading(true);
     clearBubbles();
 
@@ -145,6 +146,7 @@ export function ChatPage() {
   // ── On initial load: start in draft mode (not the most recent conv) ────
   useEffect(() => {
     if (!convsLoading && activeId === null) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setActiveId(DRAFT_ID);
     }
   }, [convsLoading, activeId]);
