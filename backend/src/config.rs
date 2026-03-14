@@ -13,6 +13,7 @@ use std::collections::HashMap;
 #[derive(Debug, Deserialize)]
 pub struct Config {
     pub public_path: String,
+    pub artifacts_path: String,
     pub secrets: Secrets,
     pub model: ModelConfig,
     pub embedding: ModelConfig,

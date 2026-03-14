@@ -50,8 +50,9 @@ pub fn create_router(state: AppState) -> Router {
         .allow_methods(Any)
         .allow_headers(Any);
 
-    let public_path = Config::load().public_path;
-    let public_path = Path::new(&public_path);
+    let config = Config::load();
+    let public_path = Path::new(&config.public_path);
+    let artifacts_path = Path::new(&config.artifacts_path);
 
     Router::new()
         // ── Auth ──────────────────────────────────────────────────────────────
@@ -74,6 +75,8 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/files/preview", get(preview_file))
         // ── WebSocket ─────────────────────────────────────────────────────────
         .route("/ws/{id}", get(ws_handler))
+        // model artifacts
+        .nest_service("/artifacts", ServeDir::new(artifacts_path))
         // ── Static frontend ───────────────────────────────────────────────────
         .fallback_service(
             ServeDir::new(public_path)

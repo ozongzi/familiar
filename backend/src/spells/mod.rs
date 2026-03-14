@@ -37,18 +37,30 @@ pub const MAX_OUTPUT_CHARS: usize = 8_000;
 pub(crate) const OUTLINE_THRESHOLD: usize = 300;
 
 /// 超长输出保留头尾，中间用省略提示替换
-pub(crate) fn truncate_output(s: &str, max_chars: usize) -> String {
-    if s.len() <= max_chars {
+pub(crate) fn truncate_output(s: &str, max_bytes: usize) -> String {
+    if s.len() <= max_bytes {
         return s.to_string();
     }
-    let half = max_chars / 2;
-    let head = &s[..half];
-    let tail_start = s.len() - half;
+
+    let half = max_bytes / 2;
+
+    let mut head_end = half;
+    while !s.is_char_boundary(head_end) {
+        head_end -= 1;
+    }
+
+    let mut tail_start = s.len() - half;
+    while !s.is_char_boundary(tail_start) {
+        tail_start += 1;
+    }
+
+    let head = &s[..head_end];
     let tail = &s[tail_start..];
+
     format!(
         "{}\n\n... [输出过长，中间 {} 字节已省略] ...\n\n{}",
         head,
-        s.len() - max_chars,
+        s.len() - max_bytes,
         tail
     )
 }
