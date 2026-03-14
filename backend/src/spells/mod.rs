@@ -102,6 +102,8 @@ pub struct SpellDeps {
     pub conversation_id: Uuid,
     // ManageMcpSpell
     pub agent_stale: Arc<AtomicBool>,
+    // Shared
+    pub abort_flag: Arc<AtomicBool>,
 }
 
 /// Build the complete built-in spell bundle from the given dependencies.
@@ -125,6 +127,7 @@ pub fn build_all_spells(deps: SpellDeps) -> ToolBundle {
             subagent_prompt: deps.subagent_prompt,
             mcp_tools: Arc::clone(&deps.mcp_tools),
             broadcast_tx: deps.spawn_tx,
+            abort_flag: Arc::clone(&deps.abort_flag),
         })
         .add(HistorySpell {
             db: deps.db,

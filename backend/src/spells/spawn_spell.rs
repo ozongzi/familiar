@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc, sync::atomic::AtomicBool};
 
 use ds_api::{AgentEvent, DeepseekAgent, McpTool, tool, tool_trait::ToolBundle};
 use futures::StreamExt;
@@ -19,6 +19,8 @@ pub struct SpawnSpell {
     pub mcp_tools: Arc<Mutex<Vec<(String, McpTool)>>>,
     /// 子 Agent 事件广播频道，供 UI 实时显示子 Agent 输出和工具调用
     pub broadcast_tx: tokio::sync::broadcast::Sender<String>,
+    /// 主 Agent 的中断标志，子 Agent 共享
+    pub abort_flag: Arc<AtomicBool>,
 }
 
 #[tool]
@@ -58,11 +60,17 @@ impl Tool for SpawnSpell {
             builder = builder.add_tool(tool);
         }
 
-        let (agent, _interrupt_tx) = builder.with_interrupt_channel();
-        let mut stream = agent.chat(&goal);
+        // 保留 interrupt channel，但通过 abort_flag 检查中断
+        let mut stream = builder.chat(&goal);
 
+        let abort_flag = Arc::clone(&self.abort_flag);
         let mut result = String::new();
         while let Some(event) = stream.next().await {
+            // 检查主 Agent 是否被中断
+            if abort_flag.load(std::sync::atomic::Ordering::Acquire) {
+                return json!({ "error": "任务被用户中断" });
+            }
+
             match event {
                 Ok(AgentEvent::Token(t)) => {
                     result.push_str(&t);

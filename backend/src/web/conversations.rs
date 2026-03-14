@@ -148,22 +148,19 @@ pub async fn auto_title(
         return Err(AppError::not_found("对话不存在"));
     }
 
-    use ds_api::raw::request::message::{Message, Role};
+    use ds_api::raw::request::message::{Message};
     use ds_api::{ApiClient, ApiRequest};
 
     let client =
         ApiClient::new(state.deepseek_token.clone()).with_base_url(state.model_api_base.clone());
 
-    let system = Message::new(
-        Role::System,
-        "根据用户发送的第一条消息，生成一个简短的对话标题（5到10个字）。\
-         只返回标题文字本身，不加引号、标点或任何解释。",
+    let prompt = Message::user(
+        &format!("根据用户发送的第一条消息 {}，生成一个简短的对话标题（5到10个字）。只返回标题文字本身，不加引号、标点或任何解释。", &req.prompt),
     );
-    let user = Message::new(Role::User, &req.prompt);
 
     let mut api_req = ApiRequest::builder()
         .with_model(state.model_name.clone())
-        .messages(vec![system, user])
+        .messages(vec![prompt])
         .max_tokens(32);
 
     for (k, v) in state.model_extra_body.iter() {
