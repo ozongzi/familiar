@@ -33,11 +33,48 @@ impl Tool for ManageMcpSpell {
         json!({ "installed": entries })
     }
 
-    /// 安装并激活 MCP 服务器。使用 list_available_mcp 查看可用预设。
+    /// 使用 http 模式安装并激活 MCP 服务器。使用 list_available_mcp 查看可用预设。
     /// name: 服务器唯一标识符（用于后续卸载）
     /// command: 启动命令（如 npx、uvx、mcp-language-server）
     /// args: 命令参数列表
-    async fn install_mcp(&self, name: String, command: String, args: Vec<String>) -> Value {
+    async fn install_mcp_http(&self, name: String, url: String) -> Value {
+        // Duplicate check
+        {
+            let tools = self.mcp_tools.lock().await;
+            if tools.iter().any(|(n, _)| n == &name) {
+                return json!({ "error": format!("MCP '{}' 已在运行，请先卸载", name) });
+            }
+        }
+
+        // Start the subprocess
+        let tool = match McpTool::http(&url).await {
+            Ok(t) => t,
+            Err(e) => return json!({ "error": format!("启动失败: {e}") }),
+        };
+        let tool_count = tool.raw_tools().len();
+        let new_tools = tool.raw_tools().clone();
+
+        // Inject into the running agent immediately so the next turn can use it.
+        let _ = self.tool_inject_tx.send(ToolInjection::Add(Box::new(tool.clone())));
+
+        // Also persist in the shared list so newly built agents include it.
+        {
+            let mut tools = self.mcp_tools.lock().await;
+            tools.push((name.clone(), tool));
+        }
+
+        json!({
+            "status": "ok",
+            "message": format!("MCP '{}' 已安装（{} 个工具），下一轮对话即可直接使用。进程重启后不会自动恢复，若消失请重新安装。", name, tool_count),
+            "tools": new_tools
+        })
+    }
+
+    /// 使用 studio 模式安装并激活 MCP 服务器。使用 list_available_mcp 查看可用预设。
+    /// name: 服务器唯一标识符（用于后续卸载）
+    /// command: 启动命令（如 npx、uvx、mcp-language-server）
+    /// args: 命令参数列表
+    async fn install_mcp_studio(&self, name: String, command: String, args: Vec<String>) -> Value {
         // Duplicate check
         {
             let tools = self.mcp_tools.lock().await;

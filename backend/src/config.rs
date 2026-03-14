@@ -55,14 +55,21 @@ pub struct ServerConfig {
 
 /// A single MCP server to launch at startup.
 #[derive(Debug, Deserialize, Clone)]
-pub struct McpServerConfig {
-    pub name: String,
-    pub command: String,
-    #[serde(default)]
-    pub args: Vec<String>,
-    /// Environment variables to inject into the MCP subprocess.
-    #[serde(default)]
-    pub env: HashMap<String, String>,
+#[serde(untagged)]
+pub enum McpServerConfig {
+    Studio {
+        name: String,
+        command: String,
+        #[serde(default)]
+        args: Vec<String>,
+        /// Environment variables to inject into the MCP subprocess.
+        #[serde(default)]
+        env: HashMap<String, String>,
+    },
+    Http {
+        name: String,
+        url: String,
+    }
 }
 
 /// A catalogued MCP server available for on-demand installation by the agent.

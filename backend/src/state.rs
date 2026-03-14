@@ -184,27 +184,43 @@ impl AppState {
         let mut tools = Vec::new();
 
         for mc in mcp_configs {
-            // When env vars are specified, prepend them via `env KEY=VAL ... cmd args`
-            // so they are injected into the subprocess without touching the parent process.
-            let env_args: Vec<String>;
-            let (cmd, args): (&str, Vec<&str>) = if mc.env.is_empty() {
-                (&mc.command, mc.args.iter().map(String::as_str).collect())
-            } else {
-                env_args = mc
-                    .env
-                    .iter()
-                    .map(|(k, v)| format!("{k}={v}"))
-                    .chain(std::iter::once(mc.command.clone()))
-                    .chain(mc.args.iter().cloned())
-                    .collect();
-                ("env", env_args.iter().map(String::as_str).collect())
-            };
-            match McpTool::stdio(cmd, &args).await {
-                Ok(t) => {
-                    info!("MCP: {} ready ({} tools)", mc.name, t.raw_tools().len());
-                    tools.push((mc.name.clone(), t));
+            match mc {
+                McpServerConfig::Studio {
+                    name, command, args, env
+                } => {
+                    // When env vars are specified, prepend them via `env KEY=VAL ... cmd args`
+                    // so they are injected into the subprocess without touching the parent process.
+                    let env_args: Vec<String>;
+                    let (cmd, args): (&str, Vec<&str>) = if env.is_empty() {
+                        (&command, args.iter().map(String::as_str).collect())
+                    } else {
+                        env_args = env
+                            .iter()
+                            .map(|(k, v)| format!("{k}={v}"))
+                            .chain(std::iter::once(command.clone()))
+                            .chain(args.iter().cloned())
+                            .collect();
+                        ("env", env_args.iter().map(String::as_str).collect())
+                    };
+                    match McpTool::stdio(cmd, &args).await {
+                        Ok(t) => {
+                            info!("MCP: {} ready ({} tools)", name, t.raw_tools().len());
+                            tools.push((name.clone(), t));
+                        }
+                        Err(e) => warn!("MCP: {} failed to start: {e}", name),
+                    }
                 }
-                Err(e) => warn!("MCP: {} failed to start: {e}", mc.name),
+                McpServerConfig::Http {
+                    name, url
+                } => {
+                    match McpTool::http(url).await {
+                        Ok(t) => {
+                            info!("MCP: {} ready ({} tools)", name, t.raw_tools().len());
+                            tools.push((name.clone(), t));
+                        }
+                        Err(e) => warn!("MCP: {} failed to start: {e}", name),
+                    }
+                }
             }
         }
 
