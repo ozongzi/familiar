@@ -11,6 +11,7 @@ mod ui_spells;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
+use ds_api::ToolInjection;
 use std::time::Duration;
 
 pub use ds_api::tool_trait::ToolBundle;
@@ -101,7 +102,7 @@ pub struct SpellDeps {
     pub embed: EmbeddingClient,
     pub conversation_id: Uuid,
     // ManageMcpSpell
-    pub agent_stale: Arc<AtomicBool>,
+    pub tool_inject_tx: tokio::sync::mpsc::UnboundedSender<ToolInjection>,
     // Shared
     pub abort_flag: Arc<AtomicBool>,
 }
@@ -136,7 +137,7 @@ pub fn build_all_spells(deps: SpellDeps) -> ToolBundle {
         })
         .add(ManageMcpSpell {
             mcp_tools: deps.mcp_tools,
-            agent_stale: deps.agent_stale,
+            tool_inject_tx: deps.tool_inject_tx,
         })
 }
 

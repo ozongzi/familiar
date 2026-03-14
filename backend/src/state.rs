@@ -6,6 +6,7 @@ use ds_api::AgentEvent;
 use ds_api::DeepseekAgent;
 use ds_api::McpTool;
 use ds_api::Tool as _;
+use ds_api::ToolInjection;
 use serde_json::Value;
 use sqlx::PgPool;
 use tokio::sync::broadcast;
@@ -61,11 +62,6 @@ pub struct ChatEntry {
     /// stores a oneshot::Sender here; ws.rs extracts and fires it with the user's reply.
     pub ask_user_pending: Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<String>>>>,
 
-    /// Set to true by ManageMcpSpell after install/uninstall. The generation
-    /// cleanup will drop the recovered agent instead of restoring it, so the
-    /// next start_generation rebuilds with the updated MCP tool list.
-    pub agent_stale: Arc<AtomicBool>,
-
     /// Interrupt messages that haven't been consumed by the agent yet.
     /// Populated by send_interrupt alongside the agent's internal channel.
     /// Cleared after each ToolResult (the agent drains its channel then).
@@ -83,7 +79,6 @@ impl ChatEntry {
         agent: DeepseekAgent,
         interrupt_tx: UnboundedSender<String>,
         ask_user_pending: Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<String>>>>,
-        agent_stale: Arc<AtomicBool>,
         spawn_tx: tokio::sync::broadcast::Sender<String>,
         abort_flag: Arc<AtomicBool>,
     ) -> Self {
@@ -96,7 +91,6 @@ impl ChatEntry {
             generating: false,
             abort_flag,
             ask_user_pending,
-            agent_stale,
             queued_interrupts: Vec::new(),
             spawn_tx,
         }
@@ -218,7 +212,7 @@ impl AppState {
     }
 
     /// Build a fresh agent for `conversation_id`, restoring history from PG.
-    /// Returns `(agent, interrupt_tx, ask_user_pending, agent_stale)`.
+    /// Returns `(agent, interrupt_tx, ask_user_pending, tool_inject_tx, spawn_tx, abort_flag)`.
     pub async fn build_agent(
         &self,
         conversation_id: Uuid,
@@ -226,7 +220,7 @@ impl AppState {
         DeepseekAgent,
         UnboundedSender<String>,
         Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<String>>>>,
-        Arc<AtomicBool>,
+        tokio::sync::mpsc::UnboundedSender<ToolInjection>,
         tokio::sync::broadcast::Sender<String>,
         Arc<AtomicBool>, // abort_flag
     ) {
@@ -242,7 +236,6 @@ impl AppState {
         };
 
         let ask_user_pending = Arc::new(tokio::sync::Mutex::new(None));
-        let agent_stale = Arc::new(AtomicBool::new(false));
         let abort_flag = Arc::new(AtomicBool::new(false));
 
         // Snapshot the MCP tools BEFORE building the agent so the builder
@@ -254,6 +247,28 @@ impl AppState {
         };
 
         let (spawn_tx, _) = tokio::sync::broadcast::channel::<String>(256);
+
+        // Build the base agent (without spells yet) and attach both channels.
+        // We need inject_tx before building SpellDeps, so attach the tool-inject
+        // channel first, then clone the tx for spells.
+        let mut base = DeepseekAgent::custom(
+            self.deepseek_token.clone(),
+            self.model_api_base.clone(),
+            self.model_name.clone(),
+        )
+        .with_streaming()
+        .with_history(history);
+
+        for (k, v) in &self.model_extra_body {
+            base = base.extra_field(k.clone(), v.clone());
+        }
+
+        if let Some(prompt) = &self.system_prompt {
+            base = base.with_system_prompt(prompt.clone());
+        }
+
+        let interrupt_tx = base.interrupt_sender();
+        let inject_tx = base.tool_inject_sender();
 
         let spell_deps = SpellDeps {
             subagent_prompt: self.subagent_prompt.clone(),
@@ -267,39 +282,21 @@ impl AppState {
             db: self.db.clone(),
             embed: self.embed.clone(),
             conversation_id,
-            agent_stale: Arc::clone(&agent_stale),
+            tool_inject_tx: inject_tx.clone(),
             abort_flag: Arc::clone(&abort_flag),
         };
 
-        let mut builder = DeepseekAgent::custom(
-            self.deepseek_token.clone(),
-            self.model_api_base.clone(),
-            self.model_name.clone(),
-        )
-        .with_streaming()
-        .with_history(history)
-        .add_tool(build_all_spells(spell_deps));
+        let mut agent = base.add_tool(build_all_spells(spell_deps));
 
         for (_, tool) in mcp_snapshot {
-            builder = builder.add_tool(tool);
+            agent = agent.add_tool(tool);
         }
 
-        // Inject any configured extra fields into the agent via `extra_field`.
-        // `model_extra_body` is a HashMap<String, Value> populated at AppState::new.
-        for (k, v) in &self.model_extra_body {
-            builder = builder.extra_field(k.clone(), v.clone());
-        }
-
-        if let Some(prompt) = &self.system_prompt {
-            builder = builder.with_system_prompt(prompt.clone());
-        }
-
-        let (agent, tx) = builder.with_interrupt_channel();
         (
             agent,
-            tx,
+            interrupt_tx,
             ask_user_pending,
-            agent_stale,
+            inject_tx,
             spawn_tx,
             abort_flag,
         )
@@ -339,13 +336,12 @@ impl AppState {
         }
 
         // Slow path — build agent outside the lock.
-        let (agent, tx, ask_user_pending, agent_stale, spawn_tx, abort_flag) =
+        let (agent, tx, ask_user_pending, _inject_tx, spawn_tx, abort_flag) =
             self.build_agent(conversation_id).await;
         let entry = ChatEntry::new(
             agent,
             tx,
             ask_user_pending,
-            agent_stale,
             spawn_tx,
             abort_flag,
         );
@@ -366,7 +362,7 @@ impl AppState {
     /// send the event log replay + subscribe instead of starting a new turn).
     pub async fn start_generation(&self, conversation_id: Uuid, user_text: String) -> bool {
         // Take the agent out of the entry (if idle).
-        let (agent, abort_flag, agent_stale) = {
+        let (agent, abort_flag) = {
             let mut map = self.chats.lock().unwrap();
             let entry = match map.get_mut(&conversation_id) {
                 Some(e) => e,
@@ -382,28 +378,19 @@ impl AppState {
             (
                 entry.agent.take(),
                 Arc::clone(&entry.abort_flag),
-                Arc::clone(&entry.agent_stale),
             )
         };
 
         let mut agent = match agent {
             Some(a) => a,
             None => {
-                // Agent was dropped because MCP tools changed — rebuild outside lock.
-                let (
-                    fresh_agent,
-                    fresh_tx,
-                    fresh_pending,
-                    fresh_stale,
-                    fresh_spawn_tx,
-                    fresh_abort,
-                ) = self.build_agent(conversation_id).await;
+                // Agent missing (shouldn't happen but be defensive) — rebuild.
+                let (fresh_agent, fresh_tx, fresh_pending, _inject_tx, fresh_spawn_tx, fresh_abort) =
+                    self.build_agent(conversation_id).await;
                 let mut map = self.chats.lock().unwrap();
                 if let Some(entry) = map.get_mut(&conversation_id) {
-                    // Swap in the new interrupt channel, stale flag, and spawn sender.
                     entry.interrupt_tx = fresh_tx;
                     entry.ask_user_pending = fresh_pending;
-                    entry.agent_stale = Arc::clone(&fresh_stale);
                     entry.spawn_tx = fresh_spawn_tx;
                     entry.abort_flag = Arc::clone(&fresh_abort);
                 }
@@ -446,7 +433,7 @@ impl AppState {
         }
 
         tokio::spawn(async move {
-            generation_loop(state, conversation_id, agent, abort_flag, agent_stale).await;
+            generation_loop(state, conversation_id, agent, abort_flag).await;
         });
 
         true
@@ -574,19 +561,16 @@ async fn generation_loop(
     conversation_id: Uuid,
     initial_agent: DeepseekAgent,
     initial_abort: Arc<AtomicBool>,
-    initial_stale: Arc<AtomicBool>,
 ) {
     let mut agent = initial_agent;
     let mut abort_flag = initial_abort;
-    let mut agent_stale = initial_stale;
 
     loop {
         let pending_text = run_generation(
             state.clone(),
             conversation_id,
             agent,
-            abort_flag,
-            agent_stale,
+            abort_flag.clone(),
         )
         .await;
 
@@ -605,14 +589,13 @@ async fn generation_loop(
                 entry.abort_flag.store(false, Ordering::Release);
                 entry.generating = true;
                 let abort = Arc::clone(&entry.abort_flag);
-                let stale = Arc::clone(&entry.agent_stale);
-                Some((entry.agent.take(), abort, stale))
+                Some((entry.agent.take(), abort))
             } else {
                 None
             }
         };
 
-        let (agent_opt, new_abort, mut new_stale) = match next {
+        let (agent_opt, new_abort) = match next {
             Some(t) => t,
             None => break,
         };
@@ -620,20 +603,18 @@ async fn generation_loop(
         let next_agent = match agent_opt {
             Some(a) => a,
             None => {
-                // Agent was stale; rebuild from history.
-                let (a, tx, pend, s, new_spawn_tx, new_abort) =
+                // Agent missing (defensive) — rebuild from history.
+                let (a, tx, pend, _inject_tx, new_spawn_tx, new_abort) =
                     state.build_agent(conversation_id).await;
                 {
                     let mut map = state.chats.lock().unwrap();
                     if let Some(entry) = map.get_mut(&conversation_id) {
                         entry.interrupt_tx = tx;
                         entry.ask_user_pending = pend;
-                        entry.agent_stale = Arc::clone(&s);
                         entry.spawn_tx = new_spawn_tx;
                         entry.abort_flag = Arc::clone(&new_abort);
                     }
                 }
-                new_stale = s;
                 a
             }
         };
@@ -643,7 +624,6 @@ async fn generation_loop(
 
         agent = next_agent;
         abort_flag = new_abort;
-        agent_stale = new_stale;
     }
 }
 
@@ -659,7 +639,6 @@ async fn run_generation(
     conversation_id: Uuid,
     agent: DeepseekAgent,
     abort_flag: Arc<AtomicBool>,
-    agent_stale: Arc<AtomicBool>,
 ) -> Option<String> {
     use ds_api::raw::request::message::{Message as AgentMessage, Role};
     use futures::StreamExt;
@@ -705,11 +684,7 @@ async fn run_generation(
                 if let Some(entry) = map.get_mut(&conversation_id) {
                     entry.generating = false;
                     entry.abort_flag.store(false, Ordering::Release);
-                    // If MCP tools changed, discard the agent so the next turn
-                    // rebuilds it with the updated tool list.
-                    if !agent_stale.load(Ordering::Relaxed) {
-                        entry.agent = Some(recovered);
-                    }
+                    entry.agent = Some(recovered);
                 }
             }
             return None;
@@ -906,9 +881,7 @@ async fn run_generation(
                             let mut map = state.chats.lock().unwrap();
                             if let Some(entry) = map.get_mut(&conversation_id) {
                                 entry.generating = false;
-                                if !agent_stale.load(Ordering::Relaxed) {
-                                    entry.agent = Some(recovered);
-                                }
+                                entry.agent = Some(recovered);
                             }
                         }
                         return None;
@@ -948,10 +921,7 @@ async fn run_generation(
         if let Some(entry) = map.get_mut(&conversation_id) {
             entry.emit(json!({"type": "done"}).to_string());
             entry.generating = false;
-            // Only restore the agent if the MCP tool list hasn't changed.
-            if !agent_stale.load(Ordering::Relaxed)
-                && let Some(agent) = recovered
-            {
+            if let Some(agent) = recovered {
                 entry.agent = Some(agent);
             }
             // Drain any queued interrupts that arrived during the final turn.

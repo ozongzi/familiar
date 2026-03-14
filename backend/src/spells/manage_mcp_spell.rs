@@ -1,18 +1,16 @@
 use crate::config::Config;
-use ds_api::McpTool;
+use ds_api::{McpTool, ToolInjection};
 use ds_api::tool;
 use serde_json::{Value, json};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::Mutex;
+use tokio::sync::mpsc::UnboundedSender;
 
 pub struct ManageMcpSpell {
     /// All currently running MCP tools, shared with AppState.
     pub mcp_tools: Arc<Mutex<Vec<(String, McpTool)>>>,
-    /// Set to true after install/uninstall so run_generation drops the
-    /// recovered agent; the next start_generation will rebuild it with the
-    /// updated tool list.
-    pub agent_stale: Arc<AtomicBool>,
+    /// Channel to inject/remove tools in the running agent without rebuilding it.
+    pub tool_inject_tx: UnboundedSender<ToolInjection>,
 }
 
 #[tool]
@@ -57,18 +55,18 @@ impl Tool for ManageMcpSpell {
         let tool_count = tool.raw_tools().len();
         let new_tools = tool.raw_tools().clone();
 
-        // Add to running tools
+        // Inject into the running agent immediately so the next turn can use it.
+        let _ = self.tool_inject_tx.send(ToolInjection::Add(Box::new(tool.clone())));
+
+        // Also persist in the shared list so newly built agents include it.
         {
             let mut tools = self.mcp_tools.lock().await;
             tools.push((name.clone(), tool));
         }
 
-        // Mark agent stale — next generation rebuilds with updated MCP list
-        self.agent_stale.store(true, Ordering::Relaxed);
-
         json!({
             "status": "ok",
-            "message": format!("MCP '{}' 已安装（{} 个工具）。此安装为即时生效，进程重启后不会自动恢复，若消失请重新安装", name, tool_count),
+            "message": format!("MCP '{}' 已安装（{} 个工具），下一轮对话即可直接使用。进程重启后不会自动恢复，若消失请重新安装。", name, tool_count),
             "tools": new_tools
         })
     }
@@ -76,26 +74,32 @@ impl Tool for ManageMcpSpell {
     /// 停止并卸载 MCP 服务器
     /// name: 要卸载的服务器标识符
     async fn uninstall_mcp(&self, name: String) -> Value {
-        let removed = {
-            let mut tools = self.mcp_tools.lock().await;
-            if let Some(idx) = tools.iter().position(|(n, _)| n == &name) {
-                tools.remove(idx); // Drop kills the subprocess
-                true
-            } else {
-                false
-            }
+        // Find the tool names belonging to this MCP server, then remove from agent.
+        let tool_names: Vec<String> = {
+            let tools = self.mcp_tools.lock().await;
+            tools
+                .iter()
+                .find(|(n, _)| n == &name)
+                .map(|(_, t)| t.raw_tools().iter().map(|r| r.function.name.clone()).collect())
+                .unwrap_or_default()
         };
 
-        if !removed {
+        if tool_names.is_empty() {
             return json!({ "error": format!("MCP '{}' 未在运行列表中", name) });
         }
 
-        self.agent_stale.store(true, Ordering::Relaxed);
+        // Remove from the running agent immediately.
+        let _ = self.tool_inject_tx.send(ToolInjection::Remove(tool_names));
 
-        // NOTE: persistence to config.toml has been removed. Uninstall only affects
-        // the running process; no on-disk config is modified.
+        // Remove from shared list (this kills the subprocess via Drop).
+        {
+            let mut tools = self.mcp_tools.lock().await;
+            if let Some(idx) = tools.iter().position(|(n, _)| n == &name) {
+                tools.remove(idx);
+            }
+        }
 
-        json!({ "status": "ok", "message": format!("MCP '{}' 已卸载。", name) })
+        json!({ "status": "ok", "message": format!("MCP '{}' 已卸载，下一轮对话生效。", name) })
     }
 }
 
