@@ -61,21 +61,27 @@ export interface Message {
 // ─── WebSocket events ─────────────────────────────────────────────────────
 
 export type WsServerEvent =
-    | { type: "token"; content: string; source?: "spawn" }
-    | { type: "reasoning_token"; content: string }
-    | { type: "tool_call"; id: string; name: string; delta: string; source?: "spawn" }
-    | { type: "tool_result"; id: string; name: string; args?: string; result: unknown; source?: "spawn" }
-    | { type: "user_interrupt"; content: string }
-    | { type: "aborted" }
-    | { type: "done" }
-    | { type: "error"; message: string };
-
-export type WsClientMsg =
-    | { token: string }
-    | { content: string }
-    | { type: "interrupt"; content: string }
-    | { type: "answer"; content: string }
-    | { type: "abort" };
+  | { type: "token"; content: string; source?: "spawn" }
+  | { type: "reasoning_token"; content: string }
+  | {
+      type: "tool_call";
+      id: string;
+      name: string;
+      delta: string;
+      source?: "spawn";
+    }
+  | {
+      type: "tool_result";
+      id: string;
+      name: string;
+      args?: string;
+      result: unknown;
+      source?: "spawn";
+    }
+  | { type: "user_interrupt"; content: string }
+  | { type: "aborted" }
+  | { type: "done" }
+  | { type: "error"; message: string };
 
 // ─── UI-only chat bubble ──────────────────────────────────────────────────
 
@@ -92,8 +98,8 @@ export interface TextBubble {
 
 /** A single event in a sub-agent's execution, in arrival order. */
 export type SpawnEvent =
-    | { kind: "tool"; bubble: ToolBubble }
-    | { kind: "text"; key: string; content: string };
+  | { kind: "tool"; bubble: ToolBubble }
+  | { kind: "text"; key: string; content: string };
 
 export interface ToolBubble {
   kind: "tool";

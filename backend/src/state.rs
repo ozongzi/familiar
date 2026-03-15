@@ -121,6 +121,10 @@ pub struct AppState {
     /// Per-conversation agent instances, keyed by conversation UUID.
     pub chats: Arc<Mutex<HashMap<Uuid, ChatEntry>>>,
 
+    /// SSE stream tokens: stream_id → (conversation_id, user_id).
+    /// Created by `create_stream`, consumed by `resolve_stream`.
+    pub streams: Arc<Mutex<HashMap<Uuid, (Uuid, Uuid)>>>,
+
     /// DeepSeek API key, used when constructing new agents.
     pub deepseek_token: String,
 
@@ -159,6 +163,7 @@ impl AppState {
         let db = Db::new(pool.clone());
         Self {
             chats: Arc::new(Mutex::new(HashMap::new())),
+            streams: Arc::new(Mutex::new(HashMap::new())),
             deepseek_token: cfg.model.api_key.clone(),
             model_api_base: cfg.model.api_base.clone(),
             model_name: cfg.model.name.clone(),
@@ -177,6 +182,23 @@ impl AppState {
         }
     }
 
+    /// Create a new SSE stream token for the given conversation and user.
+    /// Returns the generated stream_id (a random UUID).
+    pub fn create_stream(&self, conversation_id: Uuid, user_id: Uuid) -> Uuid {
+        let stream_id = Uuid::new_v4();
+        self.streams
+            .lock()
+            .unwrap()
+            .insert(stream_id, (conversation_id, user_id));
+        stream_id
+    }
+
+    /// Resolve a stream_id to its (conversation_id, user_id) pair.
+    /// Returns None if the token has expired or never existed.
+    pub fn resolve_stream(&self, stream_id: Uuid) -> Option<(Uuid, Uuid)> {
+        self.streams.lock().unwrap().get(&stream_id).copied()
+    }
+
     /// Initialise MCP servers from config. Called once at startup.
     /// Failures are logged and skipped — a missing MCP server should never
     /// prevent familiar from starting.
@@ -186,7 +208,10 @@ impl AppState {
         for mc in mcp_configs {
             match mc {
                 McpServerConfig::Studio {
-                    name, command, args, env
+                    name,
+                    command,
+                    args,
+                    env,
                 } => {
                     // When env vars are specified, prepend them via `env KEY=VAL ... cmd args`
                     // so they are injected into the subprocess without touching the parent process.
@@ -210,17 +235,13 @@ impl AppState {
                         Err(e) => warn!("MCP: {} failed to start: {e}", name),
                     }
                 }
-                McpServerConfig::Http {
-                    name, url
-                } => {
-                    match McpTool::http(url).await {
-                        Ok(t) => {
-                            info!("MCP: {} ready ({} tools)", name, t.raw_tools().len());
-                            tools.push((name.clone(), t));
-                        }
-                        Err(e) => warn!("MCP: {} failed to start: {e}", name),
+                McpServerConfig::Http { name, url } => match McpTool::http(url).await {
+                    Ok(t) => {
+                        info!("MCP: {} ready ({} tools)", name, t.raw_tools().len());
+                        tools.push((name.clone(), t));
                     }
-                }
+                    Err(e) => warn!("MCP: {} failed to start: {e}", name),
+                },
             }
         }
 
@@ -261,14 +282,13 @@ impl AppState {
         };
 
         // Resolve user_id from conversation, then load per-user MCPs from DB.
-        let user_id: Uuid = sqlx::query_scalar::<_, Uuid>(
-            "SELECT user_id FROM conversations WHERE id = $1"
-        )
-        .bind(conversation_id)
-        .fetch_optional(&self.pool)
-        .await
-        .unwrap_or(None)
-        .unwrap_or_default();
+        let user_id: Uuid =
+            sqlx::query_scalar::<_, Uuid>("SELECT user_id FROM conversations WHERE id = $1")
+                .bind(conversation_id)
+                .fetch_optional(&self.pool)
+                .await
+                .unwrap_or(None)
+                .unwrap_or_default();
 
         let user_mcp_rows: Vec<(String, String, serde_json::Value)> = sqlx::query_as(
             r#"SELECT name, "type", config FROM user_mcps WHERE user_id = $1 ORDER BY created_at ASC"#
@@ -335,34 +355,50 @@ impl AppState {
         for (name, mcp_type, config) in user_mcp_rows {
             let tool = match mcp_type.as_str() {
                 "http" => {
-                    let url = config.get("url")
+                    let url = config
+                        .get("url")
                         .and_then(|v| v.as_str())
                         .unwrap_or_default()
                         .to_string();
                     match McpTool::http(&url).await {
                         Ok(t) => t,
-                        Err(e) => { warn!("user MCP '{name}' failed to connect: {e}"); continue; }
+                        Err(e) => {
+                            warn!("user MCP '{name}' failed to connect: {e}");
+                            continue;
+                        }
                     }
                 }
                 "stdio" => {
-                    let command = config.get("command")
+                    let command = config
+                        .get("command")
                         .and_then(|v| v.as_str())
                         .unwrap_or_default()
                         .to_string();
-                    let args: Vec<String> = config.get("args")
+                    let args: Vec<String> = config
+                        .get("args")
                         .and_then(|v| v.as_array())
-                        .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+                        .map(|a| {
+                            a.iter()
+                                .filter_map(|v| v.as_str().map(str::to_string))
+                                .collect()
+                        })
                         .unwrap_or_default();
                     let args_ref: Vec<&str> = args.iter().map(String::as_str).collect();
                     match McpTool::stdio(&command, &args_ref).await {
                         Ok(t) => t,
-                        Err(e) => { warn!("user MCP '{name}' failed to start: {e}"); continue; }
+                        Err(e) => {
+                            warn!("user MCP '{name}' failed to start: {e}");
+                            continue;
+                        }
                     }
                 }
                 _ => continue,
             };
             info!("user MCP '{name}' ready ({} tools)", tool.raw_tools().len());
-            user_mcp_tools.lock().await.push((name.clone(), tool.clone()));
+            user_mcp_tools
+                .lock()
+                .await
+                .push((name.clone(), tool.clone()));
             agent = agent.add_tool(tool);
         }
 
@@ -412,13 +448,7 @@ impl AppState {
         // Slow path — build agent outside the lock.
         let (agent, tx, ask_user_pending, _inject_tx, spawn_tx, abort_flag) =
             self.build_agent(conversation_id).await;
-        let entry = ChatEntry::new(
-            agent,
-            tx,
-            ask_user_pending,
-            spawn_tx,
-            abort_flag,
-        );
+        let entry = ChatEntry::new(agent, tx, ask_user_pending, spawn_tx, abort_flag);
         let rx = entry.broadcast_tx.subscribe();
         let log = entry.event_log.clone();
         let generating = entry.generating;
@@ -449,10 +479,7 @@ impl AppState {
             entry.clear_log();
             entry.abort_flag.store(false, Ordering::Release);
             entry.generating = true;
-            (
-                entry.agent.take(),
-                Arc::clone(&entry.abort_flag),
-            )
+            (entry.agent.take(), Arc::clone(&entry.abort_flag))
         };
 
         let mut agent = match agent {
@@ -640,13 +667,8 @@ async fn generation_loop(
     let mut abort_flag = initial_abort;
 
     loop {
-        let pending_text = run_generation(
-            state.clone(),
-            conversation_id,
-            agent,
-            abort_flag.clone(),
-        )
-        .await;
+        let pending_text =
+            run_generation(state.clone(), conversation_id, agent, abort_flag.clone()).await;
 
         let text = match pending_text {
             None => break,

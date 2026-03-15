@@ -126,6 +126,14 @@ export const api = {
     );
   },
 
+  sendMessage(token: string, conversationId: string, content: string) {
+    return post<{ stream_id: string }>(
+      `/api/conversations/${conversationId}/messages`,
+      { content },
+      token,
+    );
+  },
+
   // ── MCPs ─────────────────────────────────────────────────────────────────
   listMcps(token: string) {
     return get<Mcp[]>("/api/mcps", token);

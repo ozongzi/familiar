@@ -4,17 +4,17 @@ pub mod files;
 pub mod history;
 pub mod mcps;
 pub mod sessions;
+pub mod sse;
 pub mod users;
-pub mod ws;
 
 use std::{path::Path, sync::Arc};
 
+use axum::extract::DefaultBodyLimit;
 use axum::{
     Router,
     routing::{delete, get, patch, post, put},
 };
 use mcps::{create_mcp, delete_mcp, list_mcps, update_mcp};
-use axum::extract::DefaultBodyLimit;
 use sqlx::PgPool;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::{ServeDir, ServeFile};
@@ -23,8 +23,8 @@ use conversations::*;
 use files::{download_file, preview_file, upload_file};
 use history::*;
 use sessions::*;
+use sse::*;
 use users::*;
-use ws::*;
 
 use crate::config::Config;
 
@@ -80,8 +80,21 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/files", get(download_file))
         .route("/api/files", post(upload_file))
         .route("/api/files/preview", get(preview_file))
-        // ── WebSocket ─────────────────────────────────────────────────────────
-        .route("/ws/{id}", get(ws_handler))
+        // ── Chat (SSE streaming) ──────────────────────────────────────────────
+        .route(
+            "/api/conversations/{id}/messages",
+            post(send_message_handler),
+        )
+        .route("/api/stream/{stream_id}", get(sse_handler))
+        .route("/api/stream/{stream_id}/abort", post(stream_abort_handler))
+        .route(
+            "/api/stream/{stream_id}/interrupt",
+            post(stream_interrupt_handler),
+        )
+        .route(
+            "/api/stream/{stream_id}/answer",
+            post(stream_answer_handler),
+        )
         // model artifacts
         .nest_service("/artifacts", ServeDir::new(artifacts_path))
         // ── Static frontend ───────────────────────────────────────────────────

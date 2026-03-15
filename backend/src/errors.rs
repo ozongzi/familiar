@@ -23,6 +23,10 @@ impl AppError {
         Self(StatusCode::BAD_REQUEST, json!(msg))
     }
 
+    pub fn forbidden(msg: &str) -> Self {
+        Self(StatusCode::FORBIDDEN, json!(msg))
+    }
+
     pub fn internal(msg: &str) -> Self {
         Self(StatusCode::INTERNAL_SERVER_ERROR, json!(msg))
     }
