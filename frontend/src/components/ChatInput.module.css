@@ -52,6 +52,7 @@
     padding: 4px 0;
     scrollbar-width: thin;
     scrollbar-color: var(--border) transparent;
+    font-weight: 500;
 }
 
 .textarea::placeholder {

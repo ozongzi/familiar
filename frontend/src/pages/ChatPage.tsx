@@ -8,6 +8,7 @@ import { useConversations } from "../hooks/useConversations";
 import { useChat } from "../hooks/useChat";
 import { api } from "../api/client";
 import styles from "./ChatPage.module.css";
+import { getZenGreetingBySeason } from "../utils/seasonalGreeting";
 
 // Sentinel value meaning "new draft conversation, not yet persisted".
 const DRAFT_ID = "__draft__" as const;
@@ -313,7 +314,7 @@ export function ChatPage() {
           {isDraft && bubbles.length === 0 && (
             <div className={styles.empty}>
               <img src="/favicon.svg" width={52} height={52} alt="" />
-              <p className={styles.emptyTitle}>有什么可以帮你？</p>
+              <p className={styles.emptyTitle}>{getZenGreetingBySeason()}</p>
             </div>
           )}
 

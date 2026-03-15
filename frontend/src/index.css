@@ -159,11 +159,6 @@ body {
     font-family: var(--font-serif);
 }
 
-/* Ensure the empty placeholder title uses the serif font */
-.emptyTitle {
-    font-family: var(--font-serif);
-}
-
 a {
     color: var(--text-link);
     text-decoration: none;

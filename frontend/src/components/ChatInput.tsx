@@ -164,12 +164,7 @@ export function ChatInput({
         <textarea
           ref={textareaRef}
           className={styles.textarea}
-          placeholder={
-            placeholder ??
-            (streaming
-              ? "追加消息… (Enter 发送，Esc 打断)"
-              : "发消息… (Enter 发送，Shift+Enter 换行)")
-          }
+          placeholder={placeholder ?? (streaming ? "请起念…" : "且续前言…")}
           rows={1}
           onInput={handleInput}
           onKeyDown={handleKeyDown}
