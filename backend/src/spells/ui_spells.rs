@@ -3,7 +3,6 @@ use std::time::Duration;
 
 use ds_api::tool;
 use serde_json::json;
-use tokio::fs;
 use tokio::sync::Mutex;
 
 pub struct UiSpells {
@@ -36,25 +35,4 @@ impl Tool for UiSpells {
         }
     }
 
-    /// 将服务器上的文件推送给用户查看或下载。
-    /// 适合展示代码、日志、生成的图片等任何文件。
-    ///
-    /// description: 本次操作意图（供 UI 渲染，可不填）
-    /// path: 文件路径（绝对或相对）
-    async fn present(&self, description: Option<String>, path: String) -> Value {
-        let _ = description;
-        let meta = match fs::metadata(&path).await {
-            Ok(m) => m,
-            Err(e) => return json!({ "error": e.to_string() }),
-        };
-        if !meta.is_file() {
-            return json!({ "error": format!("'{path}' 不是文件") });
-        }
-        let filename = std::path::Path::new(&path)
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("file")
-            .to_string();
-        json!({ "display": "file", "filename": filename, "path": path, "size": meta.len() })
-    }
 }

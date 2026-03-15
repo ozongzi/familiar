@@ -2,6 +2,7 @@ pub mod auth;
 pub mod conversations;
 pub mod files;
 pub mod history;
+pub mod mcps;
 pub mod sessions;
 pub mod users;
 pub mod ws;
@@ -10,8 +11,9 @@ use std::{path::Path, sync::Arc};
 
 use axum::{
     Router,
-    routing::{delete, get, patch, post},
+    routing::{delete, get, patch, post, put},
 };
+use mcps::{create_mcp, delete_mcp, list_mcps, update_mcp};
 use axum::extract::DefaultBodyLimit;
 use sqlx::PgPool;
 use tower_http::cors::{Any, CorsLayer};
@@ -69,6 +71,11 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/conversations/{id}/title", post(auto_title))
         // ── Messages ──────────────────────────────────────────────────────────
         .route("/api/conversations/{id}/messages", get(list_messages))
+        // ── MCPs ──────────────────────────────────────────────────────────────
+        .route("/api/mcps", get(list_mcps))
+        .route("/api/mcps", post(create_mcp))
+        .route("/api/mcps/{id}", put(update_mcp))
+        .route("/api/mcps/{id}", delete(delete_mcp))
         // ── File download / preview ───────────────────────────────────────────
         .route("/api/files", get(download_file))
         .route("/api/files", post(upload_file))

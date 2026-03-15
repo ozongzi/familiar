@@ -254,13 +254,29 @@ impl AppState {
         let ask_user_pending = Arc::new(tokio::sync::Mutex::new(None));
         let abort_flag = Arc::new(AtomicBool::new(false));
 
-        // Snapshot the MCP tools BEFORE building the agent so the builder
-        // is never in scope across an await point. This keeps the generated
-        // future Send even when the builder or tool types are !Send.
+        // Snapshot the global (system-level) MCP tools.
         let mcp_snapshot: Vec<_> = {
             let guard = self.mcp_tools.lock().await;
             guard.iter().cloned().collect()
         };
+
+        // Resolve user_id from conversation, then load per-user MCPs from DB.
+        let user_id: Uuid = sqlx::query_scalar::<_, Uuid>(
+            "SELECT user_id FROM conversations WHERE id = $1"
+        )
+        .bind(conversation_id)
+        .fetch_optional(&self.pool)
+        .await
+        .unwrap_or(None)
+        .unwrap_or_default();
+
+        let user_mcp_rows: Vec<(String, String, serde_json::Value)> = sqlx::query_as(
+            r#"SELECT name, "type", config FROM user_mcps WHERE user_id = $1 ORDER BY created_at ASC"#
+        )
+        .bind(user_id)
+        .fetch_all(&self.pool)
+        .await
+        .unwrap_or_default();
 
         let (spawn_tx, _) = tokio::sync::broadcast::channel::<String>(256);
 
@@ -286,6 +302,10 @@ impl AppState {
         let interrupt_tx = base.interrupt_sender();
         let inject_tx = base.tool_inject_sender();
 
+        // Per-user mcp_tools Arc (scoped to this agent instance).
+        let user_mcp_tools: Arc<tokio::sync::Mutex<Vec<(String, McpTool)>>> =
+            Arc::new(tokio::sync::Mutex::new(Vec::new()));
+
         let spell_deps = SpellDeps {
             subagent_prompt: self.subagent_prompt.clone(),
             ask_pending: Arc::clone(&ask_user_pending),
@@ -293,18 +313,56 @@ impl AppState {
             api_base: self.model_api_base.clone(),
             model_name: self.model_name.clone(),
             extra_body: self.model_extra_body.clone(),
-            mcp_tools: Arc::clone(&self.mcp_tools),
+            mcp_tools: Arc::clone(&user_mcp_tools),
             spawn_tx: spawn_tx.clone(),
             db: self.db.clone(),
             embed: self.embed.clone(),
             conversation_id,
             tool_inject_tx: inject_tx.clone(),
+            pool: self.pool.clone(),
+            user_id,
             abort_flag: Arc::clone(&abort_flag),
         };
 
         let mut agent = base.add_tool(build_all_spells(spell_deps));
 
+        // Add system-level MCP tools (from config).
         for (_, tool) in mcp_snapshot {
+            agent = agent.add_tool(tool);
+        }
+
+        // Connect per-user MCPs from DB and add to agent.
+        for (name, mcp_type, config) in user_mcp_rows {
+            let tool = match mcp_type.as_str() {
+                "http" => {
+                    let url = config.get("url")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .to_string();
+                    match McpTool::http(&url).await {
+                        Ok(t) => t,
+                        Err(e) => { warn!("user MCP '{name}' failed to connect: {e}"); continue; }
+                    }
+                }
+                "stdio" => {
+                    let command = config.get("command")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .to_string();
+                    let args: Vec<String> = config.get("args")
+                        .and_then(|v| v.as_array())
+                        .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+                        .unwrap_or_default();
+                    let args_ref: Vec<&str> = args.iter().map(String::as_str).collect();
+                    match McpTool::stdio(&command, &args_ref).await {
+                        Ok(t) => t,
+                        Err(e) => { warn!("user MCP '{name}' failed to start: {e}"); continue; }
+                    }
+                }
+                _ => continue,
+            };
+            info!("user MCP '{name}' ready ({} tools)", tool.raw_tools().len());
+            user_mcp_tools.lock().await.push((name.clone(), tool.clone()));
             agent = agent.add_tool(tool);
         }
 

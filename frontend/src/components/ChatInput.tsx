@@ -24,6 +24,7 @@ interface Props {
   conversationId?: string | null;
   requestConversationId?: () => Promise<string | null>;
   onUpload?: (result: UploadResult) => void;
+  onOpenMcp?: () => void;
 }
 
 export function ChatInput({
@@ -37,6 +38,7 @@ export function ChatInput({
   conversationId,
   requestConversationId,
   onUpload,
+  onOpenMcp,
 }: Props) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -177,19 +179,32 @@ export function ChatInput({
 
         {/* 下方：工具栏 */}
         <div className={styles.toolbar}>
-          <button
-            className={`${styles.uploadBtn} ${isUploading ? styles.uploadBtnLoading : ""}`}
-            onClick={() => fileInputRef.current?.click()}
-            disabled={disabled || isUploading}
-            aria-label="上传文件"
-            title="上传文件"
-          >
-            {isUploading ? (
-              <span className={styles.uploadSpinner} />
-            ) : (
-              <UploadIcon />
+          <div className={styles.toolbarLeft}>
+            <button
+              className={`${styles.uploadBtn} ${isUploading ? styles.uploadBtnLoading : ""}`}
+              onClick={() => fileInputRef.current?.click()}
+              disabled={disabled || isUploading}
+              aria-label="上传文件"
+              title="上传文件"
+            >
+              {isUploading ? (
+                <span className={styles.uploadSpinner} />
+              ) : (
+                <UploadIcon />
+              )}
+            </button>
+
+            {onOpenMcp && (
+              <button
+                className={styles.uploadBtn}
+                onClick={onOpenMcp}
+                aria-label="MCP 服务器"
+                title="MCP 服务器"
+              >
+                <PlugIcon />
+              </button>
             )}
-          </button>
+          </div>
 
           <div className={styles.toolbarRight}>
             {streaming && <span className={styles.hint}>正在生成…</span>}
@@ -296,6 +311,29 @@ function UploadIcon() {
       <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
       <polyline points="17 8 12 3 7 8" />
       <line x1="12" y1="3" x2="12" y2="15" />
+    </svg>
+  );
+}
+
+function PlugIcon() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M18 7l-1.5-1.5" />
+      <path d="M6 7l1.5-1.5" />
+      <path d="M12 2v2" />
+      <rect x="4" y="7" width="16" height="8" rx="2" />
+      <path d="M12 17v3" />
+      <path d="M9 20h6" />
     </svg>
   );
 }

@@ -40,8 +40,8 @@ pub async fn download_file(
         .or_else(|| q.token.clone())
         .ok_or_else(AppError::unauthorized)?;
 
-    // Validate the token against the sessions table.
-    sqlx::query("SELECT user_id FROM sessions WHERE token = $1")
+    // Validate the token and fetch user_id.
+    let user_id: Uuid = sqlx::query_scalar("SELECT user_id FROM sessions WHERE token = $1")
         .bind(&token)
         .fetch_optional(&state.pool)
         .await
@@ -53,6 +53,19 @@ pub async fn download_file(
 
     // Resolve to an absolute path (relative paths are from the process working dir).
     let path = std::path::PathBuf::from(&q.path);
+
+    // Enforce ownership: path must be within uploads/{user_id}/.
+    let user_dir = std::path::PathBuf::from("uploads").join(user_id.to_string());
+    let canonical_user_dir = tokio::fs::canonicalize(&user_dir).await.map_err(|_| {
+        AppError::not_found("文件不存在")
+    })?;
+    // Canonicalize the requested path only if it exists; otherwise reject.
+    let canonical_path = tokio::fs::canonicalize(&path).await.map_err(|_| {
+        AppError::not_found("文件不存在")
+    })?;
+    if !canonical_path.starts_with(&canonical_user_dir) {
+        return Err(AppError::not_found("文件不存在"));
+    }
 
     let metadata = tokio::fs::metadata(&path).await.map_err(|e| {
         if e.kind() == std::io::ErrorKind::NotFound {
@@ -131,7 +144,7 @@ pub async fn preview_file(
         .or_else(|| q.token.clone())
         .ok_or_else(AppError::unauthorized)?;
 
-    sqlx::query("SELECT user_id FROM sessions WHERE token = $1")
+    let user_id: Uuid = sqlx::query_scalar("SELECT user_id FROM sessions WHERE token = $1")
         .bind(&token)
         .fetch_optional(&state.pool)
         .await
@@ -142,6 +155,18 @@ pub async fn preview_file(
         .ok_or_else(AppError::unauthorized)?;
 
     let path = std::path::PathBuf::from(&q.path);
+
+    // Enforce ownership.
+    let user_dir = std::path::PathBuf::from("uploads").join(user_id.to_string());
+    let canonical_user_dir = tokio::fs::canonicalize(&user_dir).await.map_err(|_| {
+        AppError::not_found("文件不存在")
+    })?;
+    let canonical_path = tokio::fs::canonicalize(&path).await.map_err(|_| {
+        AppError::not_found("文件不存在")
+    })?;
+    if !canonical_path.starts_with(&canonical_user_dir) {
+        return Err(AppError::not_found("文件不存在"));
+    }
 
     let metadata = tokio::fs::metadata(&path).await.map_err(|e| {
         if e.kind() == std::io::ErrorKind::NotFound {
@@ -293,8 +318,8 @@ pub async fn upload_file(
         .map(|TypedHeader(Authorization(b))| b.token().to_string())
         .ok_or_else(AppError::unauthorized)?;
 
-    // Validate the token against the sessions table.
-    sqlx::query("SELECT user_id FROM sessions WHERE token = $1")
+    // Validate the token and fetch user_id.
+    let user_id: Uuid = sqlx::query_scalar("SELECT user_id FROM sessions WHERE token = $1")
         .bind(&token)
         .fetch_optional(&state.pool)
         .await
@@ -304,9 +329,9 @@ pub async fn upload_file(
         })?
         .ok_or_else(AppError::unauthorized)?;
 
-    // Storage directory
-    let upload_dir = Path::new("uploads");
-    tokio::fs::create_dir_all(upload_dir)
+    // Storage directory scoped to the user.
+    let upload_dir = Path::new("uploads").join(user_id.to_string());
+    tokio::fs::create_dir_all(&upload_dir)
         .await
         .map_err(|e| AppError::internal(&e.to_string()))?;
 

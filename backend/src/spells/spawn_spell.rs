@@ -5,9 +5,6 @@ use futures::StreamExt;
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
 use super::a2a_spell::A2aSpell;
-use super::file_spells::FileSpells;
-use super::search_spells::SearchSpells;
-use super::shell_spells::ShellSpells;
 
 pub struct SpawnSpell {
     pub api_key: String,
@@ -46,9 +43,6 @@ impl Tool for SpawnSpell {
             )
             .add_tool(
                 ToolBundle::new()
-                    .add(FileSpells)
-                    .add(ShellSpells)
-                    .add(SearchSpells)
                     .add(A2aSpell),
             );
 

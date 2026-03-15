@@ -70,6 +70,13 @@
     margin-top: 6px;
 }
 
+.toolbarLeft {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: -10px;
+}
+
 .toolbarRight {
     display: flex;
     align-items: center;
@@ -81,9 +88,8 @@
     display: none;
 }
 
-/* ─── Upload button ─────────────────────────────────────────────────────── */
+/* ─── Add/Upload buttons ─────────────────────────────────────────────────── */
 .uploadBtn {
-    margin-left: -10px;
     flex-shrink: 0;
     width: 32px;
     height: 32px;

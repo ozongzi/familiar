@@ -123,6 +123,22 @@ export interface UploadBubble {
 
 export type ChatBubble = TextBubble | ToolBubble | UploadBubble;
 
+// ─── MCPs ─────────────────────────────────────────────────────────────────
+
+export interface Mcp {
+  id: string;
+  name: string;
+  type: "http" | "stdio";
+  config: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface CreateMcpRequest {
+  name: string;
+  type: "http" | "stdio";
+  config: Record<string, unknown>;
+}
+
 // ─── API error shape ──────────────────────────────────────────────────────
 
 export interface ApiError {

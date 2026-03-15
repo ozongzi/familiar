@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { Sidebar } from "../components/Sidebar";
+import { McpSettings } from "../components/McpSettings";
 import { MessageBubble } from "../components/MessageBubble";
 import { ChatInput } from "../components/ChatInput";
 import { useAuth } from "../store/auth.shared";
@@ -26,6 +27,7 @@ export function ChatPage() {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarVisible, setSidebarVisible] = useState(true);
+  const [mcpOpen, setMcpOpen] = useState(false);
 
   // When useChat creates a conversation in draft mode, we want to update
   // activeId WITHOUT triggering the history-load effect (there's no history
@@ -265,6 +267,10 @@ export function ChatPage() {
         />
       </div>
 
+      {mcpOpen && token && (
+        <McpSettings token={token} onClose={() => setMcpOpen(false)} />
+      )}
+
       {/* Main panel */}
       <main className={styles.main}>
         {/* Header */}
@@ -350,6 +356,7 @@ export function ChatPage() {
           conversationId={isDraft ? null : activeId}
           requestConversationId={handleRequestConversationId}
           onUpload={handleUpload}
+          onOpenMcp={() => setMcpOpen(true)}
           placeholder="发消息… (Enter 发送，Shift+Enter 换行)"
         />
       </main>

@@ -438,7 +438,7 @@ function ToolCallBubble({
   }
 
   // ── Early return: present → file card ─────────────────────────────────────
-  if (bubble.name === "present" && fileResult) {
+  if ((bubble.name === "present" || bubble.name === "present_file") && fileResult) {
     return <FileCard file={fileResult} pending={bubble.pending} />;
   }
 

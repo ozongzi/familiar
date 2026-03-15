@@ -1,0 +1,320 @@
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.25);
+  backdrop-filter: blur(2px);
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: fadeIn 200ms ease-out;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.panel {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  width: min(560px, 92vw);
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.08), 0 2px 8px rgba(0, 0, 0, 0.04);
+  animation: scaleIn 200ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes scaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 24px;
+  border-bottom: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+}
+
+.title {
+  font-size: 1.1rem;
+  font-weight: 500;
+  margin: 0;
+  color: var(--text-primary);
+}
+
+.closeBtn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-muted);
+  padding: 6px;
+  display: flex;
+  border-radius: var(--radius-sm);
+  transition: var(--transition);
+}
+.closeBtn:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+/* List */
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 12px;
+  overflow-y: auto;
+  flex-shrink: 0;
+  max-height: 280px;
+}
+
+.empty {
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  padding: 32px 16px;
+  background: var(--bg-base);
+  border-radius: var(--radius-sm);
+  border: 1px dashed var(--border);
+  margin: 4px;
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  margin-bottom: 4px;
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  gap: 12px;
+  transition: var(--transition);
+}
+.item:last-child {
+  margin-bottom: 0;
+}
+.item:hover {
+  background: var(--bg-base);
+}
+.itemActive {
+  background: var(--bg-base);
+  border-color: var(--border);
+}
+
+.itemInfo {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  flex: 1;
+}
+
+.itemName {
+  font-size: 0.95rem;
+  color: var(--text-primary);
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+.itemType {
+  font-size: 0.75rem;
+  font-family: var(--font-mono);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  flex-shrink: 0;
+  text-transform: uppercase;
+}
+
+.itemDetail {
+  font-size: 0.85rem;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.itemActions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 200ms ease;
+}
+.item:hover .itemActions,
+.itemActive .itemActions {
+  opacity: 1;
+}
+
+.iconBtn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-secondary);
+  padding: 6px;
+  border-radius: var(--radius-sm);
+  display: flex;
+  transition: var(--transition);
+}
+.iconBtn:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+.iconBtn.danger:hover {
+  color: var(--danger);
+  background: var(--danger-dim);
+}
+
+/* Form */
+.form {
+  padding: 20px 24px;
+  background: var(--bg-base);
+  border-top: 1px solid var(--border-subtle);
+  overflow-y: auto;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.formTitle {
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.cancelBtn {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  padding: 4px 12px;
+  border-radius: var(--radius-sm);
+  transition: var(--transition);
+}
+.cancelBtn:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+  border-color: var(--border-subtle);
+}
+
+.row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.label {
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.input {
+  width: 100%;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  font-size: 0.95rem;
+  font-family: inherit;
+  color: var(--text-primary);
+  outline: none;
+  transition: border-color 200ms ease, box-shadow 200ms ease;
+}
+.input:hover {
+  border-color: #c4beaf;
+}
+.input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+.input::placeholder {
+  color: var(--text-muted);
+  opacity: 0.6;
+}
+
+.typeToggle {
+  display: flex;
+  background: var(--bg-surface);
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  width: fit-content;
+}
+
+.typeBtn {
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  padding: 6px 16px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: var(--transition);
+  text-transform: uppercase;
+}
+.typeBtn:hover:not(.typeBtnActive) {
+  color: var(--text-primary);
+}
+.typeBtnActive {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+.error {
+  font-size: 0.85rem;
+  color: var(--danger);
+  margin: 0;
+  padding: 10px 12px;
+  background: var(--danger-dim);
+  border-radius: var(--radius-sm);
+}
+
+.submitBtn {
+  align-self: flex-end;
+  background: var(--accent);
+  color: white;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 10px 24px;
+  font-size: 0.95rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: var(--transition);
+  margin-top: 8px;
+}
+.submitBtn:hover {
+  background: var(--accent-hover);
+  transform: translateY(-1px);
+}
+.submitBtn:active {
+  transform: translateY(0);
+}
+.submitBtn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}

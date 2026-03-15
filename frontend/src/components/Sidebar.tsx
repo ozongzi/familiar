@@ -331,6 +331,16 @@ function UserIcon() {
   );
 }
 
+// function PlugIcon() {
+//   return (
+//     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+//       <path d="M18 7l-1.5-1.5" /><path d="M6 7l1.5-1.5" />
+//       <path d="M12 2v2" /><rect x="4" y="7" width="16" height="8" rx="2" />
+//       <path d="M12 17v3" /><path d="M9 20h6" />
+//     </svg>
+//   );
+// }
+
 function LogoutIcon() {
   return (
     <svg

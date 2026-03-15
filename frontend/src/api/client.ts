@@ -66,6 +66,8 @@ import type {
   CreateConversationRequest,
   RenameConversationRequest,
   Message,
+  Mcp,
+  CreateMcpRequest,
 } from "./types";
 
 export const api = {
@@ -122,5 +124,22 @@ export const api = {
       `/api/conversations/${conversationId}/messages`,
       token,
     );
+  },
+
+  // ── MCPs ─────────────────────────────────────────────────────────────────
+  listMcps(token: string) {
+    return get<Mcp[]>("/api/mcps", token);
+  },
+
+  createMcp(token: string, body: CreateMcpRequest) {
+    return post<Mcp>("/api/mcps", body, token);
+  },
+
+  updateMcp(token: string, id: string, body: CreateMcpRequest) {
+    return request<Mcp>("PUT", `/api/mcps/${id}`, body, token);
+  },
+
+  deleteMcp(token: string, id: string) {
+    return del<{ ok: boolean }>(`/api/mcps/${id}`, token);
   },
 };
