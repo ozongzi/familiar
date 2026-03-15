@@ -26,6 +26,25 @@
     font-display: swap;
 }
 
+/* Anthropic Serif (registered) */
+@font-face {
+    font-family: "AnthropicSerif";
+    src: url("/fonts/69971a1551eb6cda0d656e8a_AnthropicSerif-Roman-Web.woff2")
+        format("woff2");
+    font-weight: 400;
+    font-style: normal;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: "AnthropicSerif";
+    src: url("/fonts/69971a15a9fb8c1107a3570e_AnthropicSerif-Italic-Web.woff2")
+        format("woff2");
+    font-weight: 400;
+    font-style: italic;
+    font-display: swap;
+}
+
 /* ─── CSS Variables ──────────────────────────────────────────────────────── */
 :root {
     /* Backgrounds */
@@ -69,6 +88,7 @@
     --font-mono:
         "AnthropicMono", "Geist Mono", "Cascadia Code", "JetBrains Mono",
         monospace;
+    --font-serif: "AnthropicSerif", Georgia, "Times New Roman", serif;
 
     /* Layout */
     --sidebar-width: 280px;
@@ -127,6 +147,21 @@ body {
     -moz-osx-font-smoothing: grayscale;
     -webkit-tap-highlight-color: transparent;
     touch-action: manipulation;
+    margin: 0;
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+    min-height: 100dvh;
+    box-sizing: border-box;
+}
+
+/* Use the registered serif for prose (assistant / model content) and the empty title */
+.prose {
+    font-family: var(--font-serif);
+}
+
+/* Ensure the empty placeholder title uses the serif font */
+.emptyTitle {
+    font-family: var(--font-serif);
 }
 
 a {
