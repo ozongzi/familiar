@@ -1,11 +1,13 @@
 use crate::config::Config;
-use ds_api::{McpTool, ToolInjection};
 use ds_api::tool;
+use ds_api::{McpTool, ToolInjection};
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio::sync::mpsc::UnboundedSender;
+use tokio::time::timeout;
 use uuid::Uuid;
 
 pub struct ManageMcpSpell {
@@ -29,12 +31,24 @@ impl Tool for ManageMcpSpell {
         }
     }
 
-    /// 列出当前已安装并运行的 MCP 服务器名称
+    /// 列出当前已安装并运行的 MCP 服务器名称及其导出的工具名
     async fn list_installed_mcp(&self) -> Value {
         let tools = self.mcp_tools.lock().await;
         let entries: Vec<Value> = tools
             .iter()
-            .map(|(name, tool)| json!({ "name": name, "tool_count": tool.raw_tools().len() }))
+            .map(|(name, tool)| {
+                // 收集该 MCP 导出的每个工具的名称
+                let tool_names: Vec<String> = tool
+                    .raw_tools()
+                    .into_iter()
+                    .map(|r| r.function.name.clone())
+                    .collect();
+                json!({
+                    "name": name,
+                    "tool_count": tool_names.len(),
+                    "tools": tool_names
+                })
+            })
             .collect();
         json!({ "installed": entries })
     }
@@ -50,9 +64,12 @@ impl Tool for ManageMcpSpell {
             }
         }
 
-        let tool = match McpTool::http(&url).await {
-            Ok(t) => t,
-            Err(e) => return json!({ "error": format!("启动失败: {e}") }),
+        let tool = match timeout(Duration::from_secs(15), McpTool::http(&url)).await {
+            Ok(Ok(t)) => t,
+            Ok(Err(e)) => return json!({ "error": format!("启动失败: {e}") }),
+            Err(_) => {
+                return json!({ "error": format!("连接超时（15s），请检查服务器地址是否可访问: {url}") });
+            }
         };
         let tool_count = tool.raw_tools().len();
         let new_tools = tool.raw_tools().clone();
@@ -61,7 +78,7 @@ impl Tool for ManageMcpSpell {
         let config = json!({ "url": url });
         if let Err(e) = sqlx::query(
             r#"INSERT INTO user_mcps (user_id, name, "type", config) VALUES ($1, $2, 'http', $3)
-               ON CONFLICT (user_id, name) DO UPDATE SET "type" = 'http', config = $3"#
+               ON CONFLICT (user_id, name) DO UPDATE SET "type" = 'http', config = $3"#,
         )
         .bind(self.user_id)
         .bind(&name)
@@ -72,7 +89,9 @@ impl Tool for ManageMcpSpell {
             tracing::warn!("failed to persist MCP '{}': {e}", name);
         }
 
-        let _ = self.tool_inject_tx.send(ToolInjection::Add(Box::new(tool.clone())));
+        let _ = self
+            .tool_inject_tx
+            .send(ToolInjection::Add(Box::new(tool.clone())));
         {
             let mut tools = self.mcp_tools.lock().await;
             tools.push((name.clone(), tool));
@@ -98,9 +117,13 @@ impl Tool for ManageMcpSpell {
         }
 
         let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-        let tool = match McpTool::stdio(&command, &args_ref).await {
-            Ok(t) => t,
-            Err(e) => return json!({ "error": format!("启动失败: {e}") }),
+        let tool = match timeout(Duration::from_secs(15), McpTool::stdio(&command, &args_ref)).await
+        {
+            Ok(Ok(t)) => t,
+            Ok(Err(e)) => return json!({ "error": format!("启动失败: {e}") }),
+            Err(_) => {
+                return json!({ "error": format!("启动超时（15s），请检查命令是否有效: {command}") });
+            }
         };
         let tool_count = tool.raw_tools().len();
         let new_tools = tool.raw_tools().clone();
@@ -108,7 +131,7 @@ impl Tool for ManageMcpSpell {
         let config = json!({ "command": command, "args": args });
         if let Err(e) = sqlx::query(
             r#"INSERT INTO user_mcps (user_id, name, "type", config) VALUES ($1, $2, 'stdio', $3)
-               ON CONFLICT (user_id, name) DO UPDATE SET "type" = 'stdio', config = $3"#
+               ON CONFLICT (user_id, name) DO UPDATE SET "type" = 'stdio', config = $3"#,
         )
         .bind(self.user_id)
         .bind(&name)
@@ -119,7 +142,9 @@ impl Tool for ManageMcpSpell {
             tracing::warn!("failed to persist MCP '{}': {e}", name);
         }
 
-        let _ = self.tool_inject_tx.send(ToolInjection::Add(Box::new(tool.clone())));
+        let _ = self
+            .tool_inject_tx
+            .send(ToolInjection::Add(Box::new(tool.clone())));
         {
             let mut tools = self.mcp_tools.lock().await;
             tools.push((name.clone(), tool));
@@ -140,7 +165,12 @@ impl Tool for ManageMcpSpell {
             tools
                 .iter()
                 .find(|(n, _)| n == &name)
-                .map(|(_, t)| t.raw_tools().iter().map(|r| r.function.name.clone()).collect())
+                .map(|(_, t)| {
+                    t.raw_tools()
+                        .iter()
+                        .map(|r| r.function.name.clone())
+                        .collect()
+                })
                 .unwrap_or_default()
         };
 
@@ -149,13 +179,11 @@ impl Tool for ManageMcpSpell {
         }
 
         // Remove from DB.
-        if let Err(e) = sqlx::query(
-            "DELETE FROM user_mcps WHERE user_id = $1 AND name = $2"
-        )
-        .bind(self.user_id)
-        .bind(&name)
-        .execute(&self.pool)
-        .await
+        if let Err(e) = sqlx::query("DELETE FROM user_mcps WHERE user_id = $1 AND name = $2")
+            .bind(self.user_id)
+            .bind(&name)
+            .execute(&self.pool)
+            .await
         {
             tracing::warn!("failed to delete MCP '{}' from DB: {e}", name);
         }

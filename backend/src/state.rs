@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use crate::config::{Config, McpServerConfig};
 use ds_api::AgentEvent;
@@ -36,11 +37,21 @@ pub struct WsEvent {
 
 /// One entry per conversation.
 pub struct ChatEntry {
+    /// Owner user id for this conversation (used to target per-user injections).
+    pub user_id: Uuid,
+
     /// The agent when idle (not generating). Taken out during generation.
     pub agent: Option<DeepseekAgent>,
 
     /// Kept alive so the agent's interrupt receiver is never dropped.
     pub interrupt_tx: UnboundedSender<String>,
+
+    /// Channel used to inject/remove tools into the running agent.
+    pub tool_inject_tx: UnboundedSender<ToolInjection>,
+
+    /// Per-session user MCP tools (user-level MCPs loaded for this agent instance).
+    /// Stored so spells and management code can inspect or mutate session-scoped MCPs.
+    pub user_mcp_tools: Arc<tokio::sync::Mutex<Vec<(String, McpTool)>>>,
 
     /// Broadcast sender — the background generation task sends every event here.
     /// WebSocket handlers subscribe to receive live events.
@@ -76,16 +87,22 @@ pub struct ChatEntry {
 
 impl ChatEntry {
     fn new(
+        user_id: Uuid,
         agent: DeepseekAgent,
         interrupt_tx: UnboundedSender<String>,
+        tool_inject_tx: UnboundedSender<ToolInjection>,
+        user_mcp_tools: Arc<tokio::sync::Mutex<Vec<(String, McpTool)>>>,
         ask_user_pending: Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<String>>>>,
         spawn_tx: tokio::sync::broadcast::Sender<String>,
         abort_flag: Arc<AtomicBool>,
     ) -> Self {
         let (broadcast_tx, _) = broadcast::channel(BROADCAST_CAP);
         Self {
+            user_id,
             agent: Some(agent),
             interrupt_tx,
+            tool_inject_tx,
+            user_mcp_tools,
             broadcast_tx,
             event_log: Vec::new(),
             generating: false,
@@ -258,6 +275,7 @@ impl AppState {
         UnboundedSender<String>,
         Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<String>>>>,
         tokio::sync::mpsc::UnboundedSender<ToolInjection>,
+        Arc<tokio::sync::Mutex<Vec<(String, McpTool)>>>, // per-agent user mcp tools
         tokio::sync::broadcast::Sender<String>,
         Arc<AtomicBool>, // abort_flag
     ) {
@@ -360,10 +378,14 @@ impl AppState {
                         .and_then(|v| v.as_str())
                         .unwrap_or_default()
                         .to_string();
-                    match McpTool::http(&url).await {
-                        Ok(t) => t,
-                        Err(e) => {
+                    match tokio::time::timeout(Duration::from_secs(15), McpTool::http(&url)).await {
+                        Ok(Ok(t)) => t,
+                        Ok(Err(e)) => {
                             warn!("user MCP '{name}' failed to connect: {e}");
+                            continue;
+                        }
+                        Err(_) => {
+                            warn!("user MCP '{name}' connection timed out (15s), skipping");
                             continue;
                         }
                     }
@@ -384,10 +406,19 @@ impl AppState {
                         })
                         .unwrap_or_default();
                     let args_ref: Vec<&str> = args.iter().map(String::as_str).collect();
-                    match McpTool::stdio(&command, &args_ref).await {
-                        Ok(t) => t,
-                        Err(e) => {
+                    match tokio::time::timeout(
+                        Duration::from_secs(15),
+                        McpTool::stdio(&command, &args_ref),
+                    )
+                    .await
+                    {
+                        Ok(Ok(t)) => t,
+                        Ok(Err(e)) => {
                             warn!("user MCP '{name}' failed to start: {e}");
+                            continue;
+                        }
+                        Err(_) => {
+                            warn!("user MCP '{name}' startup timed out (15s), skipping");
                             continue;
                         }
                     }
@@ -407,6 +438,7 @@ impl AppState {
             interrupt_tx,
             ask_user_pending,
             inject_tx,
+            user_mcp_tools,
             spawn_tx,
             abort_flag,
         )
@@ -446,9 +478,29 @@ impl AppState {
         }
 
         // Slow path — build agent outside the lock.
-        let (agent, tx, ask_user_pending, _inject_tx, spawn_tx, abort_flag) =
+        // Defer building the agent until we resolve the conversation's user_id below.
+
+        // Resolve owner user_id for this conversation so we can tag the session entry.
+        let user_id: Uuid =
+            sqlx::query_scalar::<_, Uuid>("SELECT user_id FROM conversations WHERE id = $1")
+                .bind(conversation_id)
+                .fetch_optional(&self.pool)
+                .await
+                .unwrap_or(None)
+                .unwrap_or_default();
+
+        let (agent, tx, ask_user_pending, inject_tx, user_mcp_tools, spawn_tx, abort_flag) =
             self.build_agent(conversation_id).await;
-        let entry = ChatEntry::new(agent, tx, ask_user_pending, spawn_tx, abort_flag);
+        let entry = ChatEntry::new(
+            user_id,
+            agent,
+            tx,
+            inject_tx,
+            user_mcp_tools,
+            ask_user_pending,
+            spawn_tx,
+            abort_flag,
+        );
         let rx = entry.broadcast_tx.subscribe();
         let log = entry.event_log.clone();
         let generating = entry.generating;
@@ -486,11 +538,20 @@ impl AppState {
             Some(a) => a,
             None => {
                 // Agent missing (shouldn't happen but be defensive) — rebuild.
-                let (fresh_agent, fresh_tx, fresh_pending, _inject_tx, fresh_spawn_tx, fresh_abort) =
-                    self.build_agent(conversation_id).await;
+                let (
+                    fresh_agent,
+                    fresh_tx,
+                    fresh_pending,
+                    fresh_inject_tx,
+                    fresh_user_mcp_tools,
+                    fresh_spawn_tx,
+                    fresh_abort,
+                ) = self.build_agent(conversation_id).await;
                 let mut map = self.chats.lock().unwrap();
                 if let Some(entry) = map.get_mut(&conversation_id) {
                     entry.interrupt_tx = fresh_tx;
+                    entry.tool_inject_tx = fresh_inject_tx;
+                    entry.user_mcp_tools = fresh_user_mcp_tools;
                     entry.ask_user_pending = fresh_pending;
                     entry.spawn_tx = fresh_spawn_tx;
                     entry.abort_flag = Arc::clone(&fresh_abort);
@@ -700,12 +761,14 @@ async fn generation_loop(
             Some(a) => a,
             None => {
                 // Agent missing (defensive) — rebuild from history.
-                let (a, tx, pend, _inject_tx, new_spawn_tx, new_abort) =
+                let (a, tx, pend, new_inject_tx, new_user_mcp_tools, new_spawn_tx, new_abort) =
                     state.build_agent(conversation_id).await;
                 {
                     let mut map = state.chats.lock().unwrap();
                     if let Some(entry) = map.get_mut(&conversation_id) {
                         entry.interrupt_tx = tx;
+                        entry.tool_inject_tx = new_inject_tx;
+                        entry.user_mcp_tools = new_user_mcp_tools;
                         entry.ask_user_pending = pend;
                         entry.spawn_tx = new_spawn_tx;
                         entry.abort_flag = Arc::clone(&new_abort);
