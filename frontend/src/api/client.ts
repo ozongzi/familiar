@@ -1,6 +1,6 @@
 // ─── Core fetch wrapper ───────────────────────────────────────────────────────
 
-const BASE = "";
+const BASE = "https://familiar.fhmmt.games";
 
 async function request<T>(
   method: string,
