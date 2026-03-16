@@ -1,16 +1,15 @@
-use std::{collections::HashMap, sync::Arc, sync::atomic::AtomicBool};
+use std::{sync::Arc, sync::atomic::AtomicBool};
 
+use crate::config::ModelConfig;
+
+use super::a2a_spell::A2aSpell;
 use ds_api::{AgentEvent, DeepseekAgent, McpTool, tool, tool_trait::ToolBundle};
 use futures::StreamExt;
-use serde_json::{Value, json};
+use serde_json::json;
 use tokio::sync::Mutex;
-use super::a2a_spell::A2aSpell;
 
 pub struct SpawnSpell {
-    pub api_key: String,
-    pub api_base: String,
-    pub model_name: String,
-    pub extra_body: HashMap<String, Value>,
+    pub cheap_model: ModelConfig,
     pub subagent_prompt: Option<String>,
     /// 与主 Agent 共享的 MCP 工具列表，子 Agent 全部继承
     pub mcp_tools: Arc<Mutex<Vec<(String, McpTool)>>>,
@@ -22,31 +21,36 @@ pub struct SpawnSpell {
 
 #[tool]
 impl Tool for SpawnSpell {
-    /// 启动独立子 Agent 完成子目标，子 Agent 有独立上下文，跑完返回结果摘要。
+    /// 启动独立子 Agent 完成子目标，使用 DeepSeek 模型，子 Agent 有独立上下文，跑完返回结果摘要。
     /// 适合大量搜索 / fetch / 探索但不希望污染主上下文的任务（如 Search Agent）。
     /// 子 Agent 拥有与主 Agent 相同的工具集（file / shell / search / a2a + 所有 MCP）。
     ///
     /// description: 本次操作意图（供 UI 渲染，可不填）
     /// goal: 子 Agent 的目标，尽量具体
-    async fn spawn(&self, description: Option<String>, goal: String) -> Value {
+    /// reasoner: 可选，默认为 false 若为 true 则使用 deepseek-reasoner 模型，适合需要复杂推理的子目标，否则使用 deepseek-chat 模型，适合一般对话和工具调用的子目标
+    async fn spawn(
+        &self,
+        description: Option<String>,
+        goal: String,
+        reasoner: Option<bool>,
+    ) -> Value {
         let _ = description;
         let mcp_snapshot: Vec<(String, McpTool)> = self.mcp_tools.lock().await.clone();
 
         let mut builder = DeepseekAgent::custom(
-            self.api_key.clone(),
-            self.api_base.clone(),
-            self.model_name.clone(),
+            self.cheap_model.api_key.clone(),
+            self.cheap_model.api_base.clone(),
+            if reasoner == Some(true) {
+                "deepseek-reasoner".to_owned()
+            } else {
+                self.cheap_model.name.clone()
+            },
         )
-            .with_streaming()
-            .with_system_prompt(
-                self.subagent_prompt.clone().unwrap_or("".to_string()),
-            )
-            .add_tool(
-                ToolBundle::new()
-                    .add(A2aSpell),
-            );
+        .with_streaming()
+        .with_system_prompt(self.subagent_prompt.clone().unwrap_or("".to_string()))
+        .add_tool(ToolBundle::new().add(A2aSpell));
 
-        for (k, v) in &self.extra_body {
+        for (k, v) in &self.cheap_model.extra_body {
             builder = builder.extra_field(k.clone(), v.clone());
         }
 
@@ -74,7 +78,7 @@ impl Tool for SpawnSpell {
                             "content": t,
                             "source": "spawn",
                         })
-                            .to_string(),
+                        .to_string(),
                     );
                 }
                 Ok(AgentEvent::ToolCall(c)) => {
@@ -86,7 +90,7 @@ impl Tool for SpawnSpell {
                             "delta": c.delta,
                             "source": "spawn",
                         })
-                            .to_string(),
+                        .to_string(),
                     );
                 }
                 Ok(AgentEvent::ToolResult(res)) => {
@@ -98,7 +102,7 @@ impl Tool for SpawnSpell {
                             "result": res.result,
                             "source": "spawn",
                         })
-                            .to_string(),
+                        .to_string(),
                     );
                 }
                 Ok(AgentEvent::ReasoningToken(_)) => {}

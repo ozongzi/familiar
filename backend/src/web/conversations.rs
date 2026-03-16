@@ -148,22 +148,23 @@ pub async fn auto_title(
         return Err(AppError::not_found("对话不存在"));
     }
 
-    use ds_api::raw::request::message::{Message};
+    use ds_api::raw::request::message::Message;
     use ds_api::{ApiClient, ApiRequest};
 
-    let client =
-        ApiClient::new(state.deepseek_token.clone()).with_base_url(state.model_api_base.clone());
+    let client = ApiClient::new(state.cheap_model.api_key.clone())
+        .with_base_url(state.cheap_model.api_base.clone());
 
-    let prompt = Message::user(
-        &format!("根据用户发送的第一条消息 {}，生成一个简短的对话标题（5到10个字）。只返回标题文字本身，不加引号、标点或任何解释。", &req.prompt),
-    );
+    let prompt = Message::user(&format!(
+        "根据用户发送的第一条消息 {}，生成一个简短的对话标题（5到10个字）。只返回标题文字本身，不加引号、标点或任何解释。",
+        &req.prompt
+    ));
 
     let mut api_req = ApiRequest::builder()
-        .with_model(state.model_name.clone())
+        .with_model(state.cheap_model.name.clone())
         .messages(vec![prompt])
         .max_tokens(32);
 
-    for (k, v) in state.model_extra_body.iter() {
+    for (k, v) in state.frontier_model.extra_body.iter() {
         api_req.add_extra_field(k, v.clone());
     }
 

@@ -15,7 +15,8 @@ pub struct Config {
     pub public_path: String,
     pub artifacts_path: String,
     pub secrets: Secrets,
-    pub model: ModelConfig,
+    pub frontier_model: ModelConfig,
+    pub cheap_model: ModelConfig,
     pub embedding: ModelConfig,
     pub server: ServerConfig,
     #[serde(default)]
@@ -33,7 +34,7 @@ pub struct Secrets {
 }
 
 /// LLM or embedding model configuration.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct ModelConfig {
     pub api_key: String,
     pub api_base: String,
@@ -69,7 +70,7 @@ pub enum McpServerConfig {
     Http {
         name: String,
         url: String,
-    }
+    },
 }
 
 /// A catalogued MCP server available for on-demand installation by the agent.
@@ -83,7 +84,6 @@ pub struct McpCatalogEntry {
     #[serde(default)]
     pub args: Vec<String>,
 }
-
 
 impl Config {
     pub fn load() -> Self {

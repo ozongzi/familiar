@@ -1,29 +1,27 @@
 mod a2a_spell;
 mod history_spell;
 mod manage_mcp_spell;
-mod spawn_spell;
 mod skill_spell;
+mod spawn_spell;
 mod ui_spells;
 
-use std::collections::HashMap;
+use ds_api::ToolInjection;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
-use ds_api::ToolInjection;
 
-pub use ds_api::tool_trait::ToolBundle;
 use ds_api::McpTool;
-use serde_json::Value;
+pub use ds_api::tool_trait::ToolBundle;
 use uuid::Uuid;
 
+use crate::config::ModelConfig;
+use crate::db::Db;
+use crate::embedding::EmbeddingClient;
 use a2a_spell::A2aSpell;
 use history_spell::HistorySpell;
 use manage_mcp_spell::ManageMcpSpell;
-use spawn_spell::SpawnSpell;
 use skill_spell::SkillSpell;
+use spawn_spell::SpawnSpell;
 use ui_spells::UiSpells;
-use crate::db::Db;
-use crate::embedding::EmbeddingClient;
-
 
 // ── Spell factory ─────────────────────────────────────────────────────────────
 
@@ -35,10 +33,7 @@ pub struct SpellDeps {
     pub ask_pending: Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<String>>>>,
     pub subagent_prompt: Option<String>,
     // SpawnSpell
-    pub api_key: String,
-    pub api_base: String,
-    pub model_name: String,
-    pub extra_body: HashMap<String, Value>,
+    pub cheap_model: ModelConfig,
     pub mcp_tools: Arc<tokio::sync::Mutex<Vec<(String, McpTool)>>>,
     pub spawn_tx: tokio::sync::broadcast::Sender<String>,
     // HistorySpell
@@ -56,18 +51,17 @@ pub struct SpellDeps {
 /// Build the complete built-in spell bundle from the given dependencies.
 /// Returns a `ToolBundle` ready to be passed to `builder.add_tool(...)`.
 pub fn build_all_spells(deps: SpellDeps) -> ToolBundle {
-    let bundle = ToolBundle::new()
-        .add(SkillSpell { skills_dir: std::path::PathBuf::from("/srv/familiar/skills") });
+    let bundle = ToolBundle::new().add(SkillSpell {
+        skills_dir: std::path::PathBuf::from("/srv/familiar/skills"),
+    });
 
-    bundle.add(A2aSpell)
+    bundle
+        .add(A2aSpell)
         .add(UiSpells {
             ask_pending: deps.ask_pending,
         })
         .add(SpawnSpell {
-            api_key: deps.api_key,
-            api_base: deps.api_base,
-            model_name: deps.model_name,
-            extra_body: deps.extra_body,
+            cheap_model: deps.cheap_model,
             subagent_prompt: deps.subagent_prompt,
             mcp_tools: Arc::clone(&deps.mcp_tools),
             broadcast_tx: deps.spawn_tx,

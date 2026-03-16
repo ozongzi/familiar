@@ -2,13 +2,12 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use crate::config::{Config, McpServerConfig};
+use crate::config::{Config, McpServerConfig, ModelConfig};
 use ds_api::AgentEvent;
 use ds_api::DeepseekAgent;
 use ds_api::McpTool;
 use ds_api::Tool as _;
 use ds_api::ToolInjection;
-use serde_json::Value;
 use sqlx::PgPool;
 use tokio::sync::broadcast;
 use tokio::sync::mpsc::UnboundedSender;
@@ -89,11 +88,13 @@ impl ChatEntry {
     fn new(
         user_id: Uuid,
         agent: DeepseekAgent,
-        interrupt_tx: UnboundedSender<String>,
-        tool_inject_tx: UnboundedSender<ToolInjection>,
+        (interrupt_tx, tool_inject_tx, spawn_tx): (
+            UnboundedSender<String>,
+            UnboundedSender<ToolInjection>,
+            tokio::sync::broadcast::Sender<String>,
+        ),
         user_mcp_tools: Arc<tokio::sync::Mutex<Vec<(String, McpTool)>>>,
         ask_user_pending: Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<String>>>>,
-        spawn_tx: tokio::sync::broadcast::Sender<String>,
         abort_flag: Arc<AtomicBool>,
     ) -> Self {
         let (broadcast_tx, _) = broadcast::channel(BROADCAST_CAP);
@@ -142,18 +143,9 @@ pub struct AppState {
     /// Created by `create_stream`, consumed by `resolve_stream`.
     pub streams: Arc<Mutex<HashMap<Uuid, (Uuid, Uuid)>>>,
 
-    /// DeepSeek API key, used when constructing new agents.
-    pub deepseek_token: String,
+    pub frontier_model: ModelConfig,
 
-    /// Base URL for the DeepSeek-compatible API.
-    pub model_api_base: String,
-
-    /// Model name to use for every agent turn.
-    pub model_name: String,
-
-    /// Extra key/value pairs to inject into each agent via `extra_field`.
-    /// Populated from configuration's `model.extra_body` (if present).
-    pub model_extra_body: HashMap<String, Value>,
+    pub cheap_model: ModelConfig,
 
     /// Optional system prompt applied to every freshly created agent.
     pub system_prompt: Option<String>,
@@ -181,11 +173,8 @@ impl AppState {
         Self {
             chats: Arc::new(Mutex::new(HashMap::new())),
             streams: Arc::new(Mutex::new(HashMap::new())),
-            deepseek_token: cfg.model.api_key.clone(),
-            model_api_base: cfg.model.api_base.clone(),
-            model_name: cfg.model.name.clone(),
-            // Extra model request body fields (JSON values) loaded directly from config.
-            model_extra_body: cfg.model.extra_body.clone(),
+            frontier_model: cfg.frontier_model.clone(),
+            cheap_model: cfg.cheap_model.clone(),
             system_prompt: cfg.system_prompt(),
             subagent_prompt: cfg.subagent_prompt(),
             pool,
@@ -234,7 +223,7 @@ impl AppState {
                     // so they are injected into the subprocess without touching the parent process.
                     let env_args: Vec<String>;
                     let (cmd, args): (&str, Vec<&str>) = if env.is_empty() {
-                        (&command, args.iter().map(String::as_str).collect())
+                        (command, args.iter().map(String::as_str).collect())
                     } else {
                         env_args = env
                             .iter()
@@ -322,14 +311,14 @@ impl AppState {
         // We need inject_tx before building SpellDeps, so attach the tool-inject
         // channel first, then clone the tx for spells.
         let mut base = DeepseekAgent::custom(
-            self.deepseek_token.clone(),
-            self.model_api_base.clone(),
-            self.model_name.clone(),
+            self.frontier_model.api_key.clone(),
+            self.frontier_model.api_base.clone(),
+            self.frontier_model.name.clone(),
         )
         .with_streaming()
         .with_history(history);
 
-        for (k, v) in &self.model_extra_body {
+        for (k, v) in &self.frontier_model.extra_body {
             base = base.extra_field(k.clone(), v.clone());
         }
 
@@ -347,10 +336,7 @@ impl AppState {
         let spell_deps = SpellDeps {
             subagent_prompt: self.subagent_prompt.clone(),
             ask_pending: Arc::clone(&ask_user_pending),
-            api_key: self.deepseek_token.clone(),
-            api_base: self.model_api_base.clone(),
-            model_name: self.model_name.clone(),
-            extra_body: self.model_extra_body.clone(),
+            cheap_model: self.cheap_model.clone(),
             mcp_tools: Arc::clone(&user_mcp_tools),
             spawn_tx: spawn_tx.clone(),
             db: self.db.clone(),
@@ -494,11 +480,9 @@ impl AppState {
         let entry = ChatEntry::new(
             user_id,
             agent,
-            tx,
-            inject_tx,
+            (tx, inject_tx, spawn_tx),
             user_mcp_tools,
             ask_user_pending,
-            spawn_tx,
             abort_flag,
         );
         let rx = entry.broadcast_tx.subscribe();
