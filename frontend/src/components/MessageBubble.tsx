@@ -260,17 +260,44 @@ function ToolCallBubble({
   const result = bubble.result as Record<string, unknown> | null;
 
   // Detect present result
-  const fileResult =
-    bubble.result &&
-    typeof bubble.result === "object" &&
-    (bubble.result as Record<string, unknown>)["display"] === "file"
-      ? (bubble.result as {
-          display: "file";
-          filename: string;
-          path: string;
-          size: number;
-        })
-      : null;
+  // The backend may return either a direct object like { display: "file", filename, path, size }
+  // or a wrapper like { text: "{\"display\":\"file\",...}", type: "text" } (see present_file).
+  let fileResult: {
+    display: "file";
+    filename: string;
+    path: string;
+    size: number;
+  } | null = null;
+  if (bubble.result && typeof bubble.result === "object") {
+    const maybe = bubble.result as Record<string, unknown>;
+    // direct object case
+    if (maybe["display"] === "file") {
+      fileResult = maybe as {
+        display: "file";
+        filename: string;
+        path: string;
+        size: number;
+      };
+    } else if (typeof maybe["text"] === "string") {
+      // wrapped string case: try to parse the text field as JSON
+      try {
+        const parsed = JSON.parse(maybe["text"] as string) as Record<
+          string,
+          unknown
+        >;
+        if (parsed && parsed["display"] === "file") {
+          fileResult = parsed as {
+            display: "file";
+            filename: string;
+            path: string;
+            size: number;
+          };
+        }
+      } catch {
+        // ignore parse errors and treat as non-file result
+      }
+    }
+  }
 
   // Terminal tools: bash, run_ts, run_py
   const isTerminal =
@@ -279,7 +306,7 @@ function ToolCallBubble({
     bubble.name === "run_py";
 
   // Edit tools: edit / write
-  const isReplaceTool = bubble.name === "edit";
+  const isReplaceTool = bubble.name === "edit_block";
   const isEditTool = isReplaceTool || bubble.name === "write";
 
   // Diff view only shown when edit completed successfully with parsed args
@@ -359,7 +386,14 @@ function ToolCallBubble({
     if (!bubble.argsRaw) return null;
     const field = isReplaceTool ? "new_str" : "content";
     return extractArgsField(bubble.argsRaw, field);
-  }, [isEditTool, isReplaceTool, bubble.pending, bubble.argsRaw, args]);
+  }, [
+    isEditTool,
+    isReplaceTool,
+    bubble.pending,
+    bubble.argsRaw,
+    args,
+    bubble.name,
+  ]);
 
   // ── Extract question text from streaming argsRaw (ask) ───────────────────
   const streamingAskQuestion = useMemo(() => {
