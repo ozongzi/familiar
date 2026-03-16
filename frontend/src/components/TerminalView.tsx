@@ -9,7 +9,15 @@ interface Props {
 }
 
 function toolLabel(toolName: string, command?: string): string {
-  if (toolName === "execute" && command) return command;
+  if (
+    (toolName === "execute" ||
+      toolName === "execute_command" ||
+      toolName === "start_process" ||
+      toolName === "bash") &&
+    command
+  ) {
+    return command;
+  }
   if (toolName === "run_ts") return "bun script.ts";
   if (toolName === "run_py") return "uv run script.py";
   return toolName;
