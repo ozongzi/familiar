@@ -393,7 +393,6 @@ function ToolCallBubble({
               >
                 {toolLabel}
               </span>
-              <span className={styles.toolInkPulse} aria-hidden="true" />
             </div>
           </div>
         </div>
@@ -453,9 +452,7 @@ function ToolCallBubble({
             >
               {toolLabel}
             </span>
-            {bubble.pending ? (
-              <span className={styles.toolInkPulse} aria-hidden="true" />
-            ) : (
+            {!bubble.pending && (
               <span className={styles.toolChevron} aria-hidden="true">
                 <ChevronIcon expanded={expanded} />
               </span>
@@ -509,9 +506,7 @@ function ToolCallBubble({
             >
               {toolLabel}
             </span>
-            {bubble.pending ? (
-              <span className={styles.toolInkPulse} aria-hidden="true" />
-            ) : (
+            {!bubble.pending && (
               <span className={styles.toolChevron} aria-hidden="true">
                 <ChevronIcon expanded={expanded} />
               </span>
@@ -651,9 +646,7 @@ function ToolCallBubble({
           >
             {toolLabel}
           </span>
-          {bubble.pending ? (
-            <span className={styles.toolInkPulse} aria-hidden="true" />
-          ) : (
+          {!bubble.pending && (
             <span className={styles.toolChevron} aria-hidden="true">
               <ChevronIcon expanded={expanded} />
             </span>
