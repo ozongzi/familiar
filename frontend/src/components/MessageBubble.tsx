@@ -11,6 +11,7 @@ import { MarkdownRenderer } from "./MarkdownRenderer";
 import { DiffView } from "./DiffView";
 import { TerminalView } from "./TerminalView";
 import type { ChatBubble, UploadBubble } from "../api/types";
+import { buildToolArgsView } from "./messageBubble.toolParsing";
 import styles from "./MessageBubble.module.css";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -174,54 +175,6 @@ function UploadChatBubble({ bubble }: { bubble: UploadBubble }) {
 
 // ─── Tool call bubble ─────────────────────────────────────────────────────────
 
-// ── Helper: extract a string field from a partial streaming JSON args string ─
-function extractArgsField(raw: string, key: string): string | null {
-  const keyPattern = new RegExp(`"${key}"\\s*:\\s*"`);
-  const keyMatch = raw.match(keyPattern);
-  if (!keyMatch || keyMatch.index === undefined) return null;
-
-  const valueStart = keyMatch.index + keyMatch[0].length;
-  const rest = raw.slice(valueStart);
-
-  let value = "";
-  let i = 0;
-  while (i < rest.length) {
-    const ch = rest[i];
-    if (ch === "\\") {
-      if (i + 1 < rest.length) {
-        const next = rest[i + 1];
-        const escapes: Record<string, string> = {
-          '"': '"',
-          "\\": "\\",
-          "/": "/",
-          b: "\b",
-          f: "\f",
-          n: "\n",
-          r: "\r",
-          t: "\t",
-        };
-        if (next === "u" && i + 5 < rest.length) {
-          const hex = rest.slice(i + 2, i + 6);
-          if (/^[0-9a-fA-F]{4}$/.test(hex)) {
-            value += String.fromCharCode(parseInt(hex, 16));
-            i += 6;
-            continue;
-          }
-        }
-        value += escapes[next] ?? next;
-        i += 2;
-      } else {
-        break;
-      }
-    } else if (ch === '"') {
-      return value;
-    } else {
-      value += ch;
-      i++;
-    }
-  }
-  return value.length > 0 ? value : null;
-}
 function ToolCallBubble({
   bubble,
   onAnswer,
@@ -249,14 +202,8 @@ function ToolCallBubble({
 
   // ── All declarations and hooks must come before any early returns ──────────
 
-  const args = useMemo(() => {
-    if (!bubble.argsRaw) return null;
-    try {
-      return JSON.parse(bubble.argsRaw) as Record<string, unknown>;
-    } catch {
-      return null;
-    }
-  }, [bubble.argsRaw]);
+  const argsView = useMemo(() => buildToolArgsView(bubble), [bubble]);
+  const args = argsView.parsed;
   const result = bubble.result as Record<string, unknown> | null;
 
   // Detect present result
@@ -300,10 +247,13 @@ function ToolCallBubble({
   }
 
   // Terminal tools: bash, run_ts, run_py
+  const isDesktopCommanderTerminal = bubble.name === "execute_command";
+  // Terminal tools: bash, run_ts, run_py, Desktop Commander execute_command
   const isTerminal =
     bubble.name === "bash" ||
     bubble.name === "run_ts" ||
-    bubble.name === "run_py";
+    bubble.name === "run_py" ||
+    isDesktopCommanderTerminal;
 
   // Edit tools: edit / write
   const isReplaceTool = bubble.name === "edit_block";
@@ -315,18 +265,18 @@ function ToolCallBubble({
     isEditTool &&
     result?.status === "success" &&
     ((isReplaceTool &&
-      args?.old_str !== undefined &&
-      args?.new_str !== undefined) ||
+      argsView.oldStr !== null &&
+      argsView.editContent !== null) ||
       (bubble.name === "write" &&
-        args?.path !== undefined &&
-        args?.content !== undefined));
+        argsView.path !== null &&
+        argsView.editContent !== null));
 
   const isSpawn = bubble.name === "spawn";
   const isInline = isTerminal || isEditTool;
 
   // Streaming args display (generic view only)
-  const argsStr = args ? JSON.stringify(args, null, 2) : bubble.argsRaw || "";
-  const argsStreaming = !args && bubble.argsRaw.length > 0;
+  const argsStr = args ? JSON.stringify(args, null, 2) : argsView.raw;
+  const argsStreaming = !args && argsView.raw.length > 0;
   const resultStr =
     !isInline && bubble.result && !fileResult
       ? JSON.stringify(bubble.result, null, 2)
@@ -334,81 +284,13 @@ function ToolCallBubble({
 
   const spawnEvents = bubble.name === "spawn" ? (bubble.spawnEvents ?? []) : [];
 
-  // ── Extract script content from streaming argsRaw (run_py / run_ts) ───────
-  const streamingScript = useMemo(() => {
-    if (bubble.name !== "run_py" && bubble.name !== "run_ts") return null;
-    // Show during streaming (pending) or after completion (args parsed).
-    if (bubble.pending) {
-      if (!bubble.argsRaw) return null;
-      return extractArgsField(bubble.argsRaw, "script");
-    }
-    // After completion, prefer the parsed args value.
-    return args?.script ? String(args.script) : null;
-  }, [bubble.pending, bubble.name, bubble.argsRaw, args]);
-
-  // ── Extract command content from streaming argsRaw (bash) ─────────────────
-  const streamingCommand = useMemo(() => {
-    if (bubble.name !== "bash") return null;
-    if (!bubble.argsRaw) return null;
-    // extractArgsField works even with incomplete/corrupt JSON (streaming or damaged)
-    const extracted = extractArgsField(bubble.argsRaw, "command");
-    if (extracted) return extracted;
-    // Fallback to parsed args
-    return args?.command ? String(args.command) : null;
-  }, [bubble.name, bubble.argsRaw, args]);
-
-  // ── Extract fields for edit tools (edit / write) ───────────────────────────
-  const streamingEditPath = useMemo(() => {
-    if (!isEditTool) return null;
-    if (!bubble.pending) return args?.path ? String(args.path) : null;
-    if (!bubble.argsRaw) return null;
-    return extractArgsField(bubble.argsRaw, "path");
-  }, [isEditTool, bubble.pending, bubble.argsRaw, args]);
-
-  // old_str (edit) — used for diff preview as soon as it arrives
-  const streamingOldStr = useMemo(() => {
-    if (!isReplaceTool) return null;
-    if (!bubble.pending) return args?.old_str ? String(args.old_str) : null;
-    if (!bubble.argsRaw) return null;
-    return extractArgsField(bubble.argsRaw, "old_str");
-  }, [isReplaceTool, bubble.pending, bubble.argsRaw, args]);
-
-  // new_str / content — arrives after old_str; null means not yet streamed
-  const streamingEditContent = useMemo(() => {
-    if (!isEditTool) return null;
-    if (!bubble.pending) {
-      if (isReplaceTool)
-        return args?.new_str !== undefined ? String(args.new_str) : null;
-      if (bubble.name === "write")
-        return args?.content !== undefined ? String(args.content) : null;
-      return null;
-    }
-    if (!bubble.argsRaw) return null;
-    const field = isReplaceTool ? "new_str" : "content";
-    return extractArgsField(bubble.argsRaw, field);
-  }, [
-    isEditTool,
-    isReplaceTool,
-    bubble.pending,
-    bubble.argsRaw,
-    args,
-    bubble.name,
-  ]);
-
-  // ── Extract question text from streaming argsRaw (ask) ───────────────────
-  const streamingAskQuestion = useMemo(() => {
-    if (bubble.name !== "ask") return null;
-    if (args?.question) return String(args.question);
-    if (!bubble.argsRaw) return null;
-    return extractArgsField(bubble.argsRaw, "question");
-  }, [bubble.name, bubble.argsRaw, args]);
-
-  // ── Extract options with runtime array check (ask) ─────────────────────
-  const askOptions = useMemo(() => {
-    if (bubble.name !== "ask") return undefined;
-    const opts = args?.options;
-    return Array.isArray(opts) ? (opts as string[]) : undefined;
-  }, [bubble.name, args]);
+  const streamingScript = argsView.script;
+  const streamingCommand = argsView.command;
+  const streamingEditPath = argsView.path;
+  const streamingOldStr = argsView.oldStr;
+  const streamingEditContent = argsView.editContent;
+  const streamingAskQuestion = argsView.question;
+  const askOptions = argsView.options;
 
   // Header label: prefer the model-written description (arrives early in the
   // stream because description is always the first parameter).  Fall back to
@@ -605,9 +487,9 @@ function ToolCallBubble({
               {isEditTool && !bubble.pending && isDiff && isReplaceTool && (
                 <DiffView
                   mode="str_replace"
-                  path={String(args!.path)}
-                  oldStr={String(args!.old_str)}
-                  newStr={String(args!.new_str)}
+                  path={streamingEditPath ?? ""}
+                  oldStr={streamingOldStr ?? ""}
+                  newStr={streamingEditContent ?? ""}
                 />
               )}
               {isEditTool &&
@@ -616,8 +498,8 @@ function ToolCallBubble({
                 bubble.name === "write" && (
                   <DiffView
                     mode="write"
-                    path={String(args!.path)}
-                    newStr={String(args!.content)}
+                    path={streamingEditPath ?? ""}
+                    newStr={streamingEditContent ?? ""}
                   />
                 )}
               {/* edit tools: fallback — 失败（error 字段）或 args 解析不完整时显示原始结果 */}
@@ -643,8 +525,9 @@ function ToolCallBubble({
                 </div>
               )}
 
-              {/* bash: sh-highlighted command preview (streaming and done) */}
-              {bubble.name === "bash" && streamingCommand !== null && (
+              {/* bash / Desktop Commander: sh-highlighted command preview */}
+              {(bubble.name === "bash" || isDesktopCommanderTerminal) &&
+                streamingCommand !== null && (
                 <div className={styles.scriptPreview}>
                   <MarkdownRenderer
                     content={`\`\`\`sh\n${streamingCommand}${argsStreaming ? "█" : ""}\n\`\`\``}
@@ -652,9 +535,9 @@ function ToolCallBubble({
                 </div>
               )}
 
-              {/* bash: fallback raw args while streaming if command field not yet present */}
+              {/* bash / Desktop Commander: fallback raw args while streaming */}
               {bubble.pending &&
-                bubble.name === "bash" &&
+                (bubble.name === "bash" || isDesktopCommanderTerminal) &&
                 streamingCommand === null &&
                 argsStr && (
                   <div className={styles.toolSection}>
@@ -671,7 +554,7 @@ function ToolCallBubble({
               {!bubble.pending && isTerminal && (
                 <TerminalView
                   toolName={bubble.name}
-                  command={args?.command ? String(args.command) : undefined}
+                  command={streamingCommand ?? undefined}
                   stdout={result?.stdout ? String(result.stdout) : undefined}
                   stderr={result?.stderr ? String(result.stderr) : undefined}
                   exitCode={

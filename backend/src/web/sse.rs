@@ -1,14 +1,16 @@
+use std::collections::HashSet;
 use std::convert::Infallible;
+use std::sync::Arc;
 
 use async_stream::stream;
 use axum::{
-    Json,
     extract::{Path, State},
     http::StatusCode,
     response::{
-        IntoResponse,
         sse::{Event, KeepAlive, Sse},
+        IntoResponse,
     },
+    Json,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -17,7 +19,7 @@ use tokio::sync::broadcast;
 use uuid::Uuid;
 
 use crate::errors::AppError;
-use crate::web::{AppState, auth::AuthUser};
+use crate::web::{auth::AuthUser, AppState};
 
 // ── Request body types ────────────────────────────────────────────────────────
 
@@ -165,8 +167,14 @@ pub async fn sse_handler(
         .unwrap_or(false);
 
     let s = stream! {
+        // Track replayed Arc pointers so we can skip overlap duplicates from live_rx.
+        // state.attach() subscribes first then snapshots log, so events emitted in between
+        // can appear in both the replay and live channel.
+        let mut replayed_ptrs: HashSet<usize> = HashSet::new();
+
         // ── Replay the event log ─────────────────────────────────────────────
         for ev in &event_log {
+            replayed_ptrs.insert(Arc::as_ptr(ev) as usize);
             yield Ok::<Event, Infallible>(Event::default().data(ev.payload.clone()));
         }
 
@@ -179,6 +187,10 @@ pub async fn sse_handler(
         loop {
             match live_rx.recv().await {
                 Ok(ev) => {
+                    let ptr = Arc::as_ptr(&ev) as usize;
+                    if replayed_ptrs.remove(&ptr) {
+                        continue;
+                    }
                     let terminal = is_terminal(&ev.payload);
                     yield Ok(Event::default().data(ev.payload.clone()));
                     if terminal {
@@ -201,7 +213,9 @@ pub async fn sse_handler(
                         .map(|ev| is_terminal(&ev.payload))
                         .unwrap_or(false);
 
+                    replayed_ptrs.clear();
                     for ev in &new_log {
+                        replayed_ptrs.insert(Arc::as_ptr(ev) as usize);
                         yield Ok(Event::default().data(ev.payload.clone()));
                     }
 
