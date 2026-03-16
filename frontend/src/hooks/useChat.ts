@@ -16,6 +16,25 @@ function uid() {
   return Math.random().toString(36).slice(2);
 }
 
+const STREAM_ID_KEY_PREFIX = "familiar_stream_id:";
+
+function streamStorageKey(conversationId: string) {
+  return `${STREAM_ID_KEY_PREFIX}${conversationId}`;
+}
+
+function persistStreamId(conversationId: string, streamId: string) {
+  sessionStorage.setItem(streamStorageKey(conversationId), streamId);
+}
+
+function readPersistedStreamId(conversationId: string): string | null {
+  return sessionStorage.getItem(streamStorageKey(conversationId));
+}
+
+function clearPersistedStreamId(conversationId: string | null) {
+  if (!conversationId) return;
+  sessionStorage.removeItem(streamStorageKey(conversationId));
+}
+
 function extractDescription(raw: string): string | null {
   const m = raw.match(/"description"\s*:\s*"((?:[^"\\]|\\.)*)(")?/);
   if (!m) return null;
@@ -360,6 +379,7 @@ export function useChat(
       } else if (event.type === "aborted") {
         sealActiveText();
         updateStatus("idle");
+        clearPersistedStreamId(attachedConvRef.current);
         return true;
       } else if (event.type === "reasoning_token") {
         const key = ensureActiveText();
@@ -470,8 +490,10 @@ export function useChat(
       } else if (event.type === "done") {
         sealActiveText();
         updateStatus("idle");
+        clearPersistedStreamId(attachedConvRef.current);
         return true;
       } else if (event.type === "error") {
+        clearPersistedStreamId(attachedConvRef.current);
         const key = activeTextKeyRef.current;
         if (key) {
           setBubbles((prev) => prev.filter((b) => b.key !== key));
@@ -543,9 +565,10 @@ export function useChat(
   // ─── Reattach ─────────────────────────────────────────────────────────────
 
   const reattach = useCallback((convId: string, tok: string) => {
-    // Only reattach if we have an active stream_id from this session
-    const streamId = streamIdRef.current;
+    // Reattach using in-memory stream id first; fall back to persisted id (for refresh recovery).
+    const streamId = streamIdRef.current ?? readPersistedStreamId(convId);
     if (!streamId) return;
+    streamIdRef.current = streamId;
     if (attachedConvRef.current === convId) return;
 
     attachedConvRef.current = convId;
@@ -579,6 +602,7 @@ export function useChat(
         if (finished) {
           reattachingRef.current = false;
           streamIdRef.current = null;
+          clearPersistedStreamId(convId);
           abortControllerRef.current = null;
         }
       },
@@ -606,6 +630,7 @@ export function useChat(
         abortControllerRef.current?.abort();
         reattachingRef.current = false;
         abortControllerRef.current = null;
+        clearPersistedStreamId(attachedConvRef.current);
         attachedConvRef.current = null;
         streamIdRef.current = null;
       }
@@ -663,6 +688,7 @@ export function useChat(
 
       streamIdRef.current = streamId;
       attachedConvRef.current = convId;
+      persistStreamId(convId, streamId);
       updateStatus("streaming");
 
       const ac = new AbortController();
@@ -684,6 +710,7 @@ export function useChat(
           const finished = processEventRef.current(event);
           if (finished) {
             streamIdRef.current = null;
+            clearPersistedStreamId(convId);
             abortControllerRef.current = null;
             ac.abort();
           }
@@ -701,7 +728,6 @@ export function useChat(
           }
           updateStatus("error");
           setErrorMsg(err.message ?? "连接出错，请重试");
-          streamIdRef.current = null;
           abortControllerRef.current = null;
         },
         ac.signal,
