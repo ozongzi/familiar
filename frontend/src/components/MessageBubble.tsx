@@ -308,17 +308,22 @@ function ToolCallBubble({
     bubble.name === "write_pdf";
   const isEditTool = isReplaceTool || isWriteTool;
 
-  // Diff view only shown when edit completed successfully with parsed args
-  const isDiff =
+  // Diff view rules:
+  // - replace tools still require explicit success status + complete old/new args.
+  // - write tools rely on parsed args (path + content), because many providers
+  //   return text-shaped result payloads without `status: "success"`.
+  const hasReplaceDiff =
     !bubble.pending &&
-    isEditTool &&
+    isReplaceTool &&
     result?.status === "success" &&
-    ((isReplaceTool &&
-      argsView.oldStr !== null &&
-      argsView.editContent !== null) ||
-      (isWriteTool &&
-        argsView.path !== null &&
-        argsView.editContent !== null));
+    argsView.oldStr !== null &&
+    argsView.editContent !== null;
+  const hasWriteDiff =
+    !bubble.pending &&
+    isWriteTool &&
+    argsView.path !== null &&
+    argsView.editContent !== null;
+  const isDiff = hasReplaceDiff || hasWriteDiff;
 
   const isSpawn = bubble.name === "spawn";
   const isInline = isTerminal || isEditTool;
@@ -383,8 +388,12 @@ function ToolCallBubble({
               <span className={styles.toolIcon} aria-hidden="true">
                 <ToolRunningIcon />
               </span>
-              <span className={styles.toolName}>{toolLabel}</span>
-              <span className={styles.toolSpinner} aria-hidden="true" />
+              <span
+                className={`${styles.toolName} ${styles.toolNamePending}`}
+              >
+                {toolLabel}
+              </span>
+              <span className={styles.toolInkPulse} aria-hidden="true" />
             </div>
           </div>
         </div>
@@ -439,9 +448,13 @@ function ToolCallBubble({
               )}
               子任务
             </span>
-            <span className={styles.spawnTitle}>{toolLabel}</span>
+            <span
+              className={`${styles.spawnTitle} ${bubble.pending ? styles.toolNamePending : ""}`}
+            >
+              {toolLabel}
+            </span>
             {bubble.pending ? (
-              <span className={styles.toolSpinner} aria-hidden="true" />
+              <span className={styles.toolInkPulse} aria-hidden="true" />
             ) : (
               <span className={styles.toolChevron} aria-hidden="true">
                 <ChevronIcon expanded={expanded} />
@@ -491,9 +504,13 @@ function ToolCallBubble({
             <span className={styles.toolIcon} aria-hidden="true">
               {bubble.pending ? <ToolRunningIcon /> : <ToolDoneIcon />}
             </span>
-            <span className={styles.toolName}>{toolLabel}</span>
+            <span
+              className={`${styles.toolName} ${bubble.pending ? styles.toolNamePending : ""}`}
+            >
+              {toolLabel}
+            </span>
             {bubble.pending ? (
-              <span className={styles.toolSpinner} aria-hidden="true" />
+              <span className={styles.toolInkPulse} aria-hidden="true" />
             ) : (
               <span className={styles.toolChevron} aria-hidden="true">
                 <ChevronIcon expanded={expanded} />
@@ -629,9 +646,13 @@ function ToolCallBubble({
           <span className={styles.toolIcon} aria-hidden="true">
             {bubble.pending ? <ToolRunningIcon /> : <ToolDoneIcon />}
           </span>
-          <span className={styles.toolName}>{toolLabel}</span>
+          <span
+            className={`${styles.toolName} ${bubble.pending ? styles.toolNamePending : ""}`}
+          >
+            {toolLabel}
+          </span>
           {bubble.pending ? (
-            <span className={styles.toolSpinner} aria-hidden="true" />
+            <span className={styles.toolInkPulse} aria-hidden="true" />
           ) : (
             <span className={styles.toolChevron} aria-hidden="true">
               <ChevronIcon expanded={expanded} />

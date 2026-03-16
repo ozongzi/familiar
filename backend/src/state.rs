@@ -1026,8 +1026,42 @@ async fn run_generation(
                         json!({"type": "reasoning_token", "content": token}).to_string()
                     }
                     Err(e) => {
-                        error!(conversation = %conversation_id, "[TIMING] poll #{poll_count}: stream.next() -> Error in {elapsed:?}: {e}");
-                        let payload = json!({"type": "error", "message": e.to_string()}).to_string();
+                        let err_msg = e.to_string();
+                        error!(conversation = %conversation_id, "[TIMING] poll #{poll_count}: stream.next() -> Error in {elapsed:?}: {err_msg}");
+
+                        // Some providers occasionally end an otherwise-complete turn with a
+                        // benign stream-tail error (e.g. "Error in input stream"). If we already
+                        // received assistant content, treat this as a graceful completion so the
+                        // UI does not show a false warning banner.
+                        let is_benign_tail_error = err_msg.contains("Error in input stream")
+                            && !reply_buf.trim().is_empty();
+
+                        if is_benign_tail_error {
+                            warn!(conversation = %conversation_id, "Treating benign tail stream error as done: {err_msg}");
+                            if !reply_buf.is_empty() {
+                                let msg = AgentMessage::new(Role::Assistant, &reply_buf);
+                                state.persist_message(conversation_id, &msg);
+                            }
+
+                            let recovered = stream.into_agent();
+                            let queued_interrupt = {
+                                let mut map = state.chats.lock().unwrap();
+                                if let Some(entry) = map.get_mut(&conversation_id) {
+                                    entry.emit(json!({"type": "done"}).to_string());
+                                    entry.generating = false;
+                                    if let Some(agent) = recovered {
+                                        entry.agent = Some(agent);
+                                    }
+                                    entry.queued_interrupts.drain(..).next()
+                                } else {
+                                    None
+                                }
+                            };
+
+                            return queued_interrupt;
+                        }
+
+                        let payload = json!({"type": "error", "message": err_msg}).to_string();
                         // Emit the error event before recovering.
                         {
                             let mut map = state.chats.lock().unwrap();

@@ -88,6 +88,12 @@ export function ChatPage() {
   const messagesRef = useRef<HTMLDivElement>(null);
   const lockedRef = useRef(true);
 
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = "auto") => {
+    const el = messagesRef.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior });
+  }, []);
+
   // Unlock auto-scroll when the user scrolls up; re-lock when back at bottom.
   useEffect(() => {
     const el = messagesRef.current;
@@ -101,10 +107,11 @@ export function ChatPage() {
 
   // ── Auto-scroll ────────────────────────────────────────────────────────
   useEffect(() => {
-    const el = messagesRef.current;
-    if (!el || !lockedRef.current) return;
-    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
-  }, [bubbles]);
+    if (!lockedRef.current) return;
+    // Keep the viewport pinned while stream/tool output is growing,
+    // preventing large chunks from knocking us out of auto-scroll mode.
+    scrollToBottom("auto");
+  }, [bubbles, status, scrollToBottom]);
 
   // ── Load history when switching to a real conversation ─────────────────
   useEffect(() => {

@@ -12,6 +12,8 @@ type ChatStatus = "idle" | "connecting" | "streaming" | "error";
 
 export type InterruptMode = "interrupt" | "abort";
 
+const SSE_REATTACH_DELAY_MS = 500;
+
 function uid() {
   return Math.random().toString(36).slice(2);
 }
@@ -609,6 +611,15 @@ export function useChat(
       (err) => {
         console.error("[SSE] reattach error:", err);
         reattachingRef.current = false;
+        if (statusRef.current === "streaming" || statusRef.current === "connecting") {
+          // Keep trying while a generation is still expected to be active.
+          setTimeout(() => {
+            if (statusRef.current !== "streaming" && statusRef.current !== "connecting") return;
+            attachedConvRef.current = null;
+            reattach(convId, tok);
+          }, SSE_REATTACH_DELAY_MS);
+          return;
+        }
       },
       ac.signal,
     );
@@ -721,19 +732,19 @@ export function useChat(
             statusRef.current !== "connecting"
           )
             return;
-          const key = activeTextKeyRef.current;
-          if (key) {
-            setBubbles((prev) => prev.filter((b) => b.key !== key));
-            activeTextKeyRef.current = null;
-          }
-          updateStatus("error");
-          setErrorMsg(err.message ?? "连接出错，请重试");
+          console.warn("[SSE] stream disconnected, trying reattach:", err);
+          updateStatus("connecting");
           abortControllerRef.current = null;
+          setTimeout(() => {
+            if (!convId || !token) return;
+            attachedConvRef.current = null;
+            reattach(convId, token);
+          }, SSE_REATTACH_DELAY_MS);
         },
         ac.signal,
       );
     },
-    [conversationId, token, interrupt, createConversation],
+    [conversationId, token, interrupt, createConversation, reattach],
   );
 
   return {
