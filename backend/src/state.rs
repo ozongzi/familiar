@@ -9,6 +9,7 @@ use ds_api::DeepseekAgent;
 use ds_api::McpTool;
 use ds_api::Tool as _;
 use ds_api::ToolInjection;
+use serde_json::Value;
 use sqlx::PgPool;
 use tokio::sync::broadcast;
 use tokio::sync::mpsc::UnboundedSender;
@@ -324,22 +325,42 @@ impl AppState {
 
         let (spawn_tx, _) = tokio::sync::broadcast::channel::<String>(256);
 
+        // Fetch user settings (models, system prompt) from DB.
+        let user_settings: Option<(Option<Value>, Option<Value>, Option<String>)> = sqlx::query_as(
+            "SELECT frontier_model, cheap_model, system_prompt FROM user_settings WHERE user_id = $1"
+        )
+        .bind(user_id)
+        .fetch_optional(&self.pool)
+        .await
+        .unwrap_or(None);
+
+        let (frontier_cfg, cheap_cfg, system_prompt) = if let Some((f, c, p)) = user_settings {
+            let f_cfg: ModelConfig = f.and_then(|v| serde_json::from_value(v).ok())
+                .unwrap_or_else(|| self.frontier_model.clone());
+            let c_cfg: ModelConfig = c.and_then(|v| serde_json::from_value(v).ok())
+                .unwrap_or_else(|| self.cheap_model.clone());
+            let s_prompt = p.or_else(|| self.system_prompt.clone());
+            (f_cfg, c_cfg, s_prompt)
+        } else {
+            (self.frontier_model.clone(), self.cheap_model.clone(), self.system_prompt.clone())
+        };
+
         // Build the base agent (without spells yet) and attach both channels.
         // We need inject_tx before building SpellDeps, so attach the tool-inject
         // channel first, then clone the tx for spells.
         let mut base = DeepseekAgent::custom(
-            self.frontier_model.api_key.clone(),
-            self.frontier_model.api_base.clone(),
-            self.frontier_model.name.clone(),
+            frontier_cfg.api_key.clone(),
+            frontier_cfg.api_base.clone(),
+            frontier_cfg.name.clone(),
         )
         .with_streaming()
         .with_history(history);
 
-        for (k, v) in &self.frontier_model.extra_body {
+        for (k, v) in &frontier_cfg.extra_body {
             base = base.extra_field(k.clone(), v.clone());
         }
 
-        if let Some(prompt) = &self.system_prompt {
+        if let Some(prompt) = &system_prompt {
             base = base.with_system_prompt(prompt.clone());
         }
 
@@ -353,7 +374,7 @@ impl AppState {
         let spell_deps = SpellDeps {
             subagent_prompt: self.subagent_prompt.clone(),
             ask_pending: Arc::clone(&ask_user_pending),
-            cheap_model: self.cheap_model.clone(),
+            cheap_model: cheap_cfg,
             mcp_tools: Arc::clone(&user_mcp_tools),
             spawn_tx: spawn_tx.clone(),
             db: self.db.clone(),

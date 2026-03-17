@@ -68,9 +68,20 @@ import type {
   Message,
   Mcp,
   CreateMcpRequest,
+  UserSettings,
+  UpdateSettingsRequest,
 } from "./types";
 
 export const api = {
+  // ── Settings ────────────────────────────────────────────────────────────
+  getSettings(token: string) {
+    return get<UserSettings>("/api/settings", token);
+  },
+
+  updateSettings(token: string, body: UpdateSettingsRequest) {
+    return post<{ ok: boolean }>("/api/settings", body, token);
+  },
+
   // ── Sessions ────────────────────────────────────────────────────────────
   login(body: LoginRequest) {
     return post<LoginResponse>("/api/sessions", body);

@@ -1,5 +1,5 @@
 use config::{Config as Cfg, Environment, File};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 
@@ -34,7 +34,7 @@ pub struct Secrets {
 }
 
 /// LLM or embedding model configuration.
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct ModelConfig {
     pub api_key: String,
     pub api_base: String,

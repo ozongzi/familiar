@@ -6,6 +6,7 @@ pub mod mcps;
 pub mod sessions;
 pub mod sse;
 pub mod users;
+pub mod settings;
 
 use std::{path::Path, sync::Arc};
 
@@ -15,6 +16,7 @@ use axum::{
     routing::{delete, get, patch, post, put},
 };
 use mcps::{create_mcp, delete_mcp, list_mcps, update_mcp};
+use settings::{get_settings, update_settings};
 use sqlx::PgPool;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::{ServeDir, ServeFile};
@@ -63,6 +65,9 @@ pub fn create_router(state: AppState) -> Router {
         // ── Users ─────────────────────────────────────────────────────────────
         .route("/api/users", post(register))
         .route("/api/users/me", get(get_me))
+        // ── Settings ──────────────────────────────────────────────────────────
+        .route("/api/settings", get(get_settings))
+        .route("/api/settings", post(update_settings))
         // ── Conversations ─────────────────────────────────────────────────────
         .route("/api/conversations", get(list_conversations))
         .route("/api/conversations", post(create_conversation))

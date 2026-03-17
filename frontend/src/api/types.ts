@@ -145,6 +145,27 @@ export interface CreateMcpRequest {
   config: Record<string, unknown>;
 }
 
+// ─── Settings ─────────────────────────────────────────────────────────────
+
+export interface UserSettings {
+  frontier_model: ModelConfig;
+  cheap_model: ModelConfig;
+  system_prompt: string | null;
+}
+
+export interface ModelConfig {
+  name: string;
+  api_key: string;
+  api_base: string;
+  extra_body: Record<string, unknown>;
+}
+
+export interface UpdateSettingsRequest {
+  frontier_model?: Partial<ModelConfig>;
+  cheap_model?: Partial<ModelConfig>;
+  system_prompt?: string | null;
+}
+
 // ─── API error shape ──────────────────────────────────────────────────────
 
 export interface ApiError {

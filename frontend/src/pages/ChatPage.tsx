@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { Sidebar } from "../components/Sidebar";
 import { McpSettings } from "../components/McpSettings";
+import { UserSettingsModal } from "../components/UserSettingsModal";
 import { MessageBubble } from "../components/MessageBubble";
 import { ChatInput } from "../components/ChatInput";
 import { useAuth } from "../store/auth.shared";
@@ -29,6 +30,7 @@ export function ChatPage() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarVisible, setSidebarVisible] = useState(true);
   const [mcpOpen, setMcpOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   // When useChat creates a conversation in draft mode, we want to update
   // activeId WITHOUT triggering the history-load effect (there's no history
@@ -270,6 +272,7 @@ export function ChatPage() {
           onRename={handleRename}
           userName={user?.name ?? ""}
           onLogout={logout}
+          onOpenSettings={() => setSettingsOpen(true)}
           isOpen={sidebarOpen}
           onClose={() => setSidebarOpen(false)}
         />
@@ -277,6 +280,10 @@ export function ChatPage() {
 
       {mcpOpen && token && (
         <McpSettings token={token} onClose={() => setMcpOpen(false)} />
+      )}
+
+      {settingsOpen && token && (
+        <UserSettingsModal token={token} onClose={() => setSettingsOpen(false)} />
       )}
 
       {/* Main panel */}
