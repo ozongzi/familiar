@@ -1,4 +1,4 @@
-import {
+import React, {
   memo,
   useState,
   useCallback,
@@ -8,8 +8,6 @@ import {
   useLayoutEffect,
 } from "react";
 import { MarkdownRenderer } from "./MarkdownRenderer";
-import { DiffView } from "./DiffView";
-import { TerminalView } from "./TerminalView";
 import type { ChatBubble, UploadBubble } from "../api/types";
 import { buildToolArgsView } from "./messageBubble.toolParsing";
 import styles from "./MessageBubble.module.css";
@@ -175,48 +173,90 @@ function UploadChatBubble({ bubble }: { bubble: UploadBubble }) {
 
 // ─── Tool call bubble ─────────────────────────────────────────────────────────
 
+// ─── Object fields view (for structured JSON display) ──────────────────────────
 
-function toRecord(value: unknown): Record<string, unknown> | null {
-  if (value && typeof value === "object" && !Array.isArray(value)) {
-    return value as Record<string, unknown>;
+function ObjectFieldsView({
+  data,
+  label,
+  streaming = false,
+}: {
+  data: unknown;
+  label: string;
+  streaming?: boolean;
+}) {
+  if (!data) return null;
+
+  // If it's a primitive, just show it.
+  if (typeof data !== "object" || data === null) {
+    return (
+      <div className={styles.toolSection}>
+        <p className={styles.toolSectionLabel}>{label}</p>
+        <pre className={styles.toolCode}>{String(data)}</pre>
+      </div>
+    );
   }
-  return null;
+
+  const obj = data as Record<string, unknown>;
+  const keys = Object.keys(obj);
+  if (keys.length === 0) return null;
+
+  return (
+    <>
+      {keys.map((key) => {
+        const val = obj[key];
+        let content: React.ReactNode;
+
+        if (typeof val === "string") {
+          // If string contains newlines (actual or escaped), render with whitespace preservation.
+          // We also check for common large-text field names.
+          const isLongText =
+            val.includes("\n") ||
+            val.includes("\\n") ||
+            key === "content" ||
+            key === "command" ||
+            key === "script" ||
+            key === "text" ||
+            key === "goal" ||
+            key === "prompt";
+
+          if (isLongText) {
+            // Unescape \n if they are literal characters in the string
+            const unescaped = val.replace(/\\n/g, "\n");
+            content = (
+              <pre
+                className={styles.toolCode}
+                style={{ whiteSpace: "pre-wrap" }}
+              >
+                {unescaped}
+                {streaming && key === keys[keys.length - 1] && (
+                  <span className={styles.cursor} aria-hidden="true" />
+                )}
+              </pre>
+            );
+          } else {
+            content = <span className={styles.toolCode}>{val}</span>;
+          }
+        } else if (typeof val === "object" && val !== null) {
+          content = (
+            <pre className={styles.toolCode}>
+              {JSON.stringify(val, null, 2)}
+            </pre>
+          );
+        } else {
+          content = <span className={styles.toolCode}>{String(val)}</span>;
+        }
+
+        return (
+          <div key={key} className={styles.toolSection}>
+            <p className={styles.toolSectionLabel}>{key}</p>
+            <div className={styles.toolFieldContent}>{content}</div>
+          </div>
+        );
+      })}
+    </>
+  );
 }
 
-function readTextPayload(value: unknown): string | undefined {
-  const obj = toRecord(value);
-  if (!obj) return undefined;
-  if (typeof obj.text === "string") return obj.text;
-  return undefined;
-}
-
-function getTerminalResultView(result: Record<string, unknown> | null): {
-  stdout?: string;
-  stderr?: string;
-  exitCode?: number | null;
-} {
-  if (!result) return {};
-
-  const stdout =
-    (typeof result.stdout === "string" ? result.stdout : undefined) ??
-    readTextPayload(result.output) ??
-    (typeof result.output === "string" ? result.output : undefined) ??
-    (typeof result.text === "string" ? result.text : undefined);
-
-  const stderr =
-    (typeof result.stderr === "string" ? result.stderr : undefined) ??
-    readTextPayload(result.error) ??
-    (typeof result.error === "string" ? result.error : undefined);
-
-  const exitCodeRaw =
-    result.exit_code ?? result.exitCode ?? result.code ?? result.status_code;
-  const exitCode =
-    typeof exitCodeRaw === "number" || exitCodeRaw === null
-      ? (exitCodeRaw as number | null)
-      : undefined;
-
-  return { stdout, stderr, exitCode };
-}
 function ToolCallBubble({
   bubble,
   onAnswer,
@@ -246,7 +286,6 @@ function ToolCallBubble({
 
   const argsView = useMemo(() => buildToolArgsView(bubble), [bubble]);
   const args = argsView.parsed;
-  const result = bubble.result as Record<string, unknown> | null;
 
   // Detect present result
   // The backend may return either a direct object like { display: "file", filename, path, size }
@@ -288,64 +327,17 @@ function ToolCallBubble({
     }
   }
 
-  const isDesktopCommanderTerminal =
-    bubble.name === "execute_command" ||
-    bubble.name === "execute" ||
-    bubble.name === "start_process";
-
-  // Terminal tools: bash / execute_command / run_* / start_process
-  const isTerminal =
-    bubble.name === "bash" ||
-    bubble.name === "run_ts" ||
-    bubble.name === "run_py" ||
-    isDesktopCommanderTerminal;
-
-  // Edit tools: edit / write / write_file / write_pdf
-  const isReplaceTool = bubble.name === "edit_block";
-  const isWriteTool =
-    bubble.name === "write" ||
-    bubble.name === "write_file" ||
-    bubble.name === "write_pdf";
-  const isEditTool = isReplaceTool || isWriteTool;
-
-  // Diff view rules:
-  // - replace tools still require explicit success status + complete old/new args.
-  // - write tools rely on parsed args (path + content), because many providers
-  //   return text-shaped result payloads without `status: "success"`.
-  const hasReplaceDiff =
-    !bubble.pending &&
-    isReplaceTool &&
-    result?.status === "success" &&
-    argsView.oldStr !== null &&
-    argsView.editContent !== null;
-  const hasWriteDiff =
-    !bubble.pending &&
-    isWriteTool &&
-    argsView.path !== null &&
-    argsView.editContent !== null;
-  const isDiff = hasReplaceDiff || hasWriteDiff;
-
   const isSpawn = bubble.name === "spawn";
-  const isInline = isTerminal || isEditTool;
 
-  // Streaming args display (generic view only)
-  const argsStr = args ? JSON.stringify(args, null, 2) : argsView.raw;
+  // Streaming args fallback
   const argsStreaming = !args && argsView.raw.length > 0;
-  const resultStr =
-    !isInline && bubble.result && !fileResult
-      ? JSON.stringify(bubble.result, null, 2)
-      : null;
 
   const spawnEvents = bubble.name === "spawn" ? (bubble.spawnEvents ?? []) : [];
+  const spawnGoal =
+    isSpawn && args && typeof args.goal === "string" ? args.goal : null;
 
-  const streamingScript = argsView.script;
-  const streamingCommand = argsView.command;
-  const streamingEditPath = argsView.path;
-  const streamingOldStr = argsView.oldStr;
-  const streamingEditContent = argsView.editContent;
   const streamingAskQuestion = argsView.question;
   const askOptions = argsView.options;
-  const terminalResult = getTerminalResultView(result);
 
   // Header label: prefer the model-written description (arrives early in the
   // stream because description is always the first parameter).  Fall back to
@@ -388,9 +380,7 @@ function ToolCallBubble({
               <span className={styles.toolIcon} aria-hidden="true">
                 <ToolRunningIcon />
               </span>
-              <span
-                className={`${styles.toolName} ${styles.toolNamePending}`}
-              >
+              <span className={`${styles.toolName} ${styles.toolNamePending}`}>
                 {toolLabel}
               </span>
             </div>
@@ -418,13 +408,6 @@ function ToolCallBubble({
   ) {
     return <FileCard file={fileResult} pending={bubble.pending} />;
   }
-
-  const scriptLang =
-    bubble.name === "run_py"
-      ? "python"
-      : bubble.name === "run_ts"
-        ? "typescript"
-        : "";
 
   if (isSpawn) {
     return (
@@ -459,8 +442,27 @@ function ToolCallBubble({
             )}
           </button>
 
-          {expanded && spawnEvents.length > 0 && (
+          {expanded && (
             <div className={styles.spawnBody}>
+              {spawnGoal && (
+                <div className={styles.spawnTextBlock} style={{ marginBottom: 6 }}>
+                  <strong style={{ opacity: 0.8 }}>任务目标：</strong>
+                  <MarkdownRenderer content={spawnGoal} />
+                </div>
+              )}
+
+              {/* Final summary/result for spawn */}
+              {!bubble.pending && !!bubble.result && (
+                <div className={styles.spawnTextBlock} style={{
+                  marginBottom: spawnEvents.length > 0 ? 12 : 0,
+                  paddingBottom: spawnEvents.length > 0 ? 12 : 0,
+                  borderBottom: spawnEvents.length > 0 ? "1px dashed var(--border-subtle)" : "none"
+                }}>
+                  <strong style={{ opacity: 0.8 }}>任务总结：</strong>
+                  <ObjectFieldsView data={bubble.result} label="结果" />
+                </div>
+              )}
+
               {spawnEvents.map((ev, i) =>
                 ev.kind === "tool" ? (
                   <ToolCallBubble
@@ -482,148 +484,6 @@ function ToolCallBubble({
                 ),
               )}
             </div>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  if (isInline) {
-    return (
-      <div className={nested ? styles.toolRowNested : styles.toolRow}>
-        <div className={styles.toolBubbleInline}>
-          {/* Header — always clickable to toggle detail */}
-          <button
-            className={styles.toolHeaderInline}
-            onClick={() => setExpanded((v) => !v)}
-            aria-expanded={expanded}
-          >
-            <span className={styles.toolIcon} aria-hidden="true">
-              {bubble.pending ? <ToolRunningIcon /> : <ToolDoneIcon />}
-            </span>
-            <span
-              className={`${styles.toolName} ${bubble.pending ? styles.toolNamePending : ""}`}
-            >
-              {toolLabel}
-            </span>
-            {!bubble.pending && (
-              <span className={styles.toolChevron} aria-hidden="true">
-                <ChevronIcon expanded={expanded} />
-              </span>
-            )}
-          </button>
-
-          {expanded && (
-            <>
-              <div className={styles.toolSection}>
-                <p className={styles.toolSectionLabel}>工具: {bubble.name}</p>
-              </div>
-              {/* edit: 流式期间 — old_str 到了就渲染 diff（new_str 未到时显示纯删除行） */}
-              {isEditTool &&
-                bubble.pending &&
-                isReplaceTool &&
-                streamingOldStr !== null && (
-                  <DiffView
-                    mode="str_replace"
-                    path={streamingEditPath ?? ""}
-                    oldStr={streamingOldStr}
-                    newStr={streamingEditContent ?? ""}
-                    streaming
-                  />
-                )}
-
-              {/* write: 流式期间 — content 开始到达就渲染 DiffView（全部为新增行） */}
-              {isEditTool &&
-                bubble.pending &&
-                isWriteTool &&
-                streamingEditContent !== null && (
-                  <DiffView
-                    mode="write"
-                    path={streamingEditPath ?? ""}
-                    newStr={streamingEditContent}
-                    streaming
-                  />
-                )}
-
-              {/* edit tools: 完成后显示最终 DiffView（成功且 args 解析完整） */}
-              {isEditTool && !bubble.pending && isDiff && isReplaceTool && (
-                <DiffView
-                  mode="str_replace"
-                  path={streamingEditPath ?? ""}
-                  oldStr={streamingOldStr ?? ""}
-                  newStr={streamingEditContent ?? ""}
-                />
-              )}
-              {isEditTool &&
-                !bubble.pending &&
-                isDiff &&
-                isWriteTool && (
-                  <DiffView
-                    mode="write"
-                    path={streamingEditPath ?? ""}
-                    newStr={streamingEditContent ?? ""}
-                  />
-                )}
-              {/* edit tools: fallback — 失败（error 字段）或 args 解析不完整时显示原始结果 */}
-              {isEditTool && !bubble.pending && !isDiff && result && (
-                <div className={styles.toolSection}>
-                  <p className={styles.toolSectionLabel}>
-                    {(result as Record<string, unknown>)["error"]
-                      ? "错误"
-                      : "结果"}
-                  </p>
-                  <pre className={styles.toolCode}>
-                    {JSON.stringify(result, null, 2)}
-                  </pre>
-                </div>
-              )}
-
-              {/* run_py / run_ts: syntax-highlighted script preview (streaming or done) */}
-              {(bubble.name === "run_py" || bubble.name === "run_ts") &&
-                streamingScript !== null && (
-                <div className={styles.scriptPreview}>
-                  <MarkdownRenderer
-                    content={`\`\`\`${scriptLang}\n${streamingScript}${argsStreaming ? "█" : ""}\n\`\`\``}
-                  />
-                </div>
-              )}
-
-              {/* bash / Desktop Commander: sh-highlighted command preview */}
-              {(bubble.name === "bash" || isDesktopCommanderTerminal) &&
-                streamingCommand !== null && (
-                <div className={styles.scriptPreview}>
-                  <MarkdownRenderer
-                    content={`\`\`\`sh\n${streamingCommand}${argsStreaming ? "█" : ""}\n\`\`\``}
-                  />
-                </div>
-              )}
-
-              {/* bash / Desktop Commander: fallback raw args while streaming */}
-              {bubble.pending &&
-                (bubble.name === "bash" || isDesktopCommanderTerminal) &&
-                streamingCommand === null &&
-                argsStr && (
-                  <div className={styles.toolSection}>
-                    <pre className={styles.toolCode}>
-                      {argsStr}
-                      {argsStreaming && (
-                        <span className={styles.cursor} aria-hidden="true" />
-                      )}
-                    </pre>
-                  </div>
-                )}
-
-              {/* Terminal result — shown below the code preview once complete */}
-              {!bubble.pending && isTerminal && (
-                <TerminalView
-                  toolName={bubble.name}
-                  command={streamingCommand ?? undefined}
-                  stdout={terminalResult.stdout}
-                  stderr={terminalResult.stderr}
-                  exitCode={terminalResult.exitCode}
-                />
-              )}
-            </>
           )}
         </div>
       </div>
@@ -658,22 +518,30 @@ function ToolCallBubble({
             <div className={styles.toolSection}>
               <p className={styles.toolSectionLabel}>工具: {bubble.name}</p>
             </div>
-            {argsStr && (
+
+            {/* If streaming and not yet parsed, show raw string */}
+            {argsStreaming && (
               <div className={styles.toolSection}>
                 <p className={styles.toolSectionLabel}>参数</p>
                 <pre className={styles.toolCode}>
-                  {argsStr}
-                  {argsStreaming && (
-                    <span className={styles.cursor} aria-hidden="true" />
-                  )}
+                  {argsView.raw}
+                  <span className={styles.cursor} aria-hidden="true" />
                 </pre>
               </div>
             )}
-            {resultStr !== null && (
-              <div className={styles.toolSection}>
-                <p className={styles.toolSectionLabel}>结果</p>
-                <pre className={styles.toolCode}>{resultStr}</pre>
-              </div>
+
+            {/* Parsed args display */}
+            {!!args && (
+              <ObjectFieldsView
+                data={args}
+                label="参数"
+                streaming={bubble.pending}
+              />
+            )}
+
+            {/* Result display */}
+            {!!bubble.result && !fileResult && (
+              <ObjectFieldsView data={bubble.result} label="结果" />
             )}
           </div>
         )}
