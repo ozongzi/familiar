@@ -253,9 +253,10 @@ impl Tool for A2aSpell {
         if let Some(task_id) = result["id"].as_str() {
             // Task response — check if already complete
             if let Some(state) = result["status"]["state"].as_str()
-                && matches!(state, "completed" | "failed" | "canceled") {
-                    return task_result_to_value(result, task_id);
-                }
+                && matches!(state, "completed" | "failed" | "canceled")
+            {
+                return task_result_to_value(result, task_id);
+            }
 
             // ── 4. 轮询直到完成 ───────────────────────────────────────────────
             return poll_task(&client, &rpc_url, task_id, 30, 2000).await;

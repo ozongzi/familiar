@@ -11,6 +11,7 @@ use crate::errors::AppError;
 /// Authenticated user, extracted from `Authorization: Bearer <token>` header.
 pub struct AuthUser {
     pub user_id: Uuid,
+    pub is_admin: bool,
 }
 
 impl<S> FromRequestParts<S> for AuthUser
@@ -49,6 +50,7 @@ where
             user_id: row
                 .try_get("user_id")
                 .map_err(|_| AppError::unauthorized())?,
+            is_admin: row.try_get("is_admin").unwrap_or(false),
         })
     }
 }

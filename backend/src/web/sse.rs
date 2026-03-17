@@ -3,13 +3,13 @@ use std::convert::Infallible;
 
 use async_stream::stream;
 use axum::{
+    Json,
     extract::{Path, State},
     http::StatusCode,
     response::{
-        sse::{Event, KeepAlive, Sse},
         IntoResponse,
+        sse::{Event, KeepAlive, Sse},
     },
-    Json,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -18,7 +18,7 @@ use tokio::sync::broadcast;
 use uuid::Uuid;
 
 use crate::errors::AppError;
-use crate::web::{auth::AuthUser, AppState};
+use crate::web::{AppState, auth::AuthUser};
 
 // ── Request body types ────────────────────────────────────────────────────────
 

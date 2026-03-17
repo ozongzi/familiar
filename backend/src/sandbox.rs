@@ -1,7 +1,7 @@
-use std::process::Command;
-use uuid::Uuid;
-use tracing::{info, error};
 use std::path::PathBuf;
+use std::process::Command;
+use tracing::{error, info};
+use uuid::Uuid;
 
 pub struct SandboxManager {
     base_path: PathBuf,
@@ -56,17 +56,23 @@ impl SandboxManager {
             _ => {
                 // Container doesn't exist, create and start it
                 info!("Creating new sandbox container {}", container_name);
-                
+
                 let run_status = Command::new("docker")
                     .args([
                         "run",
                         "-d",
-                        "--name", &container_name,
-                        "-v", &format!("{}:/workspace", user_dir.to_str().unwrap()),
-                        "-w", "/workspace",
-                        "--restart", "always",
+                        "--name",
+                        &container_name,
+                        "-v",
+                        &format!("{}:/workspace", user_dir.to_str().unwrap()),
+                        "-w",
+                        "/workspace",
+                        "--restart",
+                        "always",
                         "node:20-slim",
-                        "tail", "-f", "/dev/null"
+                        "tail",
+                        "-f",
+                        "/dev/null",
                     ])
                     .status();
 
@@ -80,9 +86,14 @@ impl SandboxManager {
         }
     }
 
-    pub fn wrap_mcp_command(&self, user_id: Uuid, command: &str, args: &[&str]) -> (String, Vec<String>) {
+    pub fn wrap_mcp_command(
+        &self,
+        user_id: Uuid,
+        command: &str,
+        args: &[&str],
+    ) -> (String, Vec<String>) {
         let container_name = format!("familiar-sandbox-{}", user_id);
-        
+
         // Ensure container is running (best effort)
         let _ = self.ensure_container(user_id);
 
@@ -92,7 +103,7 @@ impl SandboxManager {
             container_name,
             command.to_string(),
         ];
-        
+
         for arg in args {
             docker_args.push(arg.to_string());
         }

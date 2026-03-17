@@ -150,6 +150,10 @@ pub struct AppState {
     /// Per-conversation agent instances, keyed by conversation UUID.
     pub chats: Arc<Mutex<HashMap<Uuid, ChatEntry>>>,
 
+    pub public_path: String,
+
+    pub artifacts_path: String,
+
     /// SSE stream tokens: stream_id → (conversation_id, user_id).
     /// Created by `create_stream`, consumed by `resolve_stream`.
     pub streams: Arc<Mutex<HashMap<Uuid, (Uuid, Uuid)>>>,
@@ -179,6 +183,8 @@ pub struct AppState {
     /// ManageMcpSpell. Wrapped in Arc<Mutex> so the spell can add/remove
     /// entries without going through AppState.
     pub mcp_tools: Arc<tokio::sync::Mutex<Vec<(String, McpTool)>>>,
+
+    pub mcp_catalog: Vec<crate::config::McpCatalogEntry>,
 }
 
 impl AppState {
@@ -190,6 +196,8 @@ impl AppState {
         Self {
             chats: Arc::new(Mutex::new(HashMap::new())),
             streams: Arc::new(Mutex::new(HashMap::new())),
+            public_path: cfg.public_path.clone(),
+            artifacts_path: cfg.artifacts_path.clone(),
             frontier_model: cfg.frontier_model.clone(),
             cheap_model: cfg.cheap_model.clone(),
             system_prompt: cfg.system_prompt(),
@@ -203,6 +211,7 @@ impl AppState {
             ),
             sandbox,
             mcp_tools: Arc::new(tokio::sync::Mutex::new(mcp_tools)),
+            mcp_catalog: cfg.mcp_catalog.clone(),
         }
     }
 
@@ -336,42 +345,56 @@ impl AppState {
 
         // Determine base frontier/cheap configs and the initial system prompt.
         let (frontier_cfg, cheap_cfg, mut system_prompt) = if let Some((f, c, p)) = user_settings {
-            let f_cfg: ModelConfig = f.and_then(|v| serde_json::from_value(v).ok())
+            let f_cfg: ModelConfig = f
+                .and_then(|v| serde_json::from_value(v).ok())
                 .unwrap_or_else(|| self.frontier_model.clone());
-            let c_cfg: ModelConfig = c.and_then(|v| serde_json::from_value(v).ok())
+            let c_cfg: ModelConfig = c
+                .and_then(|v| serde_json::from_value(v).ok())
                 .unwrap_or_else(|| self.cheap_model.clone());
             let s_prompt = p.or_else(|| self.system_prompt.clone());
             (f_cfg, c_cfg, s_prompt)
         } else {
-            (self.frontier_model.clone(), self.cheap_model.clone(), self.system_prompt.clone())
+            (
+                self.frontier_model.clone(),
+                self.cheap_model.clone(),
+                self.system_prompt.clone(),
+            )
         };
 
-        // Append per-user skills summary (from DB) to the system prompt if any skills exist.
-        // This mirrors Config::skills_summary but reads from `user_skills` for the current user.
-        let skill_rows: Vec<(String, Option<String>)> = sqlx::query_as::<_, (String, Option<String>)>(
-            "SELECT name, description FROM user_skills WHERE user_id = $1 ORDER BY name ASC"
-        )
-        .bind(user_id)
-        .fetch_all(&self.pool)
-        .await
-        .unwrap_or_default();
+        // Append skills summary (global + user) from DB.
+        let app_skill_rows: Vec<(String, Option<String>)> =
+            sqlx::query_as::<_, (String, Option<String>)>(
+                "SELECT name, description FROM app_skills ORDER BY name ASC",
+            )
+            .fetch_all(&self.pool)
+            .await
+            .unwrap_or_default();
 
-        if !skill_rows.is_empty() {
-            let mut skills = Vec::new();
-            for (name, desc) in skill_rows {
-                if let Some(d) = desc {
-                    skills.push(format!("- {name}: {d}"));
-                } else {
-                    skills.push(format!("- {name}"));
-                }
+        let user_skill_rows: Vec<(String, Option<String>)> =
+            sqlx::query_as::<_, (String, Option<String>)>(
+                "SELECT name, description FROM user_skills WHERE user_id = $1 ORDER BY name ASC",
+            )
+            .bind(user_id)
+            .fetch_all(&self.pool)
+            .await
+            .unwrap_or_default();
+
+        let mut skills = Vec::new();
+        for (name, desc) in app_skill_rows.into_iter().chain(user_skill_rows) {
+            if let Some(d) = desc {
+                skills.push(format!("- {name}: {d}"));
+            } else {
+                skills.push(format!("- {name}"));
             }
-            // Ensure deterministic order
+        }
+
+        if !skills.is_empty() {
             skills.sort();
+            skills.dedup();
             let summary = format!(
                 "\n\n可用 Skills（需要时调用 load_skill 获取详细指令）：\n{}",
                 skills.join("\n")
             );
-            // Append summary to whatever system_prompt we have (or start with it).
             system_prompt = Some(system_prompt.unwrap_or_default() + &summary);
         }
 
@@ -414,6 +437,7 @@ impl AppState {
             pool: self.pool.clone(),
             user_id,
             sandbox: self.sandbox.clone(),
+            mcp_catalog: self.mcp_catalog.clone(),
             abort_flag: Arc::clone(&abort_flag),
         };
 

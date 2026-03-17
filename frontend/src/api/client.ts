@@ -1,6 +1,6 @@
 // ─── Core fetch wrapper ───────────────────────────────────────────────────────
 
-const BASE = "https://familiar.fhmmt.games";
+const BASE = "";
 
 async function request<T>(
   method: string,
@@ -72,6 +72,8 @@ import type {
   UpdateSettingsRequest,
   Skill,
   CreateSkillRequest,
+  AdminConfig,
+  AppSkill,
 } from "./types";
 
 export const api = {
@@ -82,6 +84,30 @@ export const api = {
 
   updateSettings(token: string, body: UpdateSettingsRequest) {
     return post<{ ok: boolean }>("/api/settings", body, token);
+  },
+
+  getAdminConfig(token: string) {
+    return get<AdminConfig>("/api/admin/config", token);
+  },
+
+  updateAdminConfig(token: string, body: AdminConfig) {
+    return post<{ ok: boolean }>("/api/admin/config", body, token);
+  },
+
+  listAdminSkills(token: string) {
+    return get<AppSkill[]>("/api/admin/skills", token);
+  },
+
+  createAdminSkill(token: string, body: CreateSkillRequest) {
+    return post<AppSkill>("/api/admin/skills", body, token);
+  },
+
+  updateAdminSkill(token: string, id: string, body: CreateSkillRequest) {
+    return request<AppSkill>("PUT", `/api/admin/skills/${id}`, body, token);
+  },
+
+  deleteAdminSkill(token: string, id: string) {
+    return del<{ ok: boolean }>(`/api/admin/skills/${id}`, token);
   },
 
   // ── Skills ──────────────────────────────────────────────────────────────

@@ -83,8 +83,6 @@ export type WsServerEvent =
   | { type: "done" }
   | { type: "error"; message: string };
 
-// ─── UI-only chat bubble ──────────────────────────────────────────────────
-
 export type BubbleRole = "user" | "assistant" | "tool";
 
 export interface TextBubble {
@@ -96,7 +94,6 @@ export interface TextBubble {
   streaming: boolean;
 }
 
-/** A single event in a sub-agent's execution, in arrival order. */
 export type SpawnEvent =
   | { kind: "tool"; bubble: ToolBubble }
   | { kind: "text"; key: string; content: string };
@@ -106,18 +103,13 @@ export interface ToolBubble {
   key: string;
   role: "tool";
   name: string;
-  /** Human-readable description written by the model at call time, shown in the collapsed header. */
   description: string;
-  /** Accumulated args JSON string; complete (parseable) once all chunks arrive. */
   argsRaw: string;
   result: unknown | null;
-  /** Still waiting for the tool_result event */
   pending: boolean;
-  /** Ordered sequence of sub-agent events, preserving interleaving of tool calls and text. */
   spawnEvents?: SpawnEvent[];
 }
 
-/** A file the user uploaded — rendered as a right-aligned user bubble. */
 export interface UploadBubble {
   kind: "upload";
   key: string;
@@ -148,8 +140,8 @@ export interface CreateMcpRequest {
 // ─── Settings ─────────────────────────────────────────────────────────────
 
 export interface UserSettings {
-  frontier_model: ModelConfig;
-  cheap_model: ModelConfig;
+  mode: "custom" | "default";
+  api_key: string | null;
   system_prompt: string | null;
 }
 
@@ -161,9 +153,37 @@ export interface ModelConfig {
 }
 
 export interface UpdateSettingsRequest {
-  frontier_model?: Partial<ModelConfig>;
-  cheap_model?: Partial<ModelConfig>;
+  mode: "custom" | "default";
+  api_key?: string | null;
   system_prompt?: string | null;
+}
+
+export interface ServerConfig {
+  port: number;
+  system_prompt: string | null;
+  subagent_prompt: string | null;
+}
+
+export type McpServerConfig =
+  | { name: string; command: string; args?: string[]; env?: Record<string, string> }
+  | { name: string; url: string };
+
+export interface McpCatalogEntry {
+  name: string;
+  description: string;
+  command: string;
+  args: string[];
+}
+
+export interface AdminConfig {
+  public_path: string;
+  artifacts_path: string;
+  frontier_model: ModelConfig;
+  cheap_model: ModelConfig;
+  embedding: ModelConfig;
+  server: ServerConfig;
+  mcp: McpServerConfig[];
+  mcp_catalog: McpCatalogEntry[];
 }
 
 // ─── API error shape ─────────────────────────────────────────────────────
@@ -174,7 +194,6 @@ export interface ApiError {
 
 // ─── Skills ──────────────────────────────────────────────────────────────
 
-// A user-defined Skill stored on the server.
 export interface Skill {
   id: string;
   name: string;
@@ -183,9 +202,17 @@ export interface Skill {
   created_at: string;
 }
 
-// Request body used to create or update a skill.
 export interface CreateSkillRequest {
   name: string;
   description?: string | null;
   content: string;
+}
+
+export interface AppSkill {
+  id: string;
+  name: string;
+  description?: string | null;
+  content: string;
+  created_at: string;
+  updated_at: string;
 }

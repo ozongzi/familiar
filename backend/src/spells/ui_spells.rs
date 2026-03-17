@@ -24,7 +24,7 @@ impl Tool for UiSpells {
     async fn present_file(&self, description: Option<String>, path: String) -> Value {
         let _ = description;
         let q_path = std::path::PathBuf::from(&path);
-        
+
         // Map sandbox path back to host path to get file size
         let host_path = if q_path.starts_with("/workspace") {
             let relative = q_path.strip_prefix("/workspace").unwrap();
@@ -74,5 +74,4 @@ impl Tool for UiSpells {
             Err(_) => json!({ "error": "等待超时（5 分钟）" }),
         }
     }
-
 }

@@ -28,7 +28,7 @@ async fn main() {
         )
         .init();
 
-    let cfg = config::Config::load();
+    let env_cfg = config::EnvConfig::load();
 
     info!("familiar starting");
 
@@ -36,7 +36,7 @@ async fn main() {
 
     let pool = PgPoolOptions::new()
         .max_connections(10)
-        .connect(&cfg.secrets.database_url)
+        .connect(&env_cfg.database_url)
         .await
         .unwrap_or_else(|e| panic!("failed to connect to database: {e}"));
 
@@ -46,6 +46,10 @@ async fn main() {
         .unwrap_or_else(|e| panic!("migration failed: {e}"));
 
     info!("database connected and migrations applied");
+
+    let cfg = config::Config::load_from_db(&pool)
+        .await
+        .unwrap_or_else(|e| panic!("failed to load app configuration from DB: {e}"));
 
     // ── App state ─────────────────────────────────────────────────────────────
 

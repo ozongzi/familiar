@@ -1,3 +1,4 @@
+pub mod admin;
 pub mod auth;
 pub mod conversations;
 pub mod files;
@@ -10,6 +11,10 @@ pub mod users;
 
 use std::{path::Path, sync::Arc};
 
+use admin::{
+    create_app_skill, delete_app_skill, get_admin_config, list_app_skills, update_admin_config,
+    update_app_skill,
+};
 use axum::extract::DefaultBodyLimit;
 use axum::{
     Router,
@@ -29,8 +34,6 @@ use history::*;
 use sessions::*;
 use sse::*;
 use users::*;
-
-use crate::config::Config;
 
 /// Web-layer application state — cheaply cloneable.
 #[derive(Clone)]
@@ -56,9 +59,8 @@ pub fn create_router(state: AppState) -> Router {
         .allow_methods(Any)
         .allow_headers(Any);
 
-    let config = Config::load();
-    let public_path = Path::new(&config.public_path);
-    let artifacts_path = Path::new(&config.artifacts_path);
+    let public_path = Path::new(&state.public_path);
+    let artifacts_path = Path::new(&state.artifacts_path);
 
     Router::new()
         // ── Auth ──────────────────────────────────────────────────────────────
@@ -70,6 +72,13 @@ pub fn create_router(state: AppState) -> Router {
         // ── Settings ──────────────────────────────────────────────────────────
         .route("/api/settings", get(get_settings))
         .route("/api/settings", post(update_settings))
+        // ── Admin Config ─────────────────────────────────────────────────────
+        .route("/api/admin/config", get(get_admin_config))
+        .route("/api/admin/config", post(update_admin_config))
+        .route("/api/admin/skills", get(list_app_skills))
+        .route("/api/admin/skills", post(create_app_skill))
+        .route("/api/admin/skills/{id}", put(update_app_skill))
+        .route("/api/admin/skills/{id}", delete(delete_app_skill))
         // ── User Skills (per-user) ─────────────────────────────────────────────
         .route("/api/skills", get(list_skills))
         .route("/api/skills", post(create_skill))

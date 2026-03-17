@@ -12,15 +12,15 @@ use crate::web::auth::AuthUser;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct UserSettingsResponse {
-    pub frontier_model: Value,
-    pub cheap_model: Value,
+    pub mode: String,
+    pub api_key: Option<String>,
     pub system_prompt: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct UpdateSettingsRequest {
-    pub frontier_model: Option<Value>,
-    pub cheap_model: Option<Value>,
+    pub mode: String,
+    pub api_key: Option<String>,
     pub system_prompt: Option<String>,
 }
 
@@ -40,18 +40,10 @@ pub struct CreateSkillRequest {
     pub content: String,
 }
 
-// #[derive(sqlx::FromRow)]
-// struct SettingsRow {
-//     frontier_model: Option<Value>,
-//     cheap_model: Option<Option<Value>>, // sqlx might wrap Option<Value> as Option<Option<Value>> if it's nullable
-//     system_prompt: Option<String>,
-// }
-
-// Actually, let's just use manual fetching for simplicity or correct struct
 #[derive(sqlx::FromRow)]
 struct SimpleSettingsRow {
     frontier_model: Option<Value>,
-    cheap_model: Option<Value>,
+    _cheap_model: Option<Value>,
     system_prompt: Option<String>,
 }
 
@@ -60,32 +52,36 @@ pub async fn get_settings(
     auth: AuthUser,
 ) -> AppResult<Json<UserSettingsResponse>> {
     let row = sqlx::query_as::<_, SimpleSettingsRow>(
-        "SELECT frontier_model, cheap_model, system_prompt FROM user_settings WHERE user_id = $1",
+        "SELECT frontier_model, cheap_model as _cheap_model, system_prompt FROM user_settings WHERE user_id = $1",
     )
     .bind(auth.user_id)
     .fetch_optional(&state.pool)
     .await?;
 
-    let (frontier, cheap, prompt) = if let Some(r) = row {
-        (
-            r.frontier_model
-                .unwrap_or(serde_json::to_value(&state.frontier_model).unwrap()),
-            r.cheap_model
-                .unwrap_or(serde_json::to_value(&state.cheap_model).unwrap()),
-            r.system_prompt.or(state.system_prompt.clone()),
-        )
-    } else {
-        (
-            serde_json::to_value(&state.frontier_model).unwrap(),
-            serde_json::to_value(&state.cheap_model).unwrap(),
-            state.system_prompt.clone(),
-        )
-    };
+    if let Some(r) = row {
+        let api_key = r
+            .frontier_model
+            .as_ref()
+            .and_then(|v| v.get("api_key"))
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+        if api_key.is_some()
+            && r.system_prompt
+                .as_ref()
+                .is_some_and(|s| !s.trim().is_empty())
+        {
+            return Ok(Json(UserSettingsResponse {
+                mode: "custom".to_string(),
+                api_key,
+                system_prompt: r.system_prompt,
+            }));
+        }
+    }
 
     Ok(Json(UserSettingsResponse {
-        frontier_model: frontier,
-        cheap_model: cheap,
-        system_prompt: prompt,
+        mode: "default".to_string(),
+        api_key: None,
+        system_prompt: None,
     }))
 }
 
@@ -94,28 +90,63 @@ pub async fn update_settings(
     auth: AuthUser,
     Json(req): Json<UpdateSettingsRequest>,
 ) -> AppResult<Json<Value>> {
-    sqlx::query(
-        r#"
-        INSERT INTO user_settings (user_id, frontier_model, cheap_model, system_prompt, updated_at)
-        VALUES ($1, $2, $3, $4, NOW())
-        ON CONFLICT (user_id) DO UPDATE SET
-            frontier_model = COALESCE(EXCLUDED.frontier_model, user_settings.frontier_model),
-            cheap_model = COALESCE(EXCLUDED.cheap_model, user_settings.cheap_model),
-            system_prompt = COALESCE(EXCLUDED.system_prompt, user_settings.system_prompt),
-            updated_at = NOW()
-        "#,
-    )
-    .bind(auth.user_id)
-    .bind(&req.frontier_model)
-    .bind(&req.cheap_model)
-    .bind(&req.system_prompt)
-    .execute(&state.pool)
-    .await?;
+    match req.mode.as_str() {
+        "default" => {
+            sqlx::query(
+                r#"
+                INSERT INTO user_settings (user_id, frontier_model, cheap_model, system_prompt, updated_at)
+                VALUES ($1, NULL, NULL, NULL, NOW())
+                ON CONFLICT (user_id) DO UPDATE SET
+                    frontier_model = NULL,
+                    cheap_model = NULL,
+                    system_prompt = NULL,
+                    updated_at = NOW()
+                "#,
+            )
+            .bind(auth.user_id)
+            .execute(&state.pool)
+            .await?;
+        }
+        "custom" => {
+            let api_key = req
+                .api_key
+                .clone()
+                .filter(|s| !s.trim().is_empty())
+                .ok_or_else(|| AppError::bad_request("自定义模式必须填写 API Key"))?;
+            let system_prompt = req
+                .system_prompt
+                .clone()
+                .filter(|s| !s.trim().is_empty())
+                .ok_or_else(|| AppError::bad_request("自定义模式必须填写 System Prompt"))?;
+
+            let mut frontier = state.frontier_model.clone();
+            frontier.api_key = api_key.clone();
+            let mut cheap = state.cheap_model.clone();
+            cheap.api_key = api_key;
+
+            sqlx::query(
+                r#"
+                INSERT INTO user_settings (user_id, frontier_model, cheap_model, system_prompt, updated_at)
+                VALUES ($1, $2, $3, $4, NOW())
+                ON CONFLICT (user_id) DO UPDATE SET
+                    frontier_model = EXCLUDED.frontier_model,
+                    cheap_model = EXCLUDED.cheap_model,
+                    system_prompt = EXCLUDED.system_prompt,
+                    updated_at = NOW()
+                "#,
+            )
+            .bind(auth.user_id)
+            .bind(serde_json::to_value(frontier).map_err(|e| AppError::internal(&e.to_string()))?)
+            .bind(serde_json::to_value(cheap).map_err(|e| AppError::internal(&e.to_string()))?)
+            .bind(system_prompt)
+            .execute(&state.pool)
+            .await?;
+        }
+        _ => return Err(AppError::bad_request("mode 必须是 custom 或 default")),
+    }
 
     Ok(Json(serde_json::json!({ "ok": true })))
 }
-
-// ── Skills API ──────────────────────────────────────────────────────────────
 
 pub async fn list_skills(
     State(state): State<AppState>,

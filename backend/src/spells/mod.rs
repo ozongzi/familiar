@@ -13,7 +13,7 @@ use ds_api::McpTool;
 pub use ds_api::tool_trait::ToolBundle;
 use uuid::Uuid;
 
-use crate::config::ModelConfig;
+use crate::config::{McpCatalogEntry, ModelConfig};
 use crate::db::Db;
 use crate::embedding::EmbeddingClient;
 use a2a_spell::A2aSpell;
@@ -45,6 +45,7 @@ pub struct SpellDeps {
     pub pool: sqlx::PgPool,
     pub user_id: Uuid,
     pub sandbox: Arc<crate::sandbox::SandboxManager>,
+    pub mcp_catalog: Vec<McpCatalogEntry>,
     // Shared
     pub abort_flag: Arc<AtomicBool>,
 }
@@ -53,9 +54,8 @@ pub struct SpellDeps {
 /// Returns a `ToolBundle` ready to be passed to `builder.add_tool(...)`.
 pub fn build_all_spells(deps: SpellDeps) -> ToolBundle {
     let bundle = ToolBundle::new().add(SkillSpell {
-        skills_dir: std::path::PathBuf::from("/srv/familiar/skills"),
-        pool: Some(deps.pool.clone()),
-        user_id: Some(deps.user_id),
+        pool: deps.pool.clone(),
+        user_id: deps.user_id,
     });
 
     bundle
@@ -83,5 +83,6 @@ pub fn build_all_spells(deps: SpellDeps) -> ToolBundle {
             pool: deps.pool,
             user_id: deps.user_id,
             sandbox: deps.sandbox,
+            catalog: deps.mcp_catalog,
         })
 }

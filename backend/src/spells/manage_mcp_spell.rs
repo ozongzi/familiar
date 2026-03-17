@@ -1,4 +1,4 @@
-use crate::config::Config;
+use crate::config::McpCatalogEntry;
 use ds_api::tool;
 use ds_api::{McpTool, ToolInjection};
 use serde_json::{Value, json};
@@ -21,16 +21,26 @@ pub struct ManageMcpSpell {
     pub user_id: Uuid,
     /// Sandbox manager.
     pub sandbox: Arc<crate::sandbox::SandboxManager>,
+    pub catalog: Vec<McpCatalogEntry>,
 }
 
 #[tool]
 impl Tool for ManageMcpSpell {
-    /// 列出 config.toml 中预设的可用 MCP 服务器（可直接安装，无需手动填写参数）
+    /// 列出系统配置中预设的可用 MCP 服务器（可直接安装，无需手动填写参数）
     async fn list_available_mcp(&self) -> Value {
-        match read_catalog().await {
-            Ok(entries) => json!({ "catalog": entries }),
-            Err(e) => json!({ "catalog": [], "error": e.to_string() }),
-        }
+        let entries: Vec<Value> = self
+            .catalog
+            .iter()
+            .map(|entry| {
+                json!({
+                    "name": entry.name,
+                    "description": entry.description,
+                    "command": entry.command,
+                    "args": entry.args
+                })
+            })
+            .collect();
+        json!({ "catalog": entries })
     }
 
     /// 列出当前已安装并运行的 MCP 服务器名称及其导出的工具名
@@ -121,10 +131,16 @@ impl Tool for ManageMcpSpell {
         let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
 
         // Wrap with Docker exec for sandboxing
-        let (cmd, args_wrapped_vec) = self.sandbox.wrap_mcp_command(self.user_id, &command, &args_ref);
+        let (cmd, args_wrapped_vec) =
+            self.sandbox
+                .wrap_mcp_command(self.user_id, &command, &args_ref);
         let args_wrapped: Vec<&str> = args_wrapped_vec.iter().map(|s| s.as_str()).collect();
 
-        let tool = match timeout(Duration::from_secs(300), McpTool::stdio(&cmd, &args_wrapped)).await
+        let tool = match timeout(
+            Duration::from_secs(300),
+            McpTool::stdio(&cmd, &args_wrapped),
+        )
+        .await
         {
             Ok(Ok(t)) => t,
             Ok(Err(e)) => return json!({ "error": format!("启动失败: {e}") }),
@@ -205,23 +221,4 @@ impl Tool for ManageMcpSpell {
 
         json!({ "status": "ok", "message": format!("MCP '{}' 已卸载。", name) })
     }
-}
-
-// ── Config reading (catalog) ──────────────────────────────────────────────────
-
-async fn read_catalog() -> anyhow::Result<Vec<Value>> {
-    let cfg = Config::load();
-    let entries: Vec<Value> = cfg
-        .mcp_catalog
-        .into_iter()
-        .map(|entry| {
-            json!({
-                "name": entry.name,
-                "description": entry.description,
-                "command": entry.command,
-                "args": entry.args
-            })
-        })
-        .collect();
-    Ok(entries)
 }

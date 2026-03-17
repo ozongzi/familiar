@@ -283,7 +283,7 @@ export function ChatPage() {
       )}
 
       {settingsOpen && token && (
-        <UserSettingsModal token={token} onClose={() => setSettingsOpen(false)} />
+        <UserSettingsModal token={token} isAdmin={!!user?.is_admin} onClose={() => setSettingsOpen(false)} />
       )}
 
       {/* Main panel */}

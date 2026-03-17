@@ -143,10 +143,18 @@ pub async fn create_mcp(
             let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
 
             // Wrap with Docker exec
-            let (cmd, args_wrapped_vec) = state.sandbox.wrap_mcp_command(auth.user_id, command, &args_ref);
+            let (cmd, args_wrapped_vec) =
+                state
+                    .sandbox
+                    .wrap_mcp_command(auth.user_id, command, &args_ref);
             let args_wrapped: Vec<&str> = args_wrapped_vec.iter().map(|s| s.as_str()).collect();
 
-            match timeout(Duration::from_secs(300), McpTool::stdio(&cmd, &args_wrapped)).await {
+            match timeout(
+                Duration::from_secs(300),
+                McpTool::stdio(&cmd, &args_wrapped),
+            )
+            .await
+            {
                 Ok(Ok(t)) => Some(t),
                 Ok(Err(e)) => {
                     warn!("create_mcp: failed to start MCP stdio '{}': {}", command, e);
@@ -259,10 +267,18 @@ pub async fn update_mcp(
             let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
 
             // Wrap with Docker exec
-            let (cmd, args_wrapped_vec) = state.sandbox.wrap_mcp_command(auth.user_id, command, &args_ref);
+            let (cmd, args_wrapped_vec) =
+                state
+                    .sandbox
+                    .wrap_mcp_command(auth.user_id, command, &args_ref);
             let args_wrapped: Vec<&str> = args_wrapped_vec.iter().map(|s| s.as_str()).collect();
 
-            match timeout(Duration::from_secs(300), McpTool::stdio(&cmd, &args_wrapped)).await {
+            match timeout(
+                Duration::from_secs(300),
+                McpTool::stdio(&cmd, &args_wrapped),
+            )
+            .await
+            {
                 Ok(Ok(t)) => Some(t),
                 Ok(Err(e)) => {
                     warn!("update_mcp: failed to start MCP stdio '{}': {}", command, e);
@@ -372,10 +388,18 @@ pub async fn delete_mcp(
             let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
 
             // Wrap with Docker exec
-            let (cmd, args_wrapped_vec) = state.sandbox.wrap_mcp_command(auth.user_id, &command, &args_ref);
+            let (cmd, args_wrapped_vec) =
+                state
+                    .sandbox
+                    .wrap_mcp_command(auth.user_id, &command, &args_ref);
             let args_wrapped: Vec<&str> = args_wrapped_vec.iter().map(|s| s.as_str()).collect();
 
-            match timeout(Duration::from_secs(300), McpTool::stdio(&cmd, &args_wrapped)).await {
+            match timeout(
+                Duration::from_secs(300),
+                McpTool::stdio(&cmd, &args_wrapped),
+            )
+            .await
+            {
                 Ok(Ok(t)) => t
                     .raw_tools()
                     .iter()
