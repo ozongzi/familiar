@@ -334,7 +334,8 @@ impl AppState {
         .await
         .unwrap_or(None);
 
-        let (frontier_cfg, cheap_cfg, system_prompt) = if let Some((f, c, p)) = user_settings {
+        // Determine base frontier/cheap configs and the initial system prompt.
+        let (frontier_cfg, cheap_cfg, mut system_prompt) = if let Some((f, c, p)) = user_settings {
             let f_cfg: ModelConfig = f.and_then(|v| serde_json::from_value(v).ok())
                 .unwrap_or_else(|| self.frontier_model.clone());
             let c_cfg: ModelConfig = c.and_then(|v| serde_json::from_value(v).ok())
@@ -344,6 +345,35 @@ impl AppState {
         } else {
             (self.frontier_model.clone(), self.cheap_model.clone(), self.system_prompt.clone())
         };
+
+        // Append per-user skills summary (from DB) to the system prompt if any skills exist.
+        // This mirrors Config::skills_summary but reads from `user_skills` for the current user.
+        let skill_rows: Vec<(String, Option<String>)> = sqlx::query_as::<_, (String, Option<String>)>(
+            "SELECT name, description FROM user_skills WHERE user_id = $1 ORDER BY name ASC"
+        )
+        .bind(user_id)
+        .fetch_all(&self.pool)
+        .await
+        .unwrap_or_default();
+
+        if !skill_rows.is_empty() {
+            let mut skills = Vec::new();
+            for (name, desc) in skill_rows {
+                if let Some(d) = desc {
+                    skills.push(format!("- {name}: {d}"));
+                } else {
+                    skills.push(format!("- {name}"));
+                }
+            }
+            // Ensure deterministic order
+            skills.sort();
+            let summary = format!(
+                "\n\n可用 Skills（需要时调用 load_skill 获取详细指令）：\n{}",
+                skills.join("\n")
+            );
+            // Append summary to whatever system_prompt we have (or start with it).
+            system_prompt = Some(system_prompt.unwrap_or_default() + &summary);
+        }
 
         // Build the base agent (without spells yet) and attach both channels.
         // We need inject_tx before building SpellDeps, so attach the tool-inject

@@ -4,9 +4,9 @@ pub mod files;
 pub mod history;
 pub mod mcps;
 pub mod sessions;
+pub mod settings;
 pub mod sse;
 pub mod users;
-pub mod settings;
 
 use std::{path::Path, sync::Arc};
 
@@ -16,7 +16,9 @@ use axum::{
     routing::{delete, get, patch, post, put},
 };
 use mcps::{create_mcp, delete_mcp, list_mcps, update_mcp};
-use settings::{get_settings, update_settings};
+use settings::{
+    create_skill, delete_skill, get_settings, list_skills, update_settings, update_skill,
+};
 use sqlx::PgPool;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::{ServeDir, ServeFile};
@@ -68,6 +70,11 @@ pub fn create_router(state: AppState) -> Router {
         // ── Settings ──────────────────────────────────────────────────────────
         .route("/api/settings", get(get_settings))
         .route("/api/settings", post(update_settings))
+        // ── User Skills (per-user) ─────────────────────────────────────────────
+        .route("/api/skills", get(list_skills))
+        .route("/api/skills", post(create_skill))
+        .route("/api/skills/{id}", put(update_skill))
+        .route("/api/skills/{id}", delete(delete_skill))
         // ── Conversations ─────────────────────────────────────────────────────
         .route("/api/conversations", get(list_conversations))
         .route("/api/conversations", post(create_conversation))

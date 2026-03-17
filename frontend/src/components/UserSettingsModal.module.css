@@ -1,162 +1,243 @@
 .overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.5);
-  backdrop-filter: blur(4px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(4px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
 }
 
 .modal {
-  background: var(--bg-surface);
-  border: 1px solid var(--border-subtle);
-  border-radius: 12px;
-  width: 90%;
-  max-width: 600px;
-  max-height: 85vh;
-  display: flex;
-  flex-direction: column;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
-  animation: modalEnter 0.2s ease-out;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: 12px;
+    width: 90%;
+    max-width: 600px;
+    max-height: 85vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+    animation: modalEnter 0.2s ease-out;
 }
 
 @keyframes modalEnter {
-  from { opacity: 0; transform: translateY(10px) scale(0.98); }
-  to { opacity: 1; transform: translateY(0) scale(1); }
+    from {
+        opacity: 0;
+        transform: translateY(10px) scale(0.98);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
 }
 
 .header {
-  padding: 16px 20px;
-  border-bottom: 1px solid var(--border-subtle);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border-subtle);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
 }
 
 .header h2 {
-  margin: 0;
-  font-size: 1.1rem;
-  font-weight: 600;
-  display: flex;
-  align-items: center;
-  gap: 10px;
+    margin: 0;
+    font-size: 1.1rem;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 10px;
 }
 
 .closeBtn {
-  background: none;
-  border: none;
-  color: var(--text-muted);
-  cursor: pointer;
-  padding: 4px;
-  border-radius: 4px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all 0.2s;
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
 }
 
 .closeBtn:hover {
-  background: var(--bg-hover);
-  color: var(--text-base);
+    background: var(--bg-hover);
+    color: var(--text-base);
 }
 
 .content {
-  padding: 20px;
-  overflow-y: auto;
-  flex: 1;
+    padding: 20px;
+    overflow-y: auto;
+    flex: 1;
 }
 
 .section {
-  margin-bottom: 24px;
+    margin-bottom: 24px;
 }
 
 .section h3 {
-  font-size: 0.9rem;
-  font-weight: 600;
-  color: var(--text-muted);
-  margin: 0 0 12px 0;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    margin: 0 0 12px 0;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
 }
 
 .field {
-  margin-bottom: 16px;
+    margin-bottom: 16px;
 }
 
 .field label {
-  display: block;
-  font-size: 0.85rem;
-  margin-bottom: 6px;
-  color: var(--text-base);
+    display: block;
+    font-size: 0.85rem;
+    margin-bottom: 6px;
+    color: var(--text-base);
 }
 
-.field input, .field textarea {
-  width: 100%;
-  background: var(--bg-base);
-  border: 1px solid var(--border-subtle);
-  border-radius: 6px;
-  padding: 8px 12px;
-  color: var(--text-base);
-  font-family: inherit;
-  font-size: 0.9rem;
-  transition: border-color 0.2s;
+.field input,
+.field textarea {
+    width: 100%;
+    background: var(--bg-base);
+    border: 1px solid var(--border-subtle);
+    border-radius: 6px;
+    padding: 8px 12px;
+    color: var(--text-base);
+    font-family: inherit;
+    font-size: 0.9rem;
+    transition: border-color 0.2s;
 }
 
-.field input:focus, .field textarea:focus {
-  outline: none;
-  border-color: var(--accent);
+.field input:focus,
+.field textarea:focus {
+    outline: none;
+    border-color: var(--accent);
 }
 
 .field textarea {
-  min-height: 100px;
-  resize: vertical;
+    min-height: 100px;
+    resize: vertical;
 }
 
 .footer {
-  padding: 16px 20px;
-  border-top: 1px solid var(--border-subtle);
-  display: flex;
-  justify-content: flex-end;
-  gap: 12px;
+    padding: 16px 20px;
+    border-top: 1px solid var(--border-subtle);
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
 }
 
 .cancelBtn {
-  background: none;
-  border: 1px solid var(--border-subtle);
-  color: var(--text-base);
-  padding: 8px 16px;
-  border-radius: 6px;
-  cursor: pointer;
-  font-size: 0.9rem;
-  transition: all 0.2s;
+    background: none;
+    border: 1px solid var(--border-subtle);
+    color: var(--text-base);
+    padding: 8px 16px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    transition: all 0.2s;
 }
 
 .cancelBtn:hover {
-  background: var(--bg-hover);
+    background: var(--bg-hover);
 }
 
 .saveBtn {
-  background: var(--accent);
-  border: 1px solid var(--accent);
-  color: white;
-  padding: 8px 16px;
-  border-radius: 6px;
-  cursor: pointer;
-  font-size: 0.9rem;
-  font-weight: 500;
-  transition: all 0.2s;
+    background: var(--accent);
+    border: 1px solid var(--accent);
+    color: white;
+    padding: 8px 16px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    font-weight: 500;
+    transition: all 0.2s;
 }
 
 .saveBtn:hover {
-  filter: brightness(1.1);
+    filter: brightness(1.1);
 }
 
 .saveBtn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+/* 容器与分割线 */
+.divider {
+    border: 0;
+    border-top: 1px solid var(--border-color, #eee);
+    margin: 20px 0;
+}
+
+/* Skill 表单布局 */
+.skillForm {
+    background: var(--bg-subtle, #f9f9f9);
+    padding: 16px;
+    border-radius: 8px;
+    border: 1px solid var(--border-color, #eee);
+}
+
+.skillActions {
+    display: flex;
+    gap: 10px;
+    margin-top: 12px;
+}
+
+/* 列表条目样式 */
+.skillItem {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    padding: 12px;
+    border: 1px solid var(--border-color, #eee);
+    border-radius: 6px;
+    margin-bottom: 8px;
+    background: white;
+}
+
+.skillName {
+    font-weight: 600;
+    color: var(--text-main, #333);
+}
+
+.skillDesc {
+    font-size: 0.85rem;
+    color: var(--text-muted, #666);
+    margin-bottom: 4px;
+}
+
+.skillPreview {
+    font-size: 0.8rem;
+    color: var(--text-lighter, #999);
+    font-family: monospace;
+    background: #f5f5f5;
+    padding: 4px 6px;
+    border-radius: 4px;
+}
+
+/* 按钮风格统合 (如果你之前没定义这些，可以参考) */
+.deleteBtn {
+    color: var(--danger, #ff4d4f);
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 0.85rem;
+}
+
+.deleteBtn:hover {
+    text-decoration: underline;
+}
+
+.listLabel {
+    display: block;
+    font-size: 0.9rem;
+    font-weight: bold;
+    margin-bottom: 12px;
 }

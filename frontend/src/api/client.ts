@@ -70,6 +70,8 @@ import type {
   CreateMcpRequest,
   UserSettings,
   UpdateSettingsRequest,
+  Skill,
+  CreateSkillRequest,
 } from "./types";
 
 export const api = {
@@ -80,6 +82,24 @@ export const api = {
 
   updateSettings(token: string, body: UpdateSettingsRequest) {
     return post<{ ok: boolean }>("/api/settings", body, token);
+  },
+
+  // ── Skills ──────────────────────────────────────────────────────────────
+  // Frontend API methods for user skills.
+  listSkills(token: string) {
+    return get<Skill[]>("/api/skills", token);
+  },
+
+  createSkill(token: string, body: CreateSkillRequest) {
+    return post<Skill>("/api/skills", body, token);
+  },
+
+  updateSkill(token: string, id: string, body: CreateSkillRequest) {
+    return request<Skill>("PUT", `/api/skills/${id}`, body, token);
+  },
+
+  deleteSkill(token: string, id: string) {
+    return del<{ ok: boolean }>(`/api/skills/${id}`, token);
   },
 
   // ── Sessions ────────────────────────────────────────────────────────────

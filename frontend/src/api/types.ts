@@ -166,8 +166,26 @@ export interface UpdateSettingsRequest {
   system_prompt?: string | null;
 }
 
-// ─── API error shape ──────────────────────────────────────────────────────
+// ─── API error shape ─────────────────────────────────────────────────────
 
 export interface ApiError {
   error: string;
+}
+
+// ─── Skills ──────────────────────────────────────────────────────────────
+
+// A user-defined Skill stored on the server.
+export interface Skill {
+  id: string;
+  name: string;
+  description?: string | null;
+  content: string;
+  created_at: string;
+}
+
+// Request body used to create or update a skill.
+export interface CreateSkillRequest {
+  name: string;
+  description?: string | null;
+  content: string;
 }

@@ -54,6 +54,8 @@ pub struct SpellDeps {
 pub fn build_all_spells(deps: SpellDeps) -> ToolBundle {
     let bundle = ToolBundle::new().add(SkillSpell {
         skills_dir: std::path::PathBuf::from("/srv/familiar/skills"),
+        pool: Some(deps.pool.clone()),
+        user_id: Some(deps.user_id),
     });
 
     bundle

@@ -12,7 +12,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use uuid::Uuid;
 
-use std::path::Path;
 use tokio::fs::File;
 use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWriteExt;
@@ -64,17 +63,17 @@ pub async fn download_file(
     // Enforce ownership: path must be within the sandbox workspace.
     let user_dir = state.sandbox.get_user_dir(user_id);
     if !user_dir.exists() {
-        tokio::fs::create_dir_all(&user_dir).await.map_err(|e| {
-            AppError::internal(&format!("无法创建用户目录: {}", e))
-        })?;
+        tokio::fs::create_dir_all(&user_dir)
+            .await
+            .map_err(|e| AppError::internal(&format!("无法创建用户目录: {}", e)))?;
     }
-    let canonical_user_dir = tokio::fs::canonicalize(&user_dir).await.map_err(|_| {
-        AppError::not_found("用户目录无效")
-    })?;
+    let canonical_user_dir = tokio::fs::canonicalize(&user_dir)
+        .await
+        .map_err(|_| AppError::not_found("用户目录无效"))?;
     // Canonicalize the requested path only if it exists; otherwise reject.
-    let canonical_path = tokio::fs::canonicalize(&path).await.map_err(|_| {
-        AppError::not_found("文件不存在")
-    })?;
+    let canonical_path = tokio::fs::canonicalize(&path)
+        .await
+        .map_err(|_| AppError::not_found("文件不存在"))?;
     if !canonical_path.starts_with(&canonical_user_dir) {
         return Err(AppError::not_found("文件不存在"));
     }
@@ -176,12 +175,12 @@ pub async fn preview_file(
 
     // Enforce ownership.
     let user_dir = state.sandbox.get_user_dir(user_id);
-    let canonical_user_dir = tokio::fs::canonicalize(&user_dir).await.map_err(|_| {
-        AppError::not_found("用户目录不存在")
-    })?;
-    let canonical_path = tokio::fs::canonicalize(&path).await.map_err(|_| {
-        AppError::not_found("文件不存在")
-    })?;
+    let canonical_user_dir = tokio::fs::canonicalize(&user_dir)
+        .await
+        .map_err(|_| AppError::not_found("用户目录不存在"))?;
+    let canonical_path = tokio::fs::canonicalize(&path)
+        .await
+        .map_err(|_| AppError::not_found("文件不存在"))?;
     if !canonical_path.starts_with(&canonical_user_dir) {
         return Err(AppError::not_found("文件不存在"));
     }
@@ -382,9 +381,10 @@ pub async fn upload_file(
                 "conversation_id" => {
                     // treat as plain text field
                     if let Ok(text) = field.text().await
-                        && let Ok(parsed) = Uuid::parse_str(text.trim()) {
-                            conv_id_opt = Some(parsed);
-                        }
+                        && let Ok(parsed) = Uuid::parse_str(text.trim())
+                    {
+                        conv_id_opt = Some(parsed);
+                    }
                 }
                 _ => {
                     // ignore other fields
@@ -466,9 +466,10 @@ pub async fn upload_file(
             {
                 let mut map = state.chats.lock().unwrap();
                 if let Some(entry) = map.get_mut(&conv_id)
-                    && let Some(ref mut agent) = entry.agent {
-                        agent.push_user_message_with_name(&content_str, None);
-                    }
+                    && let Some(ref mut agent) = entry.agent
+                {
+                    agent.push_user_message_with_name(&content_str, None);
+                }
             }
         } else {
             tracing::warn!(
