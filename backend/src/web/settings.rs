@@ -65,6 +65,7 @@ pub async fn get_settings(
             .and_then(|v| v.get("api_key"))
             .and_then(|v| v.as_str())
             .map(str::to_string);
+
         if api_key.is_some()
             && r.system_prompt
                 .as_ref()
@@ -119,9 +120,12 @@ pub async fn update_settings(
                 .filter(|s| !s.trim().is_empty())
                 .ok_or_else(|| AppError::bad_request("自定义模式必须填写 System Prompt"))?;
 
-            let mut frontier = state.frontier_model.clone();
+            let global_cfg = state.get_global_config().await?;
+
+            let mut frontier = global_cfg.frontier_model;
             frontier.api_key = api_key.clone();
-            let mut cheap = state.cheap_model.clone();
+
+            let mut cheap = global_cfg.cheap_model;
             cheap.api_key = api_key;
 
             sqlx::query(

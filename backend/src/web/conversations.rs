@@ -116,8 +116,6 @@ pub async fn delete_conversation(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-// ── Auto-title ────────────────────────────────────────────────────────────────
-
 #[derive(Deserialize)]
 pub struct AutoTitleRequest {
     pub prompt: String,
@@ -134,7 +132,6 @@ pub async fn auto_title(
     Path(id): Path<Uuid>,
     Json(req): Json<AutoTitleRequest>,
 ) -> AppResult<Json<AutoTitleResponse>> {
-    // Verify ownership.
     let owned: bool = sqlx::query_scalar::<_, Option<bool>>(
         "SELECT EXISTS(SELECT 1 FROM conversations WHERE id = $1 AND user_id = $2)",
     )
@@ -151,8 +148,10 @@ pub async fn auto_title(
     use ds_api::raw::request::message::Message;
     use ds_api::{ApiClient, ApiRequest};
 
-    let client = ApiClient::new(state.cheap_model.api_key.clone())
-        .with_base_url(state.cheap_model.api_base.clone());
+    let global_cfg = state.get_global_config().await?;
+
+    let client = ApiClient::new(global_cfg.cheap_model.api_key.clone())
+        .with_base_url(global_cfg.cheap_model.api_base.clone());
 
     let prompt = Message::user(&format!(
         "根据用户发送的第一条消息 {}，生成一个简短的对话标题（5到10个字）。只返回标题文字本身，不加引号、标点或任何解释。",
@@ -160,11 +159,11 @@ pub async fn auto_title(
     ));
 
     let mut api_req = ApiRequest::builder()
-        .with_model(state.cheap_model.name.clone())
+        .with_model(global_cfg.cheap_model.name.clone())
         .messages(vec![prompt])
         .max_tokens(32);
 
-    for (k, v) in state.frontier_model.extra_body.iter() {
+    for (k, v) in global_cfg.frontier_model.extra_body.iter() {
         api_req.add_extra_field(k, v.clone());
     }
 
