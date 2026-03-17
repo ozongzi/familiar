@@ -1,6 +1,5 @@
-use std::collections::HashSet;
+use std::cmp;
 use std::convert::Infallible;
-use std::sync::Arc;
 
 use async_stream::stream;
 use axum::{
@@ -167,14 +166,20 @@ pub async fn sse_handler(
         .unwrap_or(false);
 
     let s = stream! {
-        // Track replayed Arc pointers so we can skip overlap duplicates from live_rx.
-        // state.attach() subscribes first then snapshots log, so events emitted in between
-        // can appear in both the replay and live channel.
-        let mut replayed_ptrs: HashSet<usize> = HashSet::new();
+        // Use sequence numbers for deduplication: every WsEvent has a globally
+        // unique monotonically-increasing seq assigned at emit() time.
+        // We track the highest seq we have already yielded; anything ≤ that
+        // seq arriving from live_rx is a duplicate and gets dropped.
+        // This replaces the old Arc-pointer trick which failed for spawn events
+        // (each relay creates a fresh Arc from a String, so pointers diverge).
+        let mut last_sent_seq: Option<u64> = None;
 
         // ── Replay the event log ─────────────────────────────────────────────
         for ev in &event_log {
-            replayed_ptrs.insert(Arc::as_ptr(ev) as usize);
+            last_sent_seq = Some(match last_sent_seq {
+                Some(s) => cmp::max(s, ev.seq),
+                None => ev.seq,
+            });
             yield Ok::<Event, Infallible>(Event::default().data(ev.payload.clone()));
         }
 
@@ -187,10 +192,13 @@ pub async fn sse_handler(
         loop {
             match live_rx.recv().await {
                 Ok(ev) => {
-                    let ptr = Arc::as_ptr(&ev) as usize;
-                    if replayed_ptrs.remove(&ptr) {
-                        continue;
+                    // Skip events we already sent during replay.
+                    if let Some(last) = last_sent_seq {
+                        if ev.seq <= last {
+                            continue;
+                        }
                     }
+                    last_sent_seq = Some(ev.seq);
                     let terminal = is_terminal(&ev.payload);
                     yield Ok(Event::default().data(ev.payload.clone()));
                     if terminal {
@@ -200,22 +208,26 @@ pub async fn sse_handler(
                 Err(broadcast::error::RecvError::Lagged(n)) => {
                     tracing::warn!(
                         conversation = %conversation_id,
-                        "SSE broadcast lagged by {n}, replaying full event log"
+                        "SSE broadcast lagged by {n}, replaying event log from seq {:?}",
+                        last_sent_seq,
                     );
                     // Re-attach to get the full log and a fresh receiver.
                     let (new_rx, new_log, _) = state.attach(conversation_id).await;
                     live_rx = new_rx;
 
-                    // Replay the full log from the top (client may see duplicates
-                    // but will not miss any events).
+                    // Replay only events we haven't sent yet (seq > last_sent_seq).
                     let new_done = new_log
                         .last()
                         .map(|ev| is_terminal(&ev.payload))
                         .unwrap_or(false);
 
-                    replayed_ptrs.clear();
                     for ev in &new_log {
-                        replayed_ptrs.insert(Arc::as_ptr(ev) as usize);
+                        if let Some(last) = last_sent_seq {
+                            if ev.seq <= last {
+                                continue;
+                            }
+                        }
+                        last_sent_seq = Some(ev.seq);
                         yield Ok(Event::default().data(ev.payload.clone()));
                     }
 

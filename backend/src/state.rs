@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -27,10 +28,18 @@ const EVENT_LOG_CAP: usize = 4096;
 // a slow subscriber starts missing messages.
 const BROADCAST_CAP: usize = 256;
 
+/// Global sequence counter — every emitted event gets a unique, monotonically
+/// increasing sequence number so SSE clients can deduplicate replays exactly.
+static NEXT_SEQ: AtomicU64 = AtomicU64::new(0);
+
 /// A single event that was (or will be) sent over WebSocket.
 /// Stored in the event log so late-joining clients can replay.
 #[derive(Debug, Clone)]
 pub struct WsEvent {
+    /// Globally unique, monotonically increasing sequence number.
+    /// The SSE client uses this to skip events it has already seen
+    /// during reconnect replay, replacing the fragile Arc-pointer trick.
+    pub seq: u64,
     pub payload: String, // serialised JSON, ready to send
 }
 
@@ -117,7 +126,8 @@ impl ChatEntry {
     /// Emit an event: append to the log and broadcast to all live subscribers.
     /// The log is capped at EVENT_LOG_CAP to avoid unbounded memory growth.
     pub fn emit(&mut self, payload: String) {
-        let ev = Arc::new(WsEvent { payload });
+        let seq = NEXT_SEQ.fetch_add(1, AtomicOrdering::Relaxed);
+        let ev = Arc::new(WsEvent { seq, payload });
         if self.event_log.len() >= EVENT_LOG_CAP {
             self.event_log.remove(0);
         }
