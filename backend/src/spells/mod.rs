@@ -16,6 +16,7 @@ use uuid::Uuid;
 use crate::config::{McpCatalogEntry, ModelConfig};
 use crate::db::Db;
 use crate::embedding::EmbeddingClient;
+#[allow(unused)]
 use a2a_spell::A2aSpell;
 use history_spell::HistorySpell;
 use manage_mcp_spell::ManageMcpSpell;
@@ -59,7 +60,7 @@ pub fn build_all_spells(deps: SpellDeps) -> ToolBundle {
     });
 
     bundle
-        .add(A2aSpell)
+        // .add(A2aSpell)
         .add(UiSpells {
             ask_pending: deps.ask_pending,
             user_id: deps.user_id,

@@ -2,6 +2,7 @@ use std::{sync::Arc, sync::atomic::AtomicBool};
 
 use crate::config::ModelConfig;
 
+#[allow(unused)]
 use super::a2a_spell::A2aSpell;
 use ds_api::{AgentEvent, DeepseekAgent, McpTool, tool, tool_trait::ToolBundle};
 use futures::StreamExt;
@@ -48,7 +49,9 @@ impl Tool for SpawnSpell {
         )
         .with_streaming()
         .with_system_prompt(self.subagent_prompt.clone().unwrap_or("".to_string()))
-        .add_tool(ToolBundle::new().add(A2aSpell));
+        .add_tool(
+            ToolBundle::new(), // .add(A2aSpell)
+        );
 
         for (k, v) in &self.cheap_model.extra_body {
             builder = builder.extra_field(k.clone(), v.clone());
