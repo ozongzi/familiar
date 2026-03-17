@@ -44,6 +44,7 @@ pub struct SpellDeps {
     pub tool_inject_tx: tokio::sync::mpsc::UnboundedSender<ToolInjection>,
     pub pool: sqlx::PgPool,
     pub user_id: Uuid,
+    pub sandbox: Arc<crate::sandbox::SandboxManager>,
     // Shared
     pub abort_flag: Arc<AtomicBool>,
 }
@@ -59,6 +60,8 @@ pub fn build_all_spells(deps: SpellDeps) -> ToolBundle {
         .add(A2aSpell)
         .add(UiSpells {
             ask_pending: deps.ask_pending,
+            user_id: deps.user_id,
+            sandbox: deps.sandbox.clone(),
         })
         .add(SpawnSpell {
             cheap_model: deps.cheap_model,
@@ -77,5 +80,6 @@ pub fn build_all_spells(deps: SpellDeps) -> ToolBundle {
             tool_inject_tx: deps.tool_inject_tx,
             pool: deps.pool,
             user_id: deps.user_id,
+            sandbox: deps.sandbox,
         })
 }

@@ -51,13 +51,25 @@ pub async fn download_file(
         })?
         .ok_or_else(AppError::unauthorized)?;
 
-    // Resolve to an absolute path (relative paths are from the process working dir).
-    let path = std::path::PathBuf::from(&q.path);
+    // Resolve to an absolute path.
+    // If the path starts with /workspace, map it back to the host path.
+    let q_path = std::path::PathBuf::from(&q.path);
+    let path = if q_path.starts_with("/workspace") {
+        let relative = q_path.strip_prefix("/workspace").unwrap();
+        state.sandbox.get_user_dir(user_id).join(relative)
+    } else {
+        q_path
+    };
 
-    // Enforce ownership: path must be within uploads/{user_id}/.
-    let user_dir = std::path::PathBuf::from("uploads").join(user_id.to_string());
+    // Enforce ownership: path must be within the sandbox workspace.
+    let user_dir = state.sandbox.get_user_dir(user_id);
+    if !user_dir.exists() {
+        tokio::fs::create_dir_all(&user_dir).await.map_err(|e| {
+            AppError::internal(&format!("无法创建用户目录: {}", e))
+        })?;
+    }
     let canonical_user_dir = tokio::fs::canonicalize(&user_dir).await.map_err(|_| {
-        AppError::not_found("文件不存在")
+        AppError::not_found("用户目录无效")
     })?;
     // Canonicalize the requested path only if it exists; otherwise reject.
     let canonical_path = tokio::fs::canonicalize(&path).await.map_err(|_| {
@@ -154,12 +166,18 @@ pub async fn preview_file(
         })?
         .ok_or_else(AppError::unauthorized)?;
 
-    let path = std::path::PathBuf::from(&q.path);
+    let q_path = std::path::PathBuf::from(&q.path);
+    let path = if q_path.starts_with("/workspace") {
+        let relative = q_path.strip_prefix("/workspace").unwrap();
+        state.sandbox.get_user_dir(user_id).join(relative)
+    } else {
+        q_path
+    };
 
     // Enforce ownership.
-    let user_dir = std::path::PathBuf::from("uploads").join(user_id.to_string());
+    let user_dir = state.sandbox.get_user_dir(user_id);
     let canonical_user_dir = tokio::fs::canonicalize(&user_dir).await.map_err(|_| {
-        AppError::not_found("文件不存在")
+        AppError::not_found("用户目录不存在")
     })?;
     let canonical_path = tokio::fs::canonicalize(&path).await.map_err(|_| {
         AppError::not_found("文件不存在")
@@ -329,8 +347,8 @@ pub async fn upload_file(
         })?
         .ok_or_else(AppError::unauthorized)?;
 
-    // Storage directory scoped to the user.
-    let upload_dir = Path::new("uploads").join(user_id.to_string());
+    // Storage directory scoped to the user (the sandbox workspace).
+    let upload_dir = state.sandbox.get_user_dir(user_id);
     tokio::fs::create_dir_all(&upload_dir)
         .await
         .map_err(|e| AppError::internal(&e.to_string()))?;
@@ -392,6 +410,9 @@ pub async fn upload_file(
     let unique_name = format!("{}-{}", uniq, safe);
 
     let dest_path = upload_dir.join(&unique_name);
+    // In the sandbox, the user_dir is mounted at /workspace
+    let sandbox_path = format!("/workspace/{}", unique_name);
+
     let mut f = File::create(&dest_path)
         .await
         .map_err(|e| AppError::internal(&e.to_string()))?;
@@ -401,7 +422,7 @@ pub async fn upload_file(
 
     let resp = UploadResponse {
         filename: unique_name.clone(),
-        path: dest_path.to_string_lossy().to_string(),
+        path: sandbox_path.clone(),
         size: data.len(),
     };
 
@@ -429,7 +450,7 @@ pub async fn upload_file(
             let content_str = json!({
                 "__type": "file_upload",
                 "filename": unique_name,
-                "path": dest_path.to_string_lossy(),
+                "path": sandbox_path,
                 "size": data.len(),
             })
             .to_string();

@@ -2,6 +2,7 @@ mod config;
 mod db;
 mod embedding;
 mod errors;
+mod sandbox;
 mod spells;
 mod state;
 mod web;

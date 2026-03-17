@@ -171,6 +171,9 @@ pub struct AppState {
     /// Embedding client — shared across all conversations.
     pub embed: EmbeddingClient,
 
+    /// Sandbox manager — handles per-user Docker containers.
+    pub sandbox: Arc<crate::sandbox::SandboxManager>,
+
     /// Named MCP tools — started at startup and updated dynamically by
     /// ManageMcpSpell. Wrapped in Arc<Mutex> so the spell can add/remove
     /// entries without going through AppState.
@@ -180,6 +183,9 @@ pub struct AppState {
 impl AppState {
     pub fn new(cfg: &Config, pool: PgPool, mcp_tools: Vec<(String, McpTool)>) -> Self {
         let db = Db::new(pool.clone());
+        let sandbox = Arc::new(crate::sandbox::SandboxManager::new(
+            std::path::PathBuf::from(&cfg.artifacts_path),
+        ));
         Self {
             chats: Arc::new(Mutex::new(HashMap::new())),
             streams: Arc::new(Mutex::new(HashMap::new())),
@@ -194,6 +200,7 @@ impl AppState {
                 cfg.embedding.api_base.clone(),
                 cfg.embedding.name.clone(),
             ),
+            sandbox,
             mcp_tools: Arc::new(tokio::sync::Mutex::new(mcp_tools)),
         }
     }
@@ -355,6 +362,7 @@ impl AppState {
             tool_inject_tx: inject_tx.clone(),
             pool: self.pool.clone(),
             user_id,
+            sandbox: self.sandbox.clone(),
             abort_flag: Arc::clone(&abort_flag),
         };
 
@@ -402,9 +410,14 @@ impl AppState {
                         })
                         .unwrap_or_default();
                     let args_ref: Vec<&str> = args.iter().map(String::as_str).collect();
+
+                    // Wrap the stdio command with Docker exec for sandboxing
+                    let (cmd, args) = self.sandbox.wrap_mcp_command(user_id, &command, &args_ref);
+                    let args_wrapped: Vec<&str> = args.iter().map(String::as_str).collect();
+
                     match tokio::time::timeout(
-                        Duration::from_secs(15),
-                        McpTool::stdio(&command, &args_ref),
+                        Duration::from_secs(300), // Increased timeout for docker
+                        McpTool::stdio(&cmd, &args_wrapped),
                     )
                     .await
                     {
@@ -414,7 +427,7 @@ impl AppState {
                             continue;
                         }
                         Err(_) => {
-                            warn!("user MCP '{name}' startup timed out (15s), skipping");
+                            warn!("user MCP '{name}' startup timed out (30s), skipping");
                             continue;
                         }
                     }

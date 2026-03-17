@@ -1,209 +1,104 @@
-# familiar
+# Familiar
 
-A personal AI agent that runs on your Linux server. Chat from any browser — on your phone or desktop.
+Familiar is a self-hosted personal AI agent designed for Linux servers. It provides a Claude-like experience with real-time streaming, live tool execution, and isolated sandboxes for every user.
 
-Built on [`ds-api`](https://github.com/ozongzi/ds-api) — Rust functions become AI tools with zero boilerplate.
+Built on [ds-api](https://github.com/ozongzi/ds-api), Familiar turns Rust functions and MCP servers into powerful AI capabilities with minimal overhead.
 
 ---
 
-## What it does
+## Key Features
 
-- Full-featured web UI (React + Vite) with real-time streaming
-- Tool calls rendered live as they happen — arguments stream in token by token
-- File editing tools with inline diff view
-- Script execution with syntax-highlighted preview
-- Per-conversation persistent history with semantic + full-text search
-- Generation survives browser refresh — reconnect and replay seamlessly
-- Interrupt or abort mid-generation from the UI
+- **Isolated Execution**: Every user gets a dedicated Docker sandbox. Tools like shell commands and file operations run in a restricted environment.
+- **Claude-style Analysis**: Rich UI for file interactions. The agent can "present" files, allowing you to preview code, view data, and download results directly in the chat.
+- **Live Tool Streaming**: Watch the agent "think" and act. Tool arguments stream in real-time, and execution results are rendered immediately.
+- **Dynamic MCP Integration**: Install and manage Model Context Protocol (MCP) servers (stdio or http) on the fly to extend the agent's capabilities.
+- **Resilient Generation**: Powered by Server-Sent Events (SSE). Generations continue on the server even if you close the browser; simply reconnect to replay the event stream.
+- **Semantic Search**: Full-text and vector-based search across your entire conversation history.
+- **Sub-Agent Support**: Complex tasks can be delegated to specialized sub-agents via the `spawn` tool.
 
 ---
 
 ## Architecture
 
-```
-Browser (any device)
+```text
+Browser (Desktop/Mobile)
   │
-  │  HTTPS / WSS
+  │  HTTPS / SSE (Server-Sent Events)
   ▼
-nginx  ──────────────────────────────────────────┐
-  │  /api/*  /ws/*  → :3000                      │
-  │  /       → /srv/familiar/client/dist (static) │
-  └─────────────────────────────────────────────┘
-                    │
-                    ▼
-           familiar (axum, :3000)
-                    │
-         ┌──────────┴──────────┐
-         │                     │
-   REST /api/*           WebSocket /ws/:id
-   (auth, files,         (streaming generation,
-    history)              tool events, interrupt/abort)
-                               │
-                        DeepseekAgent (ds-api)
-                               │
-                    ┌──────────┼──────────┐
-                 FileTool  ScriptTool  CommandTool
-                 HistoryTool  PresentFileTool
+Reverse Proxy (e.g., Caddy)
+  │
+  ▼
+Familiar Backend (Rust/Axum) <───> Postgres (pgvector)
+  │
+  │ (Dynamic Orchestration)
+  ▼
+┌─────────────────────────────────────────────────────────┐
+│ Docker Sandbox (Per-User Container)                     │
+│ ┌─────────────────────────────────────────────────────┐ │
+│ │ /workspace (Mounted Host Storage)                   │ │
+│ │                                                     │ │
+│ │ [User MCPs]         [Transient Files]               │ │
+│ │ (Shell, Python)     (Data, Logs, Charts)            │ │
+│ └─────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────┘
 ```
 
-Each conversation runs a background generation task on the server. Clients subscribe via WebSocket and receive a replay of buffered events on reconnect — the agent keeps running even if you close the tab.
+### Multi-Tenancy & Isolation
+- **System MCPs**: Defined in `config.toml`, these run on the host and are used for trusted system-level tasks.
+- **User MCPs**: Installed dynamically or loaded from the database, these run inside the user's Docker sandbox via `docker exec`.
+- **Path Mapping**: Host storage at `artifacts_path/{user_id}` is transparently mapped to `/workspace` inside the sandbox.
 
 ---
 
 ## Prerequisites
 
-- Rust toolchain (`cargo`) with `x86_64-unknown-linux-musl` target for cross-compilation
-- Node.js / Bun for building the frontend
-- A Linux server with:
-  - PostgreSQL (with `pgvector` extension)
-  - nginx
-  - A TLS certificate (Certbot recommended)
-- A DeepSeek API key from [platform.deepseek.com](https://platform.deepseek.com)
-- An embedding API endpoint (for semantic history search)
+- **Linux Server** with Docker installed.
+- **PostgreSQL** with the `pgvector` extension.
+- **Rust Toolchain** (for building the backend).
+- **Bun** (for building the frontend).
+- **LLM API Key**: DeepSeek or any OpenAI-compatible provider.
 
 ---
 
-## Environment variables
+## Getting Started
 
-| Variable | Required | Default | Description |
-|---|---|---|---|
-| `DATABASE_URL` | ✅ | — | PostgreSQL connection string |
-| `DEEPSEEK_API_KEY` | ✅ | — | DeepSeek API key |
-| `JWT_SECRET` | ✅ | — | Secret for signing auth tokens |
-| `EMBED_URL` | ✅ | — | Embedding API base URL |
-| `EMBED_API_KEY` | ✅ | — | Embedding API key |
-| `PORT` | — | `3000` | Port the server listens on |
-| `SYSTEM_PROMPT` | — | — | System prompt prepended to every conversation |
-| `RUST_LOG` | — | `info` | Log level |
-
----
-
-## Build & deploy
-
-A `Makefile` at the workspace root handles everything:
+### 1. Build & Deploy
+The project uses a `Makefile` to simplify cross-compilation and deployment:
 
 ```bash
-# Full build (frontend + cross-compiled backend) and deploy to server
+# Cross-compile backend, build frontend, and deploy to your server
 make deploy
 
-# Build backend only (cross-compiled musl binary for Linux)
-make build
-
-# Build frontend only
-make build-client
-
-# Local dev
-make dev-server   # backend on :3000
-make dev-client   # Vite dev server with proxy
+# Or run locally for development
+make dev-server   # Starts backend on :3000
+make dev-client   # Starts Vite dev server on :5173
 ```
 
-`make deploy` does:
-1. Builds the frontend (`bun run build`)
-2. Cross-compiles the backend (`x86_64-unknown-linux-musl`)
-3. `scp`s the binary to `/usr/local/bin/familiar`
-4. `rsync`s `dist/` to `/srv/familiar/client/dist/`
-5. Restarts the `familiar` systemd service
+### 2. Environment Variables
+Familiar reads configuration from a `config.toml` (specified by `FAMILIAR_CONFIG`). Key settings include:
 
-### First-time server setup
+| Variable | Description |
+|---|---|
+| `DATABASE_URL` | PostgreSQL connection string |
+| `DEEPSEEK_API_KEY` | Your LLM provider API key |
+| `artifacts_path` | Host directory for user sandboxes |
+| `EMBED_URL` | Embedding API endpoint for semantic search |
 
-**1. PostgreSQL**
+### 3. Service Configuration
+It is recommended to run Familiar as a `systemd` service and use a reverse proxy like **Caddy** to handle SSL/TLS and proxy the SSE/API traffic.
 
-```bash
-sudo -u postgres psql -c "CREATE USER familiar WITH PASSWORD 'yourpassword';"
-sudo -u postgres psql -c "CREATE DATABASE familiar OWNER familiar;"
-sudo -u postgres psql -d familiar -c "CREATE EXTENSION vector;"
-```
+---
 
-**2. Configuration file**
+## Development
 
-```bash
-sudo mkdir -p /etc/familiar
-sudo nano /etc/familiar/config.toml   # fill in the variables above
-sudo chmod 600 /etc/familiar/config.toml
-```
-
-**3. Systemd unit**
-
-```ini
-[Unit]
-Description=Familiar — personal AI agent
-After=network.target postgresql.service
-Requires=postgresql.service
-
-[Service]
-Type=simple
-WorkingDirectory=/srv/familiar
-Environment=RUST_LOG=info
-ExecStart=/usr/local/bin/familiar
-# Notes: configuration is read from /etc/familiar/config.toml by the service
-Restart=on-failure
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-```
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable familiar
-sudo systemctl start familiar
-```
-
-**4. nginx**
-
-```nginx
-server {
-    server_name familiar.yourdomain.com;
-
-    location / {
-        root /srv/familiar/client/dist;
-        try_files $uri $uri/ /index.html;
-    }
-
-    location /api/ {
-        proxy_pass http://127.0.0.1:3000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_read_timeout 300s;
-    }
-
-    location /ws/ {
-        proxy_pass http://127.0.0.1:3000;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Host $host;
-        proxy_read_timeout 3600s;
-    }
-
-    listen 443 ssl;
-    ssl_certificate     /etc/letsencrypt/live/familiar.yourdomain.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/familiar.yourdomain.com/privkey.pem;
-    include /etc/letsencrypt/options-ssl-nginx.conf;
-    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
-}
-
-server {
-    if ($host = familiar.yourdomain.com) {
-        return 301 https://$host$request_uri;
-    }
-    listen 80;
-    server_name familiar.yourdomain.com;
-    return 404;
-}
-```
-
-Get a TLS certificate:
-
-```bash
-sudo apt install certbot python3-certbot-nginx
-sudo certbot --nginx -d familiar.yourdomain.com
-```
+- **Backend**: Rust (Axum, sqlx, ds-api). Spells (tools) are located in `backend/src/spells/`.
+- **Frontend**: React (TypeScript, Vite, CSS Modules).
+- **Database Migrations**: Located in `backend/migrations/`.
 
 ---
 
 ## Logs
-
+Monitor the agent's activity and sandbox execution:
 ```bash
 journalctl -u familiar -f
 ```

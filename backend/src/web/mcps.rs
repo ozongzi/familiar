@@ -141,7 +141,12 @@ pub async fn create_mcp(
                 })
                 .unwrap_or_default();
             let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-            match timeout(Duration::from_secs(15), McpTool::stdio(command, &args_ref)).await {
+
+            // Wrap with Docker exec
+            let (cmd, args_wrapped_vec) = state.sandbox.wrap_mcp_command(auth.user_id, command, &args_ref);
+            let args_wrapped: Vec<&str> = args_wrapped_vec.iter().map(|s| s.as_str()).collect();
+
+            match timeout(Duration::from_secs(300), McpTool::stdio(&cmd, &args_wrapped)).await {
                 Ok(Ok(t)) => Some(t),
                 Ok(Err(e)) => {
                     warn!("create_mcp: failed to start MCP stdio '{}': {}", command, e);
@@ -252,7 +257,12 @@ pub async fn update_mcp(
                 })
                 .unwrap_or_default();
             let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-            match timeout(Duration::from_secs(15), McpTool::stdio(command, &args_ref)).await {
+
+            // Wrap with Docker exec
+            let (cmd, args_wrapped_vec) = state.sandbox.wrap_mcp_command(auth.user_id, command, &args_ref);
+            let args_wrapped: Vec<&str> = args_wrapped_vec.iter().map(|s| s.as_str()).collect();
+
+            match timeout(Duration::from_secs(300), McpTool::stdio(&cmd, &args_wrapped)).await {
                 Ok(Ok(t)) => Some(t),
                 Ok(Err(e)) => {
                     warn!("update_mcp: failed to start MCP stdio '{}': {}", command, e);
@@ -360,7 +370,12 @@ pub async fn delete_mcp(
                 })
                 .unwrap_or_default();
             let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-            match timeout(Duration::from_secs(15), McpTool::stdio(&command, &args_ref)).await {
+
+            // Wrap with Docker exec
+            let (cmd, args_wrapped_vec) = state.sandbox.wrap_mcp_command(auth.user_id, &command, &args_ref);
+            let args_wrapped: Vec<&str> = args_wrapped_vec.iter().map(|s| s.as_str()).collect();
+
+            match timeout(Duration::from_secs(300), McpTool::stdio(&cmd, &args_wrapped)).await {
                 Ok(Ok(t)) => t
                     .raw_tools()
                     .iter()

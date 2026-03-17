@@ -19,6 +19,8 @@ pub struct ManageMcpSpell {
     pub pool: PgPool,
     /// The authenticated user's id.
     pub user_id: Uuid,
+    /// Sandbox manager.
+    pub sandbox: Arc<crate::sandbox::SandboxManager>,
 }
 
 #[tool]
@@ -117,12 +119,17 @@ impl Tool for ManageMcpSpell {
         }
 
         let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-        let tool = match timeout(Duration::from_secs(15), McpTool::stdio(&command, &args_ref)).await
+
+        // Wrap with Docker exec for sandboxing
+        let (cmd, args_wrapped_vec) = self.sandbox.wrap_mcp_command(self.user_id, &command, &args_ref);
+        let args_wrapped: Vec<&str> = args_wrapped_vec.iter().map(|s| s.as_str()).collect();
+
+        let tool = match timeout(Duration::from_secs(300), McpTool::stdio(&cmd, &args_wrapped)).await
         {
             Ok(Ok(t)) => t,
             Ok(Err(e)) => return json!({ "error": format!("启动失败: {e}") }),
             Err(_) => {
-                return json!({ "error": format!("启动超时（15s），请检查命令是否有效: {command}") });
+                return json!({ "error": format!("启动超时（300s），请检查命令是否有效: {command}") });
             }
         };
         let tool_count = tool.raw_tools().len();
