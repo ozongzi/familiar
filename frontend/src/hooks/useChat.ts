@@ -377,6 +377,7 @@ export function useChat(
   useEffect(() => {
     processEventRef.current = (event: WsServerEvent): boolean => {
       if (event.type === "user_interrupt") {
+        sealActiveText();
         return false;
       } else if (event.type === "aborted") {
         sealActiveText();
@@ -611,10 +612,17 @@ export function useChat(
       (err) => {
         console.error("[SSE] reattach error:", err);
         reattachingRef.current = false;
-        if (statusRef.current === "streaming" || statusRef.current === "connecting") {
+        if (
+          statusRef.current === "streaming" ||
+          statusRef.current === "connecting"
+        ) {
           // Keep trying while a generation is still expected to be active.
           setTimeout(() => {
-            if (statusRef.current !== "streaming" && statusRef.current !== "connecting") return;
+            if (
+              statusRef.current !== "streaming" &&
+              statusRef.current !== "connecting"
+            )
+              return;
             attachedConvRef.current = null;
             reattach(convId, tok);
           }, SSE_REATTACH_DELAY_MS);

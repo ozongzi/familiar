@@ -987,12 +987,18 @@ async fn run_generation(
                             let queued_interrupt = {
                                 let mut map = state.chats.lock().unwrap();
                                 if let Some(entry) = map.get_mut(&conversation_id) {
-                                    entry.emit(json!({"type": "done"}).to_string());
-                                    entry.generating = false;
+                                    let next_interrupt = entry.queued_interrupts.drain(..).next();
+                                    if next_interrupt.is_some() {
+                                        entry.emit(json!({"type": "user_interrupt"}).to_string());
+                                    } else {
+                                        entry.emit(json!({"type": "done"}).to_string());
+                                        entry.generating = false;
+                                    }
+
                                     if let Some(agent) = recovered {
                                         entry.agent = Some(agent);
                                     }
-                                    entry.queued_interrupts.drain(..).next()
+                                    next_interrupt
                                 } else {
                                     None
                                 }
@@ -1045,12 +1051,18 @@ async fn run_generation(
     {
         let mut map = state.chats.lock().unwrap();
         if let Some(entry) = map.get_mut(&conversation_id) {
-            entry.emit(json!({"type": "done"}).to_string());
-            entry.generating = false;
+            let next_interrupt = entry.queued_interrupts.drain(..).next();
+            if next_interrupt.is_some() {
+                entry.emit(json!({"type": "user_interrupt"}).to_string());
+            } else {
+                entry.emit(json!({"type": "done"}).to_string());
+                entry.generating = false;
+            }
+
             if let Some(agent) = recovered {
                 entry.agent = Some(agent);
             }
-            entry.queued_interrupts.drain(..).next()
+            next_interrupt
         } else {
             None
         }
