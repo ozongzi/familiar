@@ -1,0 +1,32 @@
+.avatar, .placeholder {
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-weight: 600;
+  user-select: none;
+}
+
+.sm {
+  width: 32px;
+  height: 32px;
+  font-size: 0.85em;
+}
+
+.md {
+  width: 48px;
+  height: 48px;
+  font-size: 1.1em;
+}
+
+.lg {
+  width: 96px;
+  height: 96px;
+  font-size: 2em;
+}

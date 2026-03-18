@@ -14,6 +14,8 @@ use crate::web::auth::AuthUser;
 pub struct UserSettingsResponse {
     pub mode: String,
     pub api_key: Option<String>,
+    pub api_base: Option<String>,
+    pub model_name: Option<String>,
     pub system_prompt: Option<String>,
 }
 
@@ -21,6 +23,8 @@ pub struct UserSettingsResponse {
 pub struct UpdateSettingsRequest {
     pub mode: String,
     pub api_key: Option<String>,
+    pub api_base: Option<String>,
+    pub model_name: Option<String>,
     pub system_prompt: Option<String>,
 }
 
@@ -65,6 +69,20 @@ pub async fn get_settings(
             .and_then(|v| v.get("api_key"))
             .and_then(|v| v.as_str())
             .map(str::to_string);
+        
+        let api_base = r
+            .frontier_model
+            .as_ref()
+            .and_then(|v| v.get("api_base"))
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+
+        let model_name = r
+            .frontier_model
+            .as_ref()
+            .and_then(|v| v.get("name"))
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
 
         if api_key.is_some()
             && r.system_prompt
@@ -74,6 +92,8 @@ pub async fn get_settings(
             return Ok(Json(UserSettingsResponse {
                 mode: "custom".to_string(),
                 api_key,
+                api_base,
+                model_name,
                 system_prompt: r.system_prompt,
             }));
         }
@@ -82,6 +102,8 @@ pub async fn get_settings(
     Ok(Json(UserSettingsResponse {
         mode: "default".to_string(),
         api_key: None,
+        api_base: None,
+        model_name: None,
         system_prompt: None,
     }))
 }
@@ -114,6 +136,16 @@ pub async fn update_settings(
                 .clone()
                 .filter(|s| !s.trim().is_empty())
                 .ok_or_else(|| AppError::bad_request("自定义模式必须填写 API Key"))?;
+            let api_base = req
+                .api_base
+                .clone()
+                .filter(|s| !s.trim().is_empty())
+                .ok_or_else(|| AppError::bad_request("自定义模式必须填写 API Base"))?;
+            let model_name = req
+                .model_name
+                .clone()
+                .filter(|s| !s.trim().is_empty())
+                .ok_or_else(|| AppError::bad_request("自定义模式必须填写 Model Name"))?;
             let system_prompt = req
                 .system_prompt
                 .clone()
@@ -124,9 +156,13 @@ pub async fn update_settings(
 
             let mut frontier = global_cfg.frontier_model;
             frontier.api_key = api_key.clone();
+            frontier.api_base = api_base.clone();
+            frontier.name = model_name.clone();
 
             let mut cheap = global_cfg.cheap_model;
             cheap.api_key = api_key;
+            cheap.api_base = api_base;
+            cheap.name = model_name;
 
             sqlx::query(
                 r#"

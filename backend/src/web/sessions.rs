@@ -1,4 +1,4 @@
-use axum::{Json, extract::State};
+use axum::{Json, extract::State, http::HeaderMap};
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 
@@ -19,6 +19,7 @@ pub struct LoginResponse {
 
 pub async fn login(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(req): Json<LoginRequest>,
 ) -> AppResult<Json<LoginResponse>> {
     let row = sqlx::query("SELECT id, password_hash FROM users WHERE name = $1")
@@ -47,6 +48,24 @@ pub async fn login(
         .execute(&state.pool)
         .await?;
 
+    // Update last login time
+    sqlx::query("UPDATE users SET last_login_at = NOW() WHERE id = $1")
+        .bind(id)
+        .execute(&state.pool)
+        .await?;
+
+    // Log login audit
+    let ip_address = extract_ip(&headers);
+    let _ = crate::audit::log_audit(
+        &state.pool,
+        Some(id),
+        Some(id),
+        "login",
+        Some(serde_json::json!({ "name": &req.name })),
+        ip_address,
+    )
+    .await;
+
     Ok(Json(LoginResponse { token }))
 }
 
@@ -71,4 +90,20 @@ fn generate_token() -> String {
         write!(s, "{b:02x}").unwrap();
     }
     s
+}
+
+fn extract_ip(headers: &HeaderMap) -> Option<String> {
+    // Try X-Forwarded-For first (for proxies)
+    if let Some(forwarded) = headers.get("x-forwarded-for") {
+        if let Ok(s) = forwarded.to_str() {
+            return Some(s.split(',').next().unwrap_or("").trim().to_string());
+        }
+    }
+    // Try X-Real-IP
+    if let Some(real_ip) = headers.get("x-real-ip") {
+        if let Ok(s) = real_ip.to_str() {
+            return Some(s.to_string());
+        }
+    }
+    None
 }

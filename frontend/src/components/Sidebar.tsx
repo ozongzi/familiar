@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, type KeyboardEvent } from "react";
-import type { Conversation } from "../api/types";
+import type { Conversation, MeResponse } from "../api/types";
+import { Avatar } from "./Avatar";
 import styles from "./Sidebar.module.css";
 
 interface Props {
@@ -11,6 +12,7 @@ interface Props {
   onDelete: (id: string) => void;
   onRename: (id: string, name: string) => void;
   userName: string;
+  user?: MeResponse | null;
   onLogout: () => void;
   onOpenSettings?: () => void;
   isOpen?: boolean;
@@ -26,6 +28,7 @@ export function Sidebar({
   onDelete,
   onRename,
   userName,
+  user,
   onLogout,
   onOpenSettings,
   isOpen = false,
@@ -198,11 +201,26 @@ export function Sidebar({
 
       {/* Footer / user info */}
       <div className={styles.footer}>
-        <span className={styles.userName} title={userName}>
-          <UserIcon />
-          {userName}
-        </span>
-        <div style={{ display: "flex", gap: "8px" }}>
+        <div className={styles.userInfo}>
+          {user && <Avatar user={user} size="sm" />}
+          <span className={styles.userName} title={userName}>
+            {userName}
+          </span>
+        </div>
+        <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+          {user?.is_admin && (
+            <button
+              className={styles.adminBtn}
+              onClick={() => {
+                window.history.pushState({}, "", "/admin");
+                window.dispatchEvent(new PopStateEvent("popstate"));
+              }}
+              title="管理面板"
+              aria-label="打开管理面板"
+            >
+              👑
+            </button>
+          )}
           <button
             className={styles.logoutBtn}
             onClick={onOpenSettings}
@@ -343,24 +361,24 @@ function CheckIcon() {
   );
 }
 
-function UserIcon() {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-      <circle cx="12" cy="7" r="4" />
-    </svg>
-  );
-}
+// function UserIcon() {
+//   return (
+//     <svg
+//       width="14"
+//       height="14"
+//       viewBox="0 0 24 24"
+//       fill="none"
+//       stroke="currentColor"
+//       strokeWidth="2"
+//       strokeLinecap="round"
+//       strokeLinejoin="round"
+//       aria-hidden="true"
+//     >
+//       <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+//       <circle cx="12" cy="7" r="4" />
+//     </svg>
+//   );
+// }
 
 // function PlugIcon() {
 //   return (

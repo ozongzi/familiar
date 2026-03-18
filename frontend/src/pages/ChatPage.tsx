@@ -271,6 +271,7 @@ export function ChatPage() {
           onDelete={handleDelete}
           onRename={handleRename}
           userName={user?.name ?? ""}
+          user={user}
           onLogout={logout}
           onOpenSettings={() => setSettingsOpen(true)}
           isOpen={sidebarOpen}
@@ -283,7 +284,7 @@ export function ChatPage() {
       )}
 
       {settingsOpen && token && (
-        <UserSettingsModal token={token} isAdmin={!!user?.is_admin} onClose={() => setSettingsOpen(false)} />
+        <UserSettingsModal token={token} onClose={() => setSettingsOpen(false)} />
       )}
 
       {/* Main panel */}

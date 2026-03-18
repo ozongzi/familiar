@@ -1,3 +1,4 @@
+mod audit;
 mod config;
 mod db;
 mod embedding;

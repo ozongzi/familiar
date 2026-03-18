@@ -323,12 +323,17 @@ function PlugIcon() {
       strokeLinejoin="round"
       aria-hidden="true"
     >
-      <path d="M18 7l-1.5-1.5" />
-      <path d="M6 7l1.5-1.5" />
-      <path d="M12 2v2" />
-      <rect x="4" y="7" width="16" height="8" rx="2" />
-      <path d="M12 17v3" />
-      <path d="M9 20h6" />
+      <path
+        d="M6 2 c0 1.6 1.4 3 3 3 c-1.6 0 -3 1.4 -3 3 c0 -1.6 -1.4 -3 -3 -3 c1.4 0 3 -1.4 3 -3 z"
+        fill="currentColor"
+        stroke="none"
+      />
+      <path
+        d="M19 16 c0 1.1 0.9 2 2 2 c-1.1 0 -2 0.9 -2 2 c0 -1.1 -0.9 -2 -2 -2 c1.1 0 2 -0.9 2 -2 z"
+        fill="currentColor"
+        stroke="none"
+      />
+      <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
     </svg>
   );
 }

@@ -20,6 +20,10 @@ export function McpSettings({ token, onClose }: Props) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  
+  // Separate state for env JSON editing
+  const [envJsonStr, setEnvJsonStr] = useState<string>("{}");
+  const [envJsonError, setEnvJsonError] = useState<string>("");
 
   useEffect(() => {
     api.listMcps(token).then(setMcps).catch(() => {});
@@ -29,12 +33,18 @@ export function McpSettings({ token, onClose }: Props) {
     setForm(EMPTY_FORM);
     setEditingId(null);
     setError("");
+    setEnvJsonStr("{}");
+    setEnvJsonError("");
   }
 
   function startEdit(mcp: Mcp) {
     setEditingId(mcp.id);
     setForm({ name: mcp.name, type: mcp.type, config: mcp.config });
     setError("");
+    // Initialize envJsonStr from existing env
+    const env = (mcp.config.env as Record<string, string>) || {};
+    setEnvJsonStr(JSON.stringify(env, null, 2));
+    setEnvJsonError("");
   }
 
   function handleTypeChange(type: "http" | "stdio") {
@@ -43,18 +53,36 @@ export function McpSettings({ token, onClose }: Props) {
       type,
       config: type === "http" ? { url: "" } : { command: "", args: [] },
     }));
+    if (type === "stdio") {
+      setEnvJsonStr("{}");
+      setEnvJsonError("");
+    }
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
+    
+    // Validate and parse env JSON for stdio type
+    let finalConfig = { ...form.config };
+    if (form.type === 'stdio') {
+      try {
+        const env = JSON.parse(envJsonStr);
+        finalConfig.env = env;
+      } catch (e) {
+        setError("Environment Variables JSON 格式错误");
+        return;
+      }
+    }
+    
     setLoading(true);
     try {
+      const submissionForm = { ...form, config: finalConfig };
       if (editingId) {
-        const updated = await api.updateMcp(token, editingId, form);
+        const updated = await api.updateMcp(token, editingId, submissionForm);
         setMcps((prev) => prev.map((m) => (m.id === editingId ? updated : m)));
       } else {
-        const created = await api.createMcp(token, form);
+        const created = await api.createMcp(token, submissionForm);
         setMcps((prev) => [...prev, created]);
       }
       resetForm();
@@ -193,21 +221,47 @@ export function McpSettings({ token, onClose }: Props) {
                 />
               </div>
               <div className={styles.row}>
-                <label className={styles.label}>参数 (Arguments)</label>
-                <input
-                  className={styles.input}
-                  value={(form.config.args as string[] | undefined ?? []).join(" ")}
+                <label className={styles.label}>参数 (Arguments, 每行一个)</label>
+                <textarea
+                  className={styles.textarea}
+                  value={(form.config.args as string[] | undefined ?? []).join("\n")}
                   onChange={(e) =>
                     setForm((f) => ({
                       ...f,
                       config: {
                         ...f.config,
-                        args: e.target.value.split(" ").filter(Boolean),
+                        args: e.target.value.split("\n").filter(Boolean),
                       },
                     }))
                   }
-                  placeholder="e.g. -y @wonderwhy-er/desktop-commander"
+                  placeholder="-y&#10;@wonderwhy-er/desktop-commander"
+                  rows={3}
+                  style={{ fontFamily: "monospace", fontSize: "13px" }}
                 />
+              </div>
+              <div className={styles.row}>
+                <label className={styles.label}>环境变量 (Environment Variables, JSON)</label>
+                <textarea
+                  className={styles.textarea}
+                  value={envJsonStr}
+                  onChange={(e) => {
+                    setEnvJsonStr(e.target.value);
+                    try {
+                      JSON.parse(e.target.value);
+                      setEnvJsonError("");
+                    } catch (err) {
+                      setEnvJsonError(err instanceof Error ? err.message : "Invalid JSON");
+                    }
+                  }}
+                  placeholder='{"API_KEY": "your-key-here"}'
+                  rows={4}
+                  style={{ fontFamily: "monospace", fontSize: "13px" }}
+                />
+                {envJsonError && (
+                  <span style={{ color: "#ff4444", fontSize: "12px", marginTop: "4px", display: "block" }}>
+                    {envJsonError}
+                  </span>
+                )}
               </div>
             </>
           )}

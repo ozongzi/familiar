@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::PgPool;
 use std::collections::HashMap;
+use uuid::Uuid;
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Config {
@@ -15,6 +16,14 @@ pub struct Config {
     pub mcp: Vec<McpServerConfig>,
     #[serde(default)]
     pub mcp_catalog: Vec<McpCatalogEntry>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct McpCatalogEntry {
+    pub name: String,
+    pub description: String,
+    pub command: String,
+    pub args: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -50,19 +59,26 @@ pub enum McpServerConfig {
     },
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
-pub struct McpCatalogEntry {
+#[derive(Debug, Deserialize, Serialize, Clone, sqlx::FromRow)]
+pub struct GlobalMcp {
+    pub id: Uuid,
     pub name: String,
-    #[serde(default)]
-    pub description: String,
-    pub command: String,
-    #[serde(default)]
-    pub args: Vec<String>,
+    pub r#type: String,
+    pub config: Value,
+    pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
 #[derive(Debug, Deserialize, sqlx::FromRow)]
 struct AppConfigRow {
-    config_json: Value,
+    public_path: Option<String>,
+    artifacts_path: Option<String>,
+    frontier_model: Option<Value>,
+    cheap_model: Option<Value>,
+    embedding_model: Option<Value>,
+    server_port: Option<i32>,
+    system_prompt: Option<String>,
+    subagent_prompt: Option<String>,
+    mcp_catalog: Option<Value>,
 }
 
 #[derive(Debug, Clone)]
@@ -106,33 +122,92 @@ impl Default for Config {
 
 impl Config {
     pub async fn load_from_db(pool: &PgPool) -> anyhow::Result<Self> {
-        let row =
-            sqlx::query_as::<_, AppConfigRow>("SELECT config_json FROM app_config WHERE id = true")
-                .fetch_optional(pool)
-                .await?;
+        let row = sqlx::query_as::<_, AppConfigRow>(
+            r#"
+            SELECT 
+                public_path, artifacts_path, frontier_model, cheap_model, embedding_model, 
+                server_port, system_prompt, subagent_prompt, mcp_catalog 
+            FROM app_config WHERE id = true
+            "#,
+        )
+        .fetch_optional(pool)
+        .await?;
 
-        if let Some(row) = row {
-            let cfg: Config = serde_json::from_value(row.config_json)?;
-            Ok(cfg)
-        } else {
-            Ok(Self::default())
+        let mut cfg = Self::default();
+
+        if let Some(r) = row {
+            if let Some(pp) = r.public_path { cfg.public_path = pp; }
+            if let Some(ap) = r.artifacts_path { cfg.artifacts_path = ap; }
+            if let Some(fm) = r.frontier_model { cfg.frontier_model = serde_json::from_value(fm).unwrap_or(cfg.frontier_model); }
+            if let Some(cm) = r.cheap_model { cfg.cheap_model = serde_json::from_value(cm).unwrap_or(cfg.cheap_model); }
+            if let Some(em) = r.embedding_model { cfg.embedding = serde_json::from_value(em).unwrap_or(cfg.embedding); }
+            
+            if let Some(port) = r.server_port { cfg.server.port = port as u16; }
+            cfg.server.system_prompt = r.system_prompt;
+            cfg.server.subagent_prompt = r.subagent_prompt;
+            
+            if let Some(mc) = r.mcp_catalog { cfg.mcp_catalog = serde_json::from_value(mc).unwrap_or(cfg.mcp_catalog); }
         }
+
+        // Load Global MCPs
+        let mcps = sqlx::query_as::<_, GlobalMcp>("SELECT * FROM global_mcps ORDER BY created_at ASC")
+            .fetch_all(pool)
+            .await?;
+        
+        cfg.mcp = mcps.into_iter().map(|m| {
+            match m.r#type.as_str() {
+                "http" => {
+                    let url = m.config.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    McpServerConfig::Http { name: m.name, url }
+                },
+                "stdio" => {
+                    let command = m.config.get("command").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let args = m.config.get("args").and_then(|v| serde_json::from_value(v.clone()).ok()).unwrap_or_default();
+                    let env = m.config.get("env").and_then(|v| serde_json::from_value(v.clone()).ok()).unwrap_or_default();
+                    McpServerConfig::Studio { name: m.name, command, args, env }
+                },
+                _ => McpServerConfig::Http { name: m.name, url: "".to_string() }, // Fallback
+            }
+        }).collect();
+
+        Ok(cfg)
     }
 
     pub async fn upsert(pool: &PgPool, cfg: &Config) -> anyhow::Result<()> {
-        let payload = serde_json::to_value(cfg)?;
         sqlx::query(
             r#"
-            INSERT INTO app_config (id, config_json, updated_at)
-            VALUES (true, $1, NOW())
+            INSERT INTO app_config (
+                id, public_path, artifacts_path, frontier_model, cheap_model, embedding_model, 
+                server_port, system_prompt, subagent_prompt, mcp_catalog, updated_at
+            )
+            VALUES (true, $1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
             ON CONFLICT (id) DO UPDATE SET
-                config_json = EXCLUDED.config_json,
+                public_path = EXCLUDED.public_path,
+                artifacts_path = EXCLUDED.artifacts_path,
+                frontier_model = EXCLUDED.frontier_model,
+                cheap_model = EXCLUDED.cheap_model,
+                embedding_model = EXCLUDED.embedding_model,
+                server_port = EXCLUDED.server_port,
+                system_prompt = EXCLUDED.system_prompt,
+                subagent_prompt = EXCLUDED.subagent_prompt,
+                mcp_catalog = EXCLUDED.mcp_catalog,
                 updated_at = NOW()
             "#,
         )
-        .bind(payload)
+        .bind(&cfg.public_path)
+        .bind(&cfg.artifacts_path)
+        .bind(serde_json::to_value(&cfg.frontier_model)?)
+        .bind(serde_json::to_value(&cfg.cheap_model)?)
+        .bind(serde_json::to_value(&cfg.embedding)?)
+        .bind(cfg.server.port as i32)
+        .bind(&cfg.server.system_prompt)
+        .bind(&cfg.server.subagent_prompt)
+        .bind(serde_json::to_value(&cfg.mcp_catalog)?)
         .execute(pool)
         .await?;
+        
+        // Note: Global MCPs are NOT updated here. Use dedicated endpoints.
+        
         Ok(())
     }
 

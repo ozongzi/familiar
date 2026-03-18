@@ -13,7 +13,9 @@ use std::{path::Path, sync::Arc};
 
 use admin::{
     create_app_skill, delete_app_skill, get_admin_config, list_app_skills, update_admin_config,
-    update_app_skill,
+    update_app_skill, list_users, create_user, update_user, delete_user, reset_user_password,
+    list_audit_logs,
+    list_global_mcps, create_global_mcp, update_global_mcp, delete_global_mcp,
 };
 use axum::extract::DefaultBodyLimit;
 use axum::{
@@ -29,7 +31,7 @@ use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::{ServeDir, ServeFile};
 
 use conversations::*;
-use files::{download_file, preview_file, upload_file};
+use files::{download_file, preview_file, upload_file, upload_avatar, get_avatar};
 use history::*;
 use sessions::*;
 use sse::*;
@@ -69,16 +71,33 @@ pub fn create_router(state: AppState) -> Router {
         // ── Users ─────────────────────────────────────────────────────────────
         .route("/api/users", post(register))
         .route("/api/users/me", get(get_me))
+        .route("/api/users/me/profile", put(update_profile))
+        .route("/api/users/me/password", put(update_password))
+        .route("/api/users/me/avatar", post(upload_avatar))
+        // ── Avatars ───────────────────────────────────────────────────────────
+        .route("/api/avatars/{user_id}", get(get_avatar))
         // ── Settings ──────────────────────────────────────────────────────────
         .route("/api/settings", get(get_settings))
         .route("/api/settings", post(update_settings))
         // ── Admin Config ─────────────────────────────────────────────────────
         .route("/api/admin/config", get(get_admin_config))
         .route("/api/admin/config", post(update_admin_config))
+        .route("/api/admin/mcps", get(list_global_mcps))
+        .route("/api/admin/mcps", post(create_global_mcp))
+        .route("/api/admin/mcps/{id}", put(update_global_mcp))
+        .route("/api/admin/mcps/{id}", delete(delete_global_mcp))
         .route("/api/admin/skills", get(list_app_skills))
         .route("/api/admin/skills", post(create_app_skill))
         .route("/api/admin/skills/{id}", put(update_app_skill))
         .route("/api/admin/skills/{id}", delete(delete_app_skill))
+        // ── Admin User Management ────────────────────────────────────────────
+        .route("/api/admin/users", get(list_users))
+        .route("/api/admin/users", post(create_user))
+        .route("/api/admin/users/{id}", put(update_user))
+        .route("/api/admin/users/{id}", delete(delete_user))
+        .route("/api/admin/users/{id}/reset-password", post(reset_user_password))
+        // ── Admin Audit Logs ─────────────────────────────────────────────────
+        .route("/api/admin/audit-logs", get(list_audit_logs))
         // ── User Skills (per-user) ─────────────────────────────────────────────
         .route("/api/skills", get(list_skills))
         .route("/api/skills", post(create_skill))

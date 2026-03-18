@@ -482,3 +482,174 @@ pub async fn upload_file(
 
     Ok((StatusCode::CREATED, Json(resp)))
 }
+
+// ─── Avatar Upload ────────────────────────────────────────────────────────────
+
+/// POST /api/users/me/avatar
+/// Upload avatar image for the current user
+pub async fn upload_avatar(
+    State(state): State<AppState>,
+    bearer: Option<TypedHeader<Authorization<Bearer>>>,
+    mut multipart: Multipart,
+) -> Result<(StatusCode, Json<serde_json::Value>), AppError> {
+    let token = bearer
+        .as_ref()
+        .map(|TypedHeader(Authorization(b))| b.token().to_string())
+        .ok_or_else(AppError::unauthorized)?;
+
+    let user_id: Uuid = sqlx::query_scalar("SELECT user_id FROM sessions WHERE token = $1")
+        .bind(&token)
+        .fetch_optional(&state.pool)
+        .await
+        .map_err(|e| {
+            tracing::error!("avatar upload auth query: {e}");
+            AppError::internal("数据库错误")
+        })?
+        .ok_or_else(AppError::unauthorized)?;
+
+    // Get the avatars directory
+    let avatars_dir = std::path::PathBuf::from(&state.artifacts_path).join("avatars");
+    tokio::fs::create_dir_all(&avatars_dir)
+        .await
+        .map_err(|e| AppError::internal(&format!("无法创建头像目录: {}", e)))?;
+
+    // Parse multipart to get file
+    let mut file_data: Option<bytes::Bytes> = None;
+    let mut file_ext: Option<String> = None;
+
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| AppError::bad_request(&format!("multipart 解析错误: {}", e)))?
+    {
+        if let Some(name) = field.name() {
+            if name == "avatar" || name == "file" {
+                // Get original filename to extract extension
+                if let Some(filename) = field.file_name() {
+                    let ext = std::path::Path::new(filename)
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .map(|e| e.to_lowercase());
+                    
+                    // Validate file extension
+                    match ext.as_deref() {
+                        Some("jpg") | Some("jpeg") | Some("png") | Some("webp") => {
+                            file_ext = ext;
+                        }
+                        _ => {
+                            return Err(AppError::bad_request("仅支持 JPG、PNG 或 WebP 格式"));
+                        }
+                    }
+                }
+
+                let data = field
+                    .bytes()
+                    .await
+                    .map_err(|e| AppError::internal(&format!("读取文件数据错误: {}", e)))?;
+
+                // Validate file size (max 2MB)
+                const MAX_SIZE: usize = 2 * 1024 * 1024;
+                if data.len() > MAX_SIZE {
+                    return Err(AppError::bad_request("文件大小不能超过 2MB"));
+                }
+
+                file_data = Some(data);
+                break;
+            }
+        }
+    }
+
+    let (data, ext) = match (file_data, file_ext) {
+        (Some(d), Some(e)) => (d, e),
+        _ => return Err(AppError::bad_request("未找到有效的头像文件")),
+    };
+
+    // Get old avatar path to delete it
+    let old_avatar: Option<String> = sqlx::query_scalar("SELECT avatar_path FROM users WHERE id = $1")
+        .bind(user_id)
+        .fetch_optional(&state.pool)
+        .await?;
+
+    // Generate new filename: <user_id>.<ext>
+    let avatar_filename = format!("{}.{}", user_id, ext);
+    let avatar_path = avatars_dir.join(&avatar_filename);
+    let avatar_db_path = format!("avatars/{}", avatar_filename);
+
+    // Save the file
+    let mut file = File::create(&avatar_path)
+        .await
+        .map_err(|e| AppError::internal(&format!("保存头像失败: {}", e)))?;
+    file.write_all(&data)
+        .await
+        .map_err(|e| AppError::internal(&format!("写入头像失败: {}", e)))?;
+
+    // Update database
+    sqlx::query("UPDATE users SET avatar_path = $1 WHERE id = $2")
+        .bind(&avatar_db_path)
+        .bind(user_id)
+        .execute(&state.pool)
+        .await?;
+
+    // Delete old avatar file if it exists and is different
+    if let Some(old_path) = old_avatar {
+        if old_path != avatar_db_path {
+            let old_file = std::path::PathBuf::from(&state.artifacts_path).join(&old_path);
+            let _ = tokio::fs::remove_file(old_file).await;
+        }
+    }
+
+    // Log audit
+    let _ = crate::audit::log_audit(
+        &state.pool,
+        Some(user_id),
+        Some(user_id),
+        "upload_avatar",
+        Some(json!({ "filename": avatar_filename })),
+        None,
+    )
+    .await;
+
+    Ok((StatusCode::OK, Json(json!({ 
+        "avatar_path": avatar_db_path,
+        "message": "头像上传成功" 
+    }))))
+}
+
+/// GET /api/avatars/:user_id
+/// Serve user avatar image
+pub async fn get_avatar(
+    State(state): State<AppState>,
+    axum::extract::Path(user_id): axum::extract::Path<Uuid>,
+) -> Result<Response, AppError> {
+    // Get avatar path from database
+    let avatar_path: Option<String> = sqlx::query_scalar("SELECT avatar_path FROM users WHERE id = $1")
+        .bind(user_id)
+        .fetch_optional(&state.pool)
+        .await?
+        .ok_or_else(|| AppError::not_found("用户不存在"))?;
+
+    let avatar_path = avatar_path.ok_or_else(|| AppError::not_found("用户未设置头像"))?;
+
+    // Build full file path
+    let file_path = std::path::PathBuf::from(&state.artifacts_path).join(&avatar_path);
+
+    // Read file
+    let data = tokio::fs::read(&file_path)
+        .await
+        .map_err(|_| AppError::not_found("头像文件不存在"))?;
+
+    // Determine MIME type from extension
+    let mime = mime_from_filename(&avatar_path);
+
+    // Set cache headers for better performance
+    let response = (
+        [
+            (header::CONTENT_TYPE, mime),
+            (header::CACHE_CONTROL, "public, max-age=86400"), // 1 day cache
+        ],
+        data,
+    )
+        .into_response();
+
+    Ok(response)
+}

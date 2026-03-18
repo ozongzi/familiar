@@ -24,7 +24,11 @@ export interface RegisterResponse {
 export interface MeResponse {
   id: string;
   name: string;
+  email?: string | null;
+  display_name?: string | null;
+  avatar_path?: string | null;
   is_admin: boolean;
+  last_login_at?: string | null;
   created_at: string;
 }
 
@@ -142,6 +146,8 @@ export interface CreateMcpRequest {
 export interface UserSettings {
   mode: "custom" | "default";
   api_key: string | null;
+  api_base: string | null;
+  model_name: string | null;
   system_prompt: string | null;
 }
 
@@ -155,6 +161,8 @@ export interface ModelConfig {
 export interface UpdateSettingsRequest {
   mode: "custom" | "default";
   api_key?: string | null;
+  api_base?: string | null;
+  model_name?: string | null;
   system_prompt?: string | null;
 }
 
@@ -215,4 +223,101 @@ export interface AppSkill {
   content: string;
   created_at: string;
   updated_at: string;
+}
+
+// ─── User Management (Admin) ─────────────────────────────────────────────
+
+export interface User {
+  id: string;
+  name: string;
+  email?: string | null;
+  display_name?: string | null;
+  avatar_path?: string | null;
+  is_admin: boolean;
+  last_login_at?: string | null;
+  created_at: string;
+}
+
+export interface UsersPage {
+  items: User[];
+  total: number;
+  page: number;
+  per_page: number;
+}
+
+export interface CreateUserRequest {
+  name: string;
+  email?: string | null;
+  display_name?: string | null;
+  password: string;
+  is_admin?: boolean;
+}
+
+export interface UpdateUserRequest {
+  email?: string | null;
+  display_name?: string | null;
+  is_admin?: boolean;
+}
+
+export interface ResetPasswordRequest {
+  new_password: string;
+}
+
+// ─── Audit Logs ──────────────────────────────────────────────────────────
+
+export interface AuditLog {
+  id: string;
+  user_id?: string | null;
+  user_name?: string | null;
+  target_user_id?: string | null;
+  target_user_name?: string | null;
+  action: string;
+  details?: Record<string, unknown> | null;
+  ip_address?: string | null;
+  created_at: string;
+}
+
+export interface AuditLogPage {
+  items: AuditLog[];
+  total: number;
+  page: number;
+  per_page: number;
+}
+
+export interface AuditLogQuery {
+  page?: number;
+  per_page?: number;
+  user_id?: string;
+  target_user_id?: string;
+  action?: string;
+  start_date?: string;
+  end_date?: string;
+}
+
+// ─── Profile ─────────────────────────────────────────────────────────────
+
+export interface UpdateProfileRequest {
+  email?: string | null;
+  display_name?: string | null;
+}
+
+export interface UpdatePasswordRequest {
+  current_password: string;
+  new_password: string;
+}
+
+// ─── Global MCPs ─────────────────────────────────────────────────────────
+
+export type GlobalMcp = Mcp; // Reuse Mcp interface
+
+export interface CreateGlobalMcpRequest {
+  name: string;
+  type: "http" | "stdio";
+  config: Record<string, unknown>;
+}
+
+export interface UpdateGlobalMcpRequest {
+  name?: string;
+  type?: "http" | "stdio";
+  config?: Record<string, unknown>;
 }
