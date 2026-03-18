@@ -467,6 +467,23 @@ impl AppState {
         let (agent, tx, ask_user_pending, inject_tx, user_mcp_tools, spawn_tx, abort_flag) =
             self.build_agent(conversation_id).await;
 
+        let mut rx = spawn_tx.subscribe();
+        let relay_state = self.clone();
+        tokio::spawn(async move {
+            loop {
+                match rx.recv().await {
+                    Ok(payload) => {
+                        let mut map = relay_state.chats.lock().unwrap();
+                        if let Some(e) = map.get_mut(&conversation_id) {
+                            e.emit(payload);
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break, // 通道废弃时干净地退出，不留后患
+                }
+            }
+        });
+
         let entry = ChatEntry::new(
             user_id,
             agent,
@@ -521,9 +538,27 @@ impl AppState {
                     entry.tool_inject_tx = fresh_inject_tx;
                     entry.user_mcp_tools = fresh_user_mcp_tools;
                     entry.ask_user_pending = fresh_pending;
-                    entry.spawn_tx = fresh_spawn_tx;
+                    entry.spawn_tx = fresh_spawn_tx.clone();
                     entry.abort_flag = Arc::clone(&fresh_abort);
                 }
+
+                let mut rx = fresh_spawn_tx.subscribe();
+                let relay_state = self.clone();
+                tokio::spawn(async move {
+                    loop {
+                        match rx.recv().await {
+                            Ok(payload) => {
+                                let mut map = relay_state.chats.lock().unwrap();
+                                if let Some(e) = map.get_mut(&conversation_id) {
+                                    e.emit(payload);
+                                }
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                            Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                        }
+                    }
+                });
+
                 fresh_agent
             }
         };
@@ -531,35 +566,6 @@ impl AppState {
         agent.push_user_message_with_name(&user_text, None);
 
         let state = self.clone();
-
-        {
-            let relay_state = state.clone();
-            let mut rx = {
-                let map = relay_state.chats.lock().unwrap();
-                map.get(&conversation_id).map(|e| e.spawn_tx.subscribe())
-            };
-
-            if let Some(mut rx) = rx.take() {
-                tokio::spawn(async move {
-                    loop {
-                        match rx.recv().await {
-                            Ok(payload) => {
-                                let mut map = relay_state.chats.lock().unwrap();
-                                if let Some(entry) = map.get_mut(&conversation_id) {
-                                    entry.emit(payload);
-                                }
-                            }
-                            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
-                                continue;
-                            }
-                            Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                                break;
-                            }
-                        }
-                    }
-                });
-            }
-        }
 
         tokio::spawn(async move {
             generation_loop(state, conversation_id, agent, abort_flag).await;
