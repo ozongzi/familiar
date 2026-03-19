@@ -64,14 +64,13 @@ const WIDGET_CSS_VARS = `
     --border-radius-lg: 12px;
     display: block;
   }
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  *, *::before, *::after { box-sizing: border-box; }
   :host > div {
     font-family: var(--font-sans);
     font-size: 15px;
     color: var(--text-primary);
     background: transparent;
     overflow-x: hidden;
-    padding: 12px;
   }
 `;
 
@@ -157,54 +156,18 @@ function injectShadow(host: HTMLElement, code: string) {
 
 function WidgetChatBubble({ bubble }: { bubble: ToolBubble }) {
   const hostRef = useRef<HTMLDivElement>(null);
-  const [height, setHeight] = useState(300);
 
   useEffect(() => {
     const host = hostRef.current;
     if (!host || !bubble.widgetCode) return;
 
     injectShadow(host, bubble.widgetCode);
-
-    const shadow = host.shadowRoot;
-    if (!shadow) return;
-
-    function measure() {
-      const children = Array.from(shadow!.children).filter(
-        (c) => c.tagName !== "STYLE" && c.tagName !== "SCRIPT",
-      );
-      const wrapper = children[children.length - 1] as HTMLElement | undefined;
-      if (!wrapper) return;
-      // scrollHeight 包含 overflow 内容，比 getBoundingClientRect 更可靠
-      const h = wrapper.scrollHeight;
-      if (h > 20) setHeight(Math.min(h + 24, 1400));
-    }
-
-    const ro = new ResizeObserver(measure);
-    const children = Array.from(shadow.children).filter(
-      (c) => c.tagName !== "STYLE" && c.tagName !== "SCRIPT",
-    );
-    const wrapper = children[children.length - 1];
-    if (wrapper) ro.observe(wrapper);
-
-    const timers = [
-      setTimeout(measure, 200),
-      setTimeout(measure, 800),
-      setTimeout(measure, 1800),
-    ];
-
-    return () => {
-      ro.disconnect();
-      timers.forEach(clearTimeout);
-    };
   }, [bubble.widgetCode]);
 
   return (
     <div className={styles.row} style={{ justifyContent: "flex-start" }}>
       <div className={styles.widgetBubble}>
-        <div
-          ref={hostRef}
-          style={{ width: "100%", height, display: "block" }}
-        />
+        <div ref={hostRef} className={styles.widgetHost} />
       </div>
     </div>
   );

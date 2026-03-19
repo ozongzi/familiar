@@ -964,6 +964,11 @@
     overflow: hidden;
 }
 
+.widgetHost {
+    width: 100%;
+    display: block;
+}
+
 /* ─── Mobile styles ───────────────────────────────────────────────────────── */
 @media (max-width: 768px) {
     .row {

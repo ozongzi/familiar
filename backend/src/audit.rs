@@ -4,17 +4,6 @@ use serde::{Deserialize, Serialize};
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
-#[derive(Debug, Clone, sqlx::FromRow, Serialize, Deserialize)]
-pub struct AuditLog {
-    pub id: i64,
-    pub user_id: Option<Uuid>,
-    pub target_user_id: Option<Uuid>,
-    pub action: String,
-    pub details: Option<serde_json::Value>,
-    pub ip_address: Option<String>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-}
-
 #[derive(Debug, Clone, Serialize)]
 pub struct AuditLogWithNames {
     pub id: i64,
