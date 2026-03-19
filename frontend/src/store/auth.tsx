@@ -1,7 +1,7 @@
 import { useEffect, useReducer, type ReactNode } from "react";
 import { api } from "../api/client";
 import { authReducer, AuthContext, TOKEN_KEY } from "./auth.shared";
-import { invoke, isTauri } from "../utils/tauri";
+import { invoke, isTauri, getServerBase } from "../utils/tauri";
 
 // Provider implementation uses shared reducer/context/constants from auth.shared
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -12,7 +12,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     loading: true,
   });
 
-  // On mount (or token change), fetch /api/users/me to validate the token.
+  // On mount (or token change), fetch /api/users/me to validate the token. 
   useEffect(() => {
     if (!state.token) {
       dispatch({ type: "SET_LOADING", loading: false });
@@ -44,7 +44,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!isTauri()) return;
 
     if (state.token) {
-      const serverUrl = window.location.origin || "http://localhost:3000";
+      const serverUrl = getServerBase();
       invoke("start_tunnel", { token: state.token, serverUrl }).catch((e) =>
         console.warn("[tunnel] start failed:", e),
       );

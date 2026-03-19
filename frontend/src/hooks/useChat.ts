@@ -7,6 +7,9 @@ import type {
   WsServerEvent,
   Message,
 } from "../api/types";
+import { getServerBase } from "../utils/tauri";
+
+const BASE = () => getServerBase();
 
 type ChatStatus = "idle" | "connecting" | "streaming" | "error";
 
@@ -126,7 +129,7 @@ async function openSseStream(
   signal: AbortSignal,
 ) {
   try {
-    const res = await fetch(`/api/stream/${streamId}`, {
+    const res = await fetch(`${BASE()}/api/stream/${streamId}`, {
       headers: { Authorization: `Bearer ${tok}` },
       signal,
     });
@@ -593,7 +596,7 @@ export function useChat(
       };
       setBubbles((prev) => [...prev, userBubble]);
 
-      fetch(`/api/stream/${streamId}/interrupt`, {
+      fetch(`${BASE()}/api/stream/${streamId}/interrupt`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${token}`,
@@ -608,7 +611,7 @@ export function useChat(
   const abort = useCallback(() => {
     const streamId = streamIdRef.current;
     if (!streamId || !token) return;
-    fetch(`/api/stream/${streamId}/abort`, {
+    fetch(`${BASE()}/api/stream/${streamId}/abort`, {
       method: "POST",
       headers: { Authorization: `Bearer ${token}` },
     }).catch(console.error);
@@ -618,7 +621,7 @@ export function useChat(
     (text: string) => {
       const streamId = streamIdRef.current;
       if (!streamId || !token) return;
-      fetch(`/api/stream/${streamId}/answer`, {
+      fetch(`${BASE()}/api/stream/${streamId}/answer`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${token}`,
@@ -746,7 +749,7 @@ export function useChat(
       // Step 1: POST message → get stream_id
       let streamId: string;
       try {
-        const res = await fetch(`/api/conversations/${convId}/messages`, {
+        const res = await fetch(`${BASE()}/api/conversations/${convId}/messages`, {
           method: "POST",
           headers: {
             Authorization: `Bearer ${token}`,

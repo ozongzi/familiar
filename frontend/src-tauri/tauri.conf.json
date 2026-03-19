@@ -36,7 +36,7 @@
     ],
     "resources": {
       "tunnel-bridge.cjs": "tunnel-bridge.cjs",
-      "mcp-bundle/**/*": "mcp-bundle"
+      "mcp-bundle/": "mcp-bundle/"
     },
     "externalBin": [
       "binaries/node"

@@ -64,7 +64,7 @@ export function McpSettings({ token, onClose }: Props) {
     setError("");
     
     // Validate and parse env JSON for stdio type
-    let finalConfig = { ...form.config };
+    const finalConfig = { ...form.config };
     if (form.type === 'stdio') {
       try {
         const env = JSON.parse(envJsonStr);

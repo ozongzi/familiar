@@ -13,6 +13,9 @@ import { buildToolArgsView } from "./messageBubble.toolParsing";
 import { FilePreviewContent } from "./FilePreviewContent";
 import { BashTool, WriteTool } from "./BashWriteTools";
 import styles from "./MessageBubble.module.css";
+import { getServerBase } from "../utils/tauri";
+
+const BASE = () => getServerBase();
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -832,7 +835,7 @@ function FileCard({ file, pending }: { file: FileInfo; pending: boolean }) {
     setPreview({ status: "loading" });
     try {
       const params = new URLSearchParams({ path: file.path, token });
-      const res = await fetch(`/api/files/preview?${params}`);
+      const res = await fetch(`${BASE()}/api/files/preview?${params}`);
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: "无法预览" }));
         if (res.status === 400) {

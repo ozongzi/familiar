@@ -214,7 +214,7 @@ async fn handle_tunnel(socket: WebSocket, user_id: Uuid, state: AppState) {
 
     // 连接 MCP，获取工具列表
     let mcp_tool = match McpTool::from_transport(transport).await {
-        Ok(t) => t,
+        Ok(t) => t.with_max_output_chars(8000), // 防止 snapshot 过大导致 WS 传输截断
         Err(e) => {
             tracing::warn!(%user_id, "客户端 MCP 握手失败: {e}");
             pong_task.abort();

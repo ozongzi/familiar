@@ -100,7 +100,7 @@ export function AdminConfig() {
     }
 
     // Validate and parse env JSON for stdio type
-    let finalConfig = { ...mcpForm.config };
+    const finalConfig = { ...mcpForm.config };
     if (mcpForm.type === 'stdio') {
       try {
         const env = JSON.parse(envJsonStr);
