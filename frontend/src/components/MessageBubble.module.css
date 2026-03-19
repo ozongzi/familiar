@@ -167,8 +167,8 @@
     color: var(--text-muted);
     text-align: left;
     transition:
-            background var(--transition),
-            color var(--transition);
+        background var(--transition),
+        color var(--transition);
 }
 
 .reasoningToggle:hover {
@@ -238,8 +238,8 @@
     text-align: left;
     border-radius: var(--radius-sm);
     transition:
-            color var(--transition),
-            background var(--transition);
+        color var(--transition),
+        background var(--transition);
     width: auto;
     align-self: flex-start;
 }
@@ -430,8 +430,8 @@
     font-weight: 500;
     cursor: pointer;
     transition:
-            background var(--transition),
-            color var(--transition);
+        background var(--transition),
+        color var(--transition);
     white-space: nowrap;
 }
 
@@ -477,8 +477,8 @@
     font-weight: 500;
     cursor: pointer;
     transition:
-            background var(--transition),
-            opacity var(--transition);
+        background var(--transition),
+        opacity var(--transition);
     white-space: nowrap;
 }
 
@@ -559,9 +559,9 @@
     font-family: var(--font-sans);
     cursor: pointer;
     transition:
-            background var(--transition),
-            color var(--transition),
-            transform var(--transition);
+        background var(--transition),
+        color var(--transition),
+        transform var(--transition);
 }
 
 .downloadBtn:hover {
@@ -665,9 +665,9 @@
     font-weight: 500;
     cursor: pointer;
     transition:
-            background var(--transition),
-            color var(--transition),
-            border-color var(--transition);
+        background var(--transition),
+        color var(--transition),
+        border-color var(--transition);
     white-space: nowrap;
 }
 
@@ -709,6 +709,23 @@
     padding: 18px 18px;
     font-size: 0.86em;
     color: var(--text-muted);
+}
+
+.filePreviewImageWrap {
+    padding: 12px;
+    background: var(--bg-elevated);
+    display: flex;
+    justify-content: center;
+}
+
+.filePreviewImage {
+    max-width: 100%;
+    height: auto;
+    border-radius: 8px;
+    display: block;
+    margin: 0 auto;
+    border: 1px solid var(--border-subtle);
+    box-shadow: 0 1px 6px rgba(0, 0, 0, 0.06);
 }
 
 .filePreviewError {
@@ -843,8 +860,8 @@
     color: var(--text-secondary);
     cursor: pointer;
     transition:
-            background var(--transition),
-            color var(--transition);
+        background var(--transition),
+        color var(--transition);
 }
 
 .uploadBubbleDownload:hover {
@@ -866,13 +883,13 @@
 /* ─── Spawn bubble ───────────────────────────────────────────────────────── */
 
 .spawnWrap {
-    border-left: 2px solid #5DCAA5;
-    background: color-mix(in srgb, #E1F5EE 35%, transparent);
+    border-left: 2px solid #5dcaa5;
+    background: color-mix(in srgb, #e1f5ee 35%, transparent);
     border-radius: 0 var(--radius-md) var(--radius-md) 0;
     padding: 8px 12px;
     transition:
-            border-color var(--transition),
-            background var(--transition);
+        border-color var(--transition),
+        background var(--transition);
 }
 
 .spawnWrapDone {
@@ -897,19 +914,19 @@
     display: inline-flex;
     align-items: center;
     gap: 4px;
-    background: #E1F5EE;
-    border: 0.5px solid #5DCAA5;
+    background: #e1f5ee;
+    border: 0.5px solid #5dcaa5;
     border-radius: var(--radius-full);
     padding: 2px 8px;
     font-size: 10px;
     font-weight: 500;
-    color: #0F6E56;
+    color: #0f6e56;
     letter-spacing: 0.04em;
     flex-shrink: 0;
     transition:
-            background var(--transition),
-            border-color var(--transition),
-            color var(--transition);
+        background var(--transition),
+        border-color var(--transition),
+        color var(--transition);
 }
 
 .spawnBadgeDone {
@@ -921,15 +938,22 @@
 .spawnBadgeDot {
     width: 5px;
     height: 5px;
-    background: #1D9E75;
+    background: #1d9e75;
     border-radius: 50%;
     flex-shrink: 0;
     animation: spawnPulse 1.4s ease-in-out infinite;
 }
 
 @keyframes spawnPulse {
-    0%, 100% { opacity: 0.4; transform: scale(0.85); }
-    50%       { opacity: 1;   transform: scale(1);    }
+    0%,
+    100% {
+        opacity: 0.4;
+        transform: scale(0.85);
+    }
+    50% {
+        opacity: 1;
+        transform: scale(1);
+    }
 }
 
 .spawnTitle {
@@ -946,7 +970,7 @@
 .spawnBody {
     margin-top: 8px;
     padding-top: 8px;
-    border-top: 0.5px solid color-mix(in srgb, #5DCAA5 30%, transparent);
+    border-top: 0.5px solid color-mix(in srgb, #5dcaa5 30%, transparent);
     font-size: 0.875em;
     display: flex;
     flex-direction: column;

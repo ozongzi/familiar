@@ -84,7 +84,10 @@ function WidgetChatBubble({ bubble }: { bubble: ToolBubble }) {
 
     const onMessage = (e: MessageEvent) => {
       if (e.source !== iframe.contentWindow) return;
-      if (e.data?.type === "familiar-widget-height" && typeof e.data.height === "number") {
+      if (
+        e.data?.type === "familiar-widget-height" &&
+        typeof e.data.height === "number"
+      ) {
         setHeight(Math.min(Math.max(e.data.height, 60), 2000));
       }
     };
@@ -814,9 +817,18 @@ function FileCard({ file, pending }: { file: FileInfo; pending: boolean }) {
   const [expanded, setExpanded] = useState(false);
 
   const token = localStorage.getItem("familiar_token") ?? "";
+  const fileUrl = useMemo(
+    () =>
+      `/api/files?${new URLSearchParams({ path: file.path, token }).toString()}`,
+    [file.path, token],
+  );
+  const isImageFile = useMemo(() => {
+    const target = `${file.filename} ${file.path}`;
+    return /\.(png|jpe?g|gif|webp|bmp|svg|tiff?|avif|heic|heif)$/i.test(target);
+  }, [file.filename, file.path]);
 
   const loadPreview = useCallback(async () => {
-    if (preview.status !== "idle") return;
+    if (isImageFile || preview.status !== "idle") return;
     setPreview({ status: "loading" });
     try {
       const params = new URLSearchParams({ path: file.path, token });
@@ -841,22 +853,21 @@ function FileCard({ file, pending }: { file: FileInfo; pending: boolean }) {
     } catch {
       setPreview({ status: "error", message: "网络错误" });
     }
-  }, [file.path, token, preview.status]);
+  }, [file.path, token, preview.status, isImageFile]);
 
   function toggleExpand() {
-    if (!expanded && preview.status === "idle") {
+    if (!expanded && preview.status === "idle" && !isImageFile) {
       loadPreview();
     }
     setExpanded((v) => !v);
   }
 
   const handleDownload = useCallback(() => {
-    const params = new URLSearchParams({ path: file.path, token });
     const a = document.createElement("a");
-    a.href = `/api/files?${params}`;
+    a.href = fileUrl;
     a.download = file.filename;
     a.click();
-  }, [file.path, file.filename, token]);
+  }, [fileUrl, file.filename]);
 
   return (
     <div className={styles.toolRow}>
@@ -911,31 +922,43 @@ function FileCard({ file, pending }: { file: FileInfo; pending: boolean }) {
         {/* ── Preview area ── */}
         {expanded && (
           <div className={styles.filePreview}>
-            {preview.status === "loading" && (
-              <div className={styles.filePreviewLoading}>加载中…</div>
-            )}
-            {preview.status === "binary" && (
-              <div className={styles.filePreviewBinary}>
-                <span aria-hidden="true">📦</span>
-                <span>二进制文件，请下载后查看</span>
-              </div>
-            )}
-            {preview.status === "error" && (
-              <div className={styles.filePreviewError}>
-                ⚠️ {preview.message}
-              </div>
-            )}
-            {preview.status === "ready" && (
-              <>
-                <FilePreviewContent
-                  content={preview.content}
-                  lang={preview.lang}
-                  lineCount={preview.lineCount}
+            {isImageFile ? (
+              <div className={styles.filePreviewImageWrap}>
+                <img
+                  src={fileUrl}
+                  alt={file.filename}
+                  className={styles.filePreviewImage}
                 />
-                {preview.truncated && (
-                  <div className={styles.filePreviewTruncated}>
-                    文件过大，仅显示前 100 KB
+              </div>
+            ) : (
+              <>
+                {preview.status === "loading" && (
+                  <div className={styles.filePreviewLoading}>加载中…</div>
+                )}
+                {preview.status === "binary" && (
+                  <div className={styles.filePreviewBinary}>
+                    <span aria-hidden="true">📦</span>
+                    <span>二进制文件，请下载后查看</span>
                   </div>
+                )}
+                {preview.status === "error" && (
+                  <div className={styles.filePreviewError}>
+                    ⚠️ {preview.message}
+                  </div>
+                )}
+                {preview.status === "ready" && (
+                  <>
+                    <FilePreviewContent
+                      content={preview.content}
+                      lang={preview.lang}
+                      lineCount={preview.lineCount}
+                    />
+                    {preview.truncated && (
+                      <div className={styles.filePreviewTruncated}>
+                        文件过大，仅显示前 100 KB
+                      </div>
+                    )}
+                  </>
                 )}
               </>
             )}
