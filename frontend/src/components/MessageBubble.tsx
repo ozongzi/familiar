@@ -68,14 +68,34 @@ const WIDGET_CSS_VARS = `
     display: block;
   }
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  body, :host > div {
+  :host > div {
     font-family: var(--font-sans);
     font-size: 15px;
     color: var(--text-primary);
     background: transparent;
     overflow-x: hidden;
+    padding: 12px;
   }
 `;
+
+function extractBodyContent(code: string): string {
+  const bodyMatch = code.match(/<body[^>]*>([\s\S]*)<\/body>/i);
+  if (bodyMatch) return bodyMatch[1];
+  const htmlMatch = code.match(/<html[^>]*>([\s\S]*)<\/html>/i);
+  if (htmlMatch) return htmlMatch[1];
+  return code;
+}
+
+function extractHeadAssets(code: string): { styles: string; scriptSrcs: string[] } {
+  const headMatch = code.match(/<head[^>]*>([\s\S]*?)<\/head>/i);
+  if (!headMatch) return { styles: "", scriptSrcs: [] };
+  const head = headMatch[1];
+  const styleMatches = head.match(/<style[^>]*>[\s\S]*?<\/style>/gi) ?? [];
+  const styles = styleMatches.map((s) => s.replace(/<\/?style[^>]*>/gi, "")).join("\n");
+  const scriptSrcMatches = [...head.matchAll(/<script[^>]+src=["']([^"']+)["'][^>]*>/gi)];
+  const scriptSrcs = scriptSrcMatches.map((m) => m[1]);
+  return { styles, scriptSrcs };
+}
 
 function injectShadow(host: HTMLElement, code: string) {
   let shadow = host.shadowRoot;
@@ -83,33 +103,57 @@ function injectShadow(host: HTMLElement, code: string) {
     shadow = host.attachShadow({ mode: "open" });
   }
 
-  // Build content: style + wrapper div + code
-  const style = document.createElement("style");
-  style.textContent = WIDGET_CSS_VARS;
+  while (shadow.firstChild) shadow.removeChild(shadow.firstChild);
+
+  const isFullDocument = /<html/i.test(code);
+  const bodyContent = isFullDocument ? extractBodyContent(code) : code;
+  const { styles: headStyles, scriptSrcs: externalScripts } = isFullDocument
+    ? extractHeadAssets(code)
+    : { styles: "", scriptSrcs: [] };
+
+  const varStyle = document.createElement("style");
+  varStyle.textContent = WIDGET_CSS_VARS;
+  shadow.appendChild(varStyle);
+
+  if (headStyles) {
+    const headStyle = document.createElement("style");
+    headStyle.textContent = headStyles;
+    shadow.appendChild(headStyle);
+  }
+
+  // 注入 head 里的外部 script（如 Chart.js），等它们加载完再执行 inline script
+  const loadPromises = externalScripts.map(
+    (src) =>
+      new Promise<void>((resolve) => {
+        const s = document.createElement("script");
+        s.src = src;
+        s.onload = () => resolve();
+        s.onerror = () => resolve();
+        shadow.appendChild(s);
+      })
+  );
 
   const wrapper = document.createElement("div");
-  wrapper.innerHTML = code;
-
-  // Clear and re-inject
-  shadow.innerHTML = "";
-  shadow.appendChild(style);
+  wrapper.innerHTML = bodyContent;
   shadow.appendChild(wrapper);
 
-  // Re-execute scripts (innerHTML doesn't run them)
-  wrapper.querySelectorAll("script").forEach((oldScript) => {
-    const newScript = document.createElement("script");
-    if (oldScript.src) {
-      newScript.src = oldScript.src;
-    } else {
-      newScript.textContent = oldScript.textContent;
-    }
-    oldScript.replaceWith(newScript);
+  // 等外部 script 加载完再执行 inline scripts
+  Promise.all(loadPromises).then(() => {
+    wrapper.querySelectorAll("script").forEach((oldScript) => {
+      const newScript = document.createElement("script");
+      if (oldScript.src) {
+        newScript.src = oldScript.src;
+      } else {
+        newScript.textContent = oldScript.textContent;
+      }
+      oldScript.replaceWith(newScript);
+    });
   });
 }
 
 function WidgetChatBubble({ bubble }: { bubble: WidgetBubble }) {
   const hostRef = useRef<HTMLDivElement>(null);
-  const [height, setHeight] = useState<number | "auto">("auto");
+  const [height, setHeight] = useState(200);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -117,41 +161,42 @@ function WidgetChatBubble({ bubble }: { bubble: WidgetBubble }) {
 
     injectShadow(host, bubble.widgetCode);
 
-    // Use ResizeObserver to track actual rendered height
     const shadow = host.shadowRoot;
     if (!shadow) return;
 
-    const ro = new ResizeObserver(() => {
-      const wrapper = shadow.children[1] as HTMLElement | undefined;
-      if (wrapper) {
-        const h = wrapper.scrollHeight;
-        if (h > 0) setHeight(Math.min(h + 16, 800));
-      }
-    });
+    function measure() {
+      const children = Array.from(shadow!.children).filter(
+        (c) => c.tagName !== "STYLE" && c.tagName !== "SCRIPT"
+      );
+      const wrapper = children[children.length - 1] as HTMLElement | undefined;
+      if (!wrapper) return;
+      const rects = Array.from(wrapper.querySelectorAll("*")).map(
+        (el) => el.getBoundingClientRect().bottom
+      );
+      const wrapperTop = wrapper.getBoundingClientRect().top;
+      const maxBottom = Math.max(...rects, wrapper.getBoundingClientRect().bottom);
+      const h = maxBottom - wrapperTop;
+      if (h > 20) setHeight(Math.min(h + 24, 1200));
+    }
 
-    const wrapper = shadow.children[1];
-    if (wrapper) ro.observe(wrapper);
+    const timers = [
+      setTimeout(measure, 200),
+      setTimeout(measure, 600),
+      setTimeout(measure, 1200),
+      setTimeout(measure, 2500),
+    ];
 
-    return () => ro.disconnect();
+    return () => timers.forEach(clearTimeout);
   }, [bubble.widgetCode]);
 
   return (
     <div className={styles.row} style={{ justifyContent: "flex-start" }}>
-      <div className={styles.widgetBubble} style={{ overflow: "visible" }}>
-        <div
-          ref={hostRef}
-          style={{
-            width: "100%",
-            height: height === "auto" ? undefined : height,
-            minHeight: 40,
-            display: "block",
-          }}
-        />
+      <div className={styles.widgetBubble}>
+        <div ref={hostRef} style={{ width: "100%", height, display: "block" }} />
       </div>
     </div>
   );
 }
-
 // ─── Text bubble (user / assistant) ──────────────────────────────────────────
 
 function TextChatBubble({

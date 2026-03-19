@@ -128,6 +128,7 @@ export interface WidgetBubble {
   key: string;
   role: "tool";
   widgetCode: string;
+  _rawArgs?: string;
 }
 
 export type ChatBubble = TextBubble | ToolBubble | UploadBubble | WidgetBubble;

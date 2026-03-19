@@ -38,6 +38,32 @@ function clearPersistedStreamId(conversationId: string | null) {
   sessionStorage.removeItem(streamStorageKey(conversationId));
 }
 
+function extractStreamingWidgetCode(raw: string): string | null {
+  const keyMatch = raw.match(/"widget_code"\s*:\s*"/);
+  if (!keyMatch || keyMatch.index === undefined) return null;
+  const valueStart = keyMatch.index + keyMatch[0].length;
+  const rest = raw.slice(valueStart);
+  let value = "";
+  let i = 0;
+  while (i < rest.length) {
+    const ch = rest[i];
+    if (ch === "\\") {
+      if (i + 1 < rest.length) {
+        const next = rest[i + 1];
+        const escapes: Record<string, string> = { '"': '"', "\\": "\\", "/": "/", b: "\b", f: "\f", n: "\n", r: "\r", t: "\t" };
+        value += escapes[next] ?? next;
+        i += 2;
+      } else break;
+    } else if (ch === '"') {
+      return value;
+    } else {
+      value += ch;
+      i++;
+    }
+  }
+  return value.length > 0 ? value : null;
+}
+
 function tryParseWidgetArgs(raw: string): unknown {
   try { return JSON.parse(raw); } catch { return null; }
 }
@@ -449,11 +475,10 @@ export function useChat(
           if (exists) {
             return prev.map((b) => {
               if (b.kind === "widget" && b.key === `tool-${event.id}`) {
-                // streaming widget args in
-                const newCode = extractWidgetCode(
-                  tryParseWidgetArgs(b.widgetCode + event.delta)
-                ) ?? (b.widgetCode + event.delta);
-                return { ...b, widgetCode: newCode };
+                const rawArgs = (b._rawArgs ?? "") + event.delta;
+                const parsed = extractWidgetCode(tryParseWidgetArgs(rawArgs));
+                const streamed = parsed ?? extractStreamingWidgetCode(rawArgs);
+                return { ...b, _rawArgs: rawArgs, widgetCode: streamed ?? b.widgetCode };
               }
               if (b.key !== `tool-${event.id}` || b.kind !== "tool") return b;
               const newArgsRaw = b.argsRaw + event.delta;
@@ -466,13 +491,14 @@ export function useChat(
             });
           }
           sealActiveText();
-          // if this is visualize, start as WidgetBubble immediately
           if (event.name === "visualize") {
+            const streamed = extractStreamingWidgetCode(event.delta);
             return [...prev, {
               kind: "widget" as const,
               key: `tool-${event.id}`,
               role: "tool" as const,
-              widgetCode: event.delta,
+              widgetCode: streamed ?? "",
+              _rawArgs: event.delta,
             } as WidgetBubble];
           }
           const toolBubble: ToolBubble = {
