@@ -9,7 +9,18 @@ build:
 	cd backend && CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=x86_64-linux-musl-gcc \
 		cargo build --release -p familiar --target x86_64-unknown-linux-musl
 
-# ── Frontend ──────────────────────────────────────────────────────────────────
+# ── Tauri desktop client ──────────────────────────────────────────────────────
+prepare-tauri:
+	cd frontend/src-tauri && \
+		PLAYWRIGHT_BROWSERS_PATH=./playwright-browsers \
+		npx --yes playwright install chromium
+	cd frontend/src-tauri && \
+		npm install --prefix ./mcp-bundle @playwright/mcp
+
+build-tauri: prepare-tauri
+	cd frontend && bun tauri build
+
+# ── Frontend (web) ────────────────────────────────────────────────────────────
 build-client:
 	cd frontend && bun install --frozen-lockfile && bun run build
 

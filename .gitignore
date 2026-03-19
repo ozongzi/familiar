@@ -3,3 +3,6 @@ frontend/public/fonts
 backend/.env
 **/dist
 GEMINI.md
+playwright-browsers*
+frontend/src-tauri/binaries
+**/target

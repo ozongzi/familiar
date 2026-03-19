@@ -6,7 +6,10 @@
 use std::{collections::HashMap, sync::Arc};
 
 use axum::{
-    extract::{State, WebSocketUpgrade, ws::{Message, WebSocket}},
+    extract::{
+        State, WebSocketUpgrade,
+        ws::{Message, WebSocket},
+    },
     response::IntoResponse,
 };
 use ds_api::{McpTool, Tool as _};
@@ -19,12 +22,15 @@ use serde_json::Value;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
-use crate::{errors::AppError, web::{AppState, auth::AuthUser}};
+use crate::{
+    errors::AppError,
+    web::{AppState, auth::AuthUser},
+};
 
 // ── 注册表 ────────────────────────────────────────────────────────────────────
 
-/// 记录每个用户当前是否有客户端在线（有的话存 tool_inject_tx 用于注入工具）。
-pub type TunnelRegistry = Arc<Mutex<HashMap<Uuid, tokio::sync::mpsc::UnboundedSender<ds_api::ToolInjection>>>>;
+/// 记录每个用户当前是否有客户端在线及其暴露的 MCP 工具。
+pub type TunnelRegistry = Arc<Mutex<HashMap<Uuid, McpTool>>>;
 
 pub fn new_tunnel_registry() -> TunnelRegistry {
     Arc::new(Mutex::new(HashMap::new()))
@@ -92,10 +98,11 @@ impl Stream for WsStream {
                 std::task::Poll::Ready(Some(Ok(Message::Text(text)))) => {
                     // 先检查是不是 ping
                     if let Ok(v) = serde_json::from_str::<Value>(&text)
-                        && v.get("type").and_then(|t| t.as_str()) == Some("ping") {
-                            let _ = self.pong_tx.send("{\"type\":\"pong\"}".to_string());
-                            continue; // 继续读下一条
-                        }
+                        && v.get("type").and_then(|t| t.as_str()) == Some("ping")
+                    {
+                        let _ = self.pong_tx.send("{\"type\":\"pong\"}".to_string());
+                        continue; // 继续读下一条
+                    }
                     // 尝试解析成 MCP 消息
                     match serde_json::from_str::<RxJsonRpcMessage<RoleClient>>(&text) {
                         Ok(msg) => return std::task::Poll::Ready(Some(msg)),
@@ -147,18 +154,25 @@ async fn handle_tunnel(socket: WebSocket, user_id: Uuid, state: AppState) {
         }
     });
 
-    let ws_stream = WsStream { inner: ws_rx, pong_tx };
+    let ws_stream = WsStream {
+        inner: ws_rx,
+        pong_tx,
+    };
 
     // 构建 MCP transport：需要一个不被 Arc 包裹的 sink
     // 用一个 channel 把 Arc<Mutex<WsSink>> 桥接成普通 Sink
-    let (mcp_sink_tx, mut mcp_sink_rx) = tokio::sync::mpsc::unbounded_channel::<TxJsonRpcMessage<RoleClient>>();
+    let (mcp_sink_tx, mut mcp_sink_rx) =
+        tokio::sync::mpsc::unbounded_channel::<TxJsonRpcMessage<RoleClient>>();
 
     let ws_sink_for_mcp = ws_sink.clone();
     let mcp_writer_task = tokio::spawn(async move {
         while let Some(msg) = mcp_sink_rx.recv().await {
             let text = match serde_json::to_string(&msg) {
                 Ok(t) => t,
-                Err(e) => { tracing::warn!("MCP 序列化失败: {e}"); continue; }
+                Err(e) => {
+                    tracing::warn!("MCP 序列化失败: {e}");
+                    continue;
+                }
             };
             let mut sink = ws_sink_for_mcp.lock().await;
             let _ = sink.inner.send(Message::Text(text.into())).await;
@@ -169,16 +183,28 @@ async fn handle_tunnel(socket: WebSocket, user_id: Uuid, state: AppState) {
     struct ChannelSink(tokio::sync::mpsc::UnboundedSender<TxJsonRpcMessage<RoleClient>>);
     impl Sink<TxJsonRpcMessage<RoleClient>> for ChannelSink {
         type Error = tokio::sync::mpsc::error::SendError<TxJsonRpcMessage<RoleClient>>;
-        fn poll_ready(self: std::pin::Pin<&mut Self>, _: &mut std::task::Context<'_>) -> std::task::Poll<Result<(), Self::Error>> {
+        fn poll_ready(
+            self: std::pin::Pin<&mut Self>,
+            _: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Result<(), Self::Error>> {
             std::task::Poll::Ready(Ok(()))
         }
-        fn start_send(self: std::pin::Pin<&mut Self>, item: TxJsonRpcMessage<RoleClient>) -> Result<(), Self::Error> {
+        fn start_send(
+            self: std::pin::Pin<&mut Self>,
+            item: TxJsonRpcMessage<RoleClient>,
+        ) -> Result<(), Self::Error> {
             self.0.send(item)
         }
-        fn poll_flush(self: std::pin::Pin<&mut Self>, _: &mut std::task::Context<'_>) -> std::task::Poll<Result<(), Self::Error>> {
+        fn poll_flush(
+            self: std::pin::Pin<&mut Self>,
+            _: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Result<(), Self::Error>> {
             std::task::Poll::Ready(Ok(()))
         }
-        fn poll_close(self: std::pin::Pin<&mut Self>, _: &mut std::task::Context<'_>) -> std::task::Poll<Result<(), Self::Error>> {
+        fn poll_close(
+            self: std::pin::Pin<&mut Self>,
+            _: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Result<(), Self::Error>> {
             std::task::Poll::Ready(Ok(()))
         }
     }
@@ -199,28 +225,31 @@ async fn handle_tunnel(socket: WebSocket, user_id: Uuid, state: AppState) {
 
     tracing::info!(%user_id, tools = mcp_tool.raw_tools().len(), "客户端隧道已连接");
 
-    // 查找该用户的 tool_inject_tx，注入工具
-    let inject_tx = {
+    // 把隧道工具存进注册表，供 build_agent 时查询
+    // 同时如果当前有活跃的 chat entry，也通过 inject_tx 实时注入
+    {
+        let mut registry = state.tunnel_registry.lock().await;
+        registry.insert(user_id, mcp_tool.clone());
+        tracing::info!(%user_id, "隧道工具已存入注册表");
+    }
+
+    // 如果当前有活跃的 chat entry，立即注入工具
+    let injected = {
         let chats = state.chats.lock().unwrap();
-        chats.get(&user_id).map(|e| e.tool_inject_tx.clone())
-    };
-    let injected = if let Some(ref tx) = inject_tx {
-        let _ = tx.send(ds_api::ToolInjection::Add(Box::new(mcp_tool.clone())));
-        true
-    } else {
-        false
+        if let Some(entry) = chats.get(&user_id) {
+            let _ = entry
+                .tool_inject_tx
+                .send(ds_api::ToolInjection::Add(Box::new(mcp_tool.clone())));
+            true
+        } else {
+            false
+        }
     };
 
     if injected {
-        tracing::info!(%user_id, "已将客户端 MCP 工具注入 agent");
+        tracing::info!(%user_id, "已将隧道工具实时注入当前 agent");
     } else {
-        tracing::info!(%user_id, "客户端已连接，无活跃 agent session，工具将在下次对话时加载");
-    }
-
-    // 把 tool_inject_tx 存到注册表，供 build_agent 时查询
-    if let Some(ref tx) = inject_tx {
-        let mut registry = state.tunnel_registry.lock().await;
-        registry.insert(user_id, tx.clone());
+        tracing::info!(%user_id, "无活跃 agent，隧道工具将在下次对话时从注册表加载");
     }
 
     // 等待 writer tasks 结束（连接断开时自动结束）
@@ -231,14 +260,20 @@ async fn handle_tunnel(socket: WebSocket, user_id: Uuid, state: AppState) {
         let mut registry = state.tunnel_registry.lock().await;
         registry.remove(&user_id);
     }
-    // 移除注入的工具
-    let tool_names: Vec<String> = mcp_tool
-        .raw_tools()
-        .iter()
-        .map(|t| t.function.name.clone())
-        .collect();
-    if let Some(ref tx) = inject_tx {
-        let _ = tx.send(ds_api::ToolInjection::Remove(tool_names));
+
+    // 如果当前有活跃的 chat entry，通过 inject_tx 移除该用户的隧道工具
+    {
+        let tool_names: Vec<String> = mcp_tool
+            .raw_tools()
+            .iter()
+            .map(|t| t.function.name.clone())
+            .collect();
+        let chats = state.chats.lock().unwrap();
+        if let Some(entry) = chats.get(&user_id) {
+            let _ = entry
+                .tool_inject_tx
+                .send(ds_api::ToolInjection::Remove(tool_names));
+        }
     }
 
     tracing::info!(%user_id, "客户端隧道已断开");

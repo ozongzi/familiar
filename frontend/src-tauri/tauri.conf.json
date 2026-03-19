@@ -21,7 +21,8 @@
     ],
     "security": {
       "csp": null
-    }
+    },
+    "withGlobalTauri": true
   },
   "bundle": {
     "active": true,
@@ -34,7 +35,11 @@
       "icons/icon.ico"
     ],
     "resources": {
-      "tunnel-bridge.js": "tunnel-bridge.js"
-    }
+      "tunnel-bridge.cjs": "tunnel-bridge.cjs",
+      "mcp-bundle/**/*": "mcp-bundle"
+    },
+    "externalBin": [
+      "binaries/node"
+    ]
   }
 }
