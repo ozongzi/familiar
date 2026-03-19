@@ -36,138 +36,99 @@ export const MessageBubble = memo(function MessageBubble({
 
 // ─── Widget bubble ────────────────────────────────────────────────────────────
 
-const WIDGET_CSS_VARS = `
-  :host {
-    --bg-base: #faf9f5;
-    --bg-surface: #ffffff;
-    --bg-elevated: #f0ede6;
-    --bg-hover: #ebe7de;
-    --border: #ddd8ce;
-    --border-subtle: #e8e4db;
-    --text-primary: #1a1915;
-    --text-secondary: #6b6651;
-    --text-muted: #73726c;
-    --accent: #c96442;
-    --accent-dim: #f5ede8;
-    --radius-sm: 8px;
-    --radius-md: 12px;
-    --radius-lg: 20px;
-    --font-sans: system-ui, -apple-system, sans-serif;
-    --font-mono: "Cascadia Code", "JetBrains Mono", monospace;
-    --color-background-primary: #ffffff;
-    --color-background-secondary: #f0ede6;
-    --color-text-primary: #1a1915;
-    --color-text-secondary: #6b6651;
-    --color-border-tertiary: rgba(29,25,21,0.15);
-    --color-border-secondary: rgba(29,25,21,0.3);
-    --border-radius-md: 8px;
-    --border-radius-lg: 12px;
-    display: block;
-  }
-  *, *::before, *::after { box-sizing: border-box; }
-  :host > div {
-    font-family: var(--font-sans);
-    font-size: 15px;
-    color: var(--text-primary);
-    background: transparent;
-    overflow-x: hidden;
-  }
-`;
-
-function extractBodyContent(code: string): string {
-  const bodyMatch = code.match(/<body[^>]*>([\s\S]*)<\/body>/i);
-  if (bodyMatch) return bodyMatch[1];
-  const htmlMatch = code.match(/<html[^>]*>([\s\S]*)<\/html>/i);
-  if (htmlMatch) return htmlMatch[1];
-  return code;
-}
-
-function extractHeadAssets(code: string): {
-  styles: string;
-  scriptSrcs: string[];
-} {
-  const headMatch = code.match(/<head[^>]*>([\s\S]*?)<\/head>/i);
-  if (!headMatch) return { styles: "", scriptSrcs: [] };
-  const head = headMatch[1];
-  const styleMatches = head.match(/<style[^>]*>[\s\S]*?<\/style>/gi) ?? [];
-  const styles = styleMatches
-    .map((s) => s.replace(/<\/?style[^>]*>/gi, ""))
-    .join("\n");
-  const scriptSrcMatches = [
-    ...head.matchAll(/<script[^>]+src=["']([^"']+)["'][^>]*>/gi),
-  ];
-  const scriptSrcs = scriptSrcMatches.map((m) => m[1]);
-  return { styles, scriptSrcs };
-}
-
-function injectShadow(host: HTMLElement, code: string) {
-  let shadow = host.shadowRoot;
-  if (!shadow) {
-    shadow = host.attachShadow({ mode: "open" });
-  }
-
-  while (shadow.firstChild) shadow.removeChild(shadow.firstChild);
-
-  const isFullDocument = /<html/i.test(code);
-  const bodyContent = isFullDocument ? extractBodyContent(code) : code;
-  const { styles: headStyles, scriptSrcs: externalScripts } = isFullDocument
-    ? extractHeadAssets(code)
-    : { styles: "", scriptSrcs: [] };
-
-  const varStyle = document.createElement("style");
-  varStyle.textContent = WIDGET_CSS_VARS;
-  shadow.appendChild(varStyle);
-
-  if (headStyles) {
-    const headStyle = document.createElement("style");
-    headStyle.textContent = headStyles;
-    shadow.appendChild(headStyle);
-  }
-
-  // 注入 head 里的外部 script（如 Chart.js），等它们加载完再执行 inline script
-  const loadPromises = externalScripts.map(
-    (src) =>
-      new Promise<void>((resolve) => {
-        const s = document.createElement("script");
-        s.src = src;
-        s.onload = () => resolve();
-        s.onerror = () => resolve();
-        shadow.appendChild(s);
-      }),
-  );
-
-  const wrapper = document.createElement("div");
-  wrapper.innerHTML = bodyContent;
-  shadow.appendChild(wrapper);
-
-  // 等外部 script 加载完再执行 inline scripts
-  Promise.all(loadPromises).then(() => {
-    wrapper.querySelectorAll("script").forEach((oldScript) => {
-      const newScript = document.createElement("script");
-      if (oldScript.src) {
-        newScript.src = oldScript.src;
-      } else {
-        newScript.textContent = oldScript.textContent;
+/**
+ * Build a full HTML document string for the iframe srcdoc.
+ * If the widget code is already a full document, inject our base styles into <head>.
+ * Otherwise wrap it in a minimal HTML shell.
+ */
+function buildWidgetSrcdoc(code: string): string {
+  const baseStyle = `
+    <style>
+      *, *::before, *::after { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: system-ui, -apple-system, sans-serif;
+        font-size: 15px;
+        color: #1a1915;
+        background: transparent;
+        overflow-x: hidden;
       }
-      oldScript.replaceWith(newScript);
-    });
-  });
+    </style>
+  `;
+
+  // Already a full HTML document — inject base style into <head>
+  if (/<html/i.test(code)) {
+    if (/<head/i.test(code)) {
+      return code.replace(/(<head[^>]*>)/i, `$1\n${baseStyle}`);
+    }
+    return code.replace(/(<html[^>]*>)/i, `$1<head>${baseStyle}</head>`);
+  }
+
+  // Fragment — wrap in a minimal document
+  return `<!DOCTYPE html>
+<html><head>${baseStyle}</head><body>${code}</body></html>`;
 }
 
 function WidgetChatBubble({ bubble }: { bubble: ToolBubble }) {
-  const hostRef = useRef<HTMLDivElement>(null);
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const [height, setHeight] = useState(200);
+
+  const srcdoc = useMemo(
+    () => (bubble.widgetCode ? buildWidgetSrcdoc(bubble.widgetCode) : ""),
+    [bubble.widgetCode],
+  );
 
   useEffect(() => {
-    const host = hostRef.current;
-    if (!host || !bubble.widgetCode) return;
+    const iframe = iframeRef.current;
+    if (!iframe) return;
 
-    injectShadow(host, bubble.widgetCode);
-  }, [bubble.widgetCode]);
+    const onMessage = (e: MessageEvent) => {
+      if (e.source !== iframe.contentWindow) return;
+      if (e.data?.type === "familiar-widget-height" && typeof e.data.height === "number") {
+        setHeight(Math.min(Math.max(e.data.height, 60), 2000));
+      }
+    };
+    window.addEventListener("message", onMessage);
+
+    // Also poll the iframe body height for widgets that don't post messages
+    let raf: number;
+    let prevH = 0;
+    const poll = () => {
+      try {
+        const doc = iframe.contentDocument;
+        if (doc?.body) {
+          const h = doc.body.scrollHeight;
+          if (h > 20 && h !== prevH) {
+            prevH = h;
+            setHeight(Math.min(Math.max(h, 60), 2000));
+          }
+        }
+      } catch {
+        // cross-origin — ignore
+      }
+      raf = requestAnimationFrame(poll);
+    };
+    raf = requestAnimationFrame(poll);
+
+    return () => {
+      window.removeEventListener("message", onMessage);
+      cancelAnimationFrame(raf);
+    };
+  }, [srcdoc]);
+
+  if (!srcdoc) return null;
 
   return (
     <div className={styles.row} style={{ justifyContent: "flex-start" }}>
       <div className={styles.widgetBubble}>
-        <div ref={hostRef} className={styles.widgetHost} />
+        <iframe
+          ref={iframeRef}
+          srcDoc={srcdoc}
+          sandbox="allow-scripts allow-same-origin"
+          className={styles.widgetIframe}
+          style={{ height }}
+          title="widget"
+        />
       </div>
     </div>
   );

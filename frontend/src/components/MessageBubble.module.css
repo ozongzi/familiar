@@ -964,9 +964,12 @@
     overflow: hidden;
 }
 
-.widgetHost {
+.widgetIframe {
     width: 100%;
     display: block;
+    border: none;
+    background: transparent;
+    transition: height 0.15s ease;
 }
 
 /* ─── Mobile styles ───────────────────────────────────────────────────────── */
