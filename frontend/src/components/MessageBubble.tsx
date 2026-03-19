@@ -8,7 +8,7 @@ import React, {
   useLayoutEffect,
 } from "react";
 import { MarkdownRenderer } from "./MarkdownRenderer";
-import type { ChatBubble, UploadBubble, WidgetBubble } from "../api/types";
+import type { ChatBubble, ToolBubble, UploadBubble } from "../api/types";
 import { buildToolArgsView } from "./messageBubble.toolParsing";
 import { FilePreviewContent } from "./FilePreviewContent";
 import { BashTool, WriteTool } from "./BashWriteTools";
@@ -25,9 +25,6 @@ export const MessageBubble = memo(function MessageBubble({
   bubble,
   onAnswer,
 }: Props) {
-  if (bubble.kind === "widget") {
-    return <WidgetChatBubble bubble={bubble} />;
-  }
   if (bubble.kind === "tool") {
     return <ToolCallBubble bubble={bubble} onAnswer={onAnswer} />;
   }
@@ -86,13 +83,20 @@ function extractBodyContent(code: string): string {
   return code;
 }
 
-function extractHeadAssets(code: string): { styles: string; scriptSrcs: string[] } {
+function extractHeadAssets(code: string): {
+  styles: string;
+  scriptSrcs: string[];
+} {
   const headMatch = code.match(/<head[^>]*>([\s\S]*?)<\/head>/i);
   if (!headMatch) return { styles: "", scriptSrcs: [] };
   const head = headMatch[1];
   const styleMatches = head.match(/<style[^>]*>[\s\S]*?<\/style>/gi) ?? [];
-  const styles = styleMatches.map((s) => s.replace(/<\/?style[^>]*>/gi, "")).join("\n");
-  const scriptSrcMatches = [...head.matchAll(/<script[^>]+src=["']([^"']+)["'][^>]*>/gi)];
+  const styles = styleMatches
+    .map((s) => s.replace(/<\/?style[^>]*>/gi, ""))
+    .join("\n");
+  const scriptSrcMatches = [
+    ...head.matchAll(/<script[^>]+src=["']([^"']+)["'][^>]*>/gi),
+  ];
   const scriptSrcs = scriptSrcMatches.map((m) => m[1]);
   return { styles, scriptSrcs };
 }
@@ -130,7 +134,7 @@ function injectShadow(host: HTMLElement, code: string) {
         s.onload = () => resolve();
         s.onerror = () => resolve();
         shadow.appendChild(s);
-      })
+      }),
   );
 
   const wrapper = document.createElement("div");
@@ -151,9 +155,9 @@ function injectShadow(host: HTMLElement, code: string) {
   });
 }
 
-function WidgetChatBubble({ bubble }: { bubble: WidgetBubble }) {
+function WidgetChatBubble({ bubble }: { bubble: ToolBubble }) {
   const hostRef = useRef<HTMLDivElement>(null);
-  const [height, setHeight] = useState(200);
+  const [height, setHeight] = useState(300);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -166,33 +170,41 @@ function WidgetChatBubble({ bubble }: { bubble: WidgetBubble }) {
 
     function measure() {
       const children = Array.from(shadow!.children).filter(
-        (c) => c.tagName !== "STYLE" && c.tagName !== "SCRIPT"
+        (c) => c.tagName !== "STYLE" && c.tagName !== "SCRIPT",
       );
       const wrapper = children[children.length - 1] as HTMLElement | undefined;
       if (!wrapper) return;
-      const rects = Array.from(wrapper.querySelectorAll("*")).map(
-        (el) => el.getBoundingClientRect().bottom
-      );
-      const wrapperTop = wrapper.getBoundingClientRect().top;
-      const maxBottom = Math.max(...rects, wrapper.getBoundingClientRect().bottom);
-      const h = maxBottom - wrapperTop;
-      if (h > 20) setHeight(Math.min(h + 24, 1200));
+      // scrollHeight 包含 overflow 内容，比 getBoundingClientRect 更可靠
+      const h = wrapper.scrollHeight;
+      if (h > 20) setHeight(Math.min(h + 24, 1400));
     }
+
+    const ro = new ResizeObserver(measure);
+    const children = Array.from(shadow.children).filter(
+      (c) => c.tagName !== "STYLE" && c.tagName !== "SCRIPT",
+    );
+    const wrapper = children[children.length - 1];
+    if (wrapper) ro.observe(wrapper);
 
     const timers = [
       setTimeout(measure, 200),
-      setTimeout(measure, 600),
-      setTimeout(measure, 1200),
-      setTimeout(measure, 2500),
+      setTimeout(measure, 800),
+      setTimeout(measure, 1800),
     ];
 
-    return () => timers.forEach(clearTimeout);
+    return () => {
+      ro.disconnect();
+      timers.forEach(clearTimeout);
+    };
   }, [bubble.widgetCode]);
 
   return (
     <div className={styles.row} style={{ justifyContent: "flex-start" }}>
       <div className={styles.widgetBubble}>
-        <div ref={hostRef} style={{ width: "100%", height, display: "block" }} />
+        <div
+          ref={hostRef}
+          style={{ width: "100%", height, display: "block" }}
+        />
       </div>
     </div>
   );
@@ -526,9 +538,19 @@ function ToolCallBubble({
     );
   }, [bubble.description]);
 
+  // ── visualize → widget 渲染 ──────────────────────────────────────────────
+  if (bubble.widgetCode) {
+    return <WidgetChatBubble bubble={bubble} />;
+  }
+
   // ── bash / write → 专用渲染 ──────────────────────────────────────────────
   const BASH_TOOLS = new Set(["bash", "execute", "execute_command"]);
-  const WRITE_TOOLS = new Set(["write", "write_file", "str_replace", "edit_block"]);
+  const WRITE_TOOLS = new Set([
+    "write",
+    "write_file",
+    "str_replace",
+    "edit_block",
+  ]);
 
   if (BASH_TOOLS.has(bubble.name)) {
     return (
@@ -634,7 +656,10 @@ function ToolCallBubble({
           {expanded && (
             <div className={styles.spawnBody}>
               {spawnGoal && (
-                <div className={styles.spawnTextBlock} style={{ marginBottom: 6 }}>
+                <div
+                  className={styles.spawnTextBlock}
+                  style={{ marginBottom: 6 }}
+                >
                   <strong style={{ opacity: 0.8 }}>任务目标：</strong>
                   <MarkdownRenderer content={spawnGoal} />
                 </div>
@@ -642,11 +667,17 @@ function ToolCallBubble({
 
               {/* Final summary/result for spawn */}
               {!bubble.pending && !!bubble.result && (
-                <div className={styles.spawnTextBlock} style={{
-                  marginBottom: spawnEvents.length > 0 ? 12 : 0,
-                  paddingBottom: spawnEvents.length > 0 ? 12 : 0,
-                  borderBottom: spawnEvents.length > 0 ? "1px dashed var(--border-subtle)" : "none"
-                }}>
+                <div
+                  className={styles.spawnTextBlock}
+                  style={{
+                    marginBottom: spawnEvents.length > 0 ? 12 : 0,
+                    paddingBottom: spawnEvents.length > 0 ? 12 : 0,
+                    borderBottom:
+                      spawnEvents.length > 0
+                        ? "1px dashed var(--border-subtle)"
+                        : "none",
+                  }}
+                >
                   <strong style={{ opacity: 0.8 }}>任务总结：</strong>
                   <ObjectFieldsView data={bubble.result} label="结果" />
                 </div>

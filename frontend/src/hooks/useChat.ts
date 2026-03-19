@@ -4,7 +4,6 @@ import type {
   TextBubble,
   ToolBubble,
   UploadBubble,
-  WidgetBubble,
   WsServerEvent,
   Message,
 } from "../api/types";
@@ -325,6 +324,12 @@ export function useChat(
           if (!tc.id || !tc.function) continue;
           const result = toolResultMap.get(tc.id) ?? null;
           const argsRaw = tc.function.arguments ?? "";
+
+          // visualize → 恢复 widgetCode 到 ToolBubble
+          const widgetCode = tc.function.name === "visualize" && result !== null
+            ? (extractWidgetCode(result) ?? extractWidgetCode(tryParseWidgetArgs(argsRaw)))
+            : null;
+
           const toolBubble: ToolBubble = {
             kind: "tool",
             key: `tool-${tc.id}`,
@@ -334,6 +339,7 @@ export function useChat(
             argsRaw,
             result,
             pending: result === null,
+            ...(widgetCode ? { widgetCode } : {}),
           };
           history.push(toolBubble);
         }
@@ -470,11 +476,11 @@ export function useChat(
         }
         setBubbles((prev) => {
           const exists = prev.some(
-            (b) => b.key === `tool-${event.id}` && (b.kind === "tool" || b.kind === "widget"),
+            (b) => b.key === `tool-${event.id}` && b.kind === "tool",
           );
           if (exists) {
             return prev.map((b) => {
-              if (b.kind === "widget" && b.key === `tool-${event.id}`) {
+              if (b.kind === "tool" && b.key === `tool-${event.id}` && b.name === "visualize") {
                 const rawArgs = (b._rawArgs ?? "") + event.delta;
                 const parsed = extractWidgetCode(tryParseWidgetArgs(rawArgs));
                 const streamed = parsed ?? extractStreamingWidgetCode(rawArgs);
@@ -483,24 +489,10 @@ export function useChat(
               if (b.key !== `tool-${event.id}` || b.kind !== "tool") return b;
               const newArgsRaw = b.argsRaw + event.delta;
               const desc = extractDescription(newArgsRaw);
-              return {
-                ...b,
-                argsRaw: newArgsRaw,
-                description: desc ?? b.description,
-              };
+              return { ...b, argsRaw: newArgsRaw, description: desc ?? b.description };
             });
           }
           sealActiveText();
-          if (event.name === "visualize") {
-            const streamed = extractStreamingWidgetCode(event.delta);
-            return [...prev, {
-              kind: "widget" as const,
-              key: `tool-${event.id}`,
-              role: "tool" as const,
-              widgetCode: streamed ?? "",
-              _rawArgs: event.delta,
-            } as WidgetBubble];
-          }
           const toolBubble: ToolBubble = {
             kind: "tool",
             key: `tool-${event.id}`,
@@ -510,6 +502,10 @@ export function useChat(
             argsRaw: event.delta,
             result: null,
             pending: true,
+            ...(event.name === "visualize" ? {
+              widgetCode: extractStreamingWidgetCode(event.delta) ?? "",
+              _rawArgs: event.delta,
+            } : {}),
           };
           return [...prev, toolBubble];
         });
@@ -530,19 +526,14 @@ export function useChat(
           return false;
         }
 
-        // visualize tool → replace ToolBubble with WidgetBubble
+        // visualize tool → 把 widgetCode 写进 ToolBubble
         if (event.name === "visualize") {
           const widgetCode = extractWidgetCode(event.result);
           if (widgetCode) {
             setBubbles((prev) =>
               prev.map((b) =>
                 b.key === `tool-${event.id}` && b.kind === "tool"
-                  ? ({
-                      kind: "widget",
-                      key: b.key,
-                      role: "tool",
-                      widgetCode,
-                    } as WidgetBubble)
+                  ? { ...b, result: event.result, pending: false, widgetCode }
                   : b,
               ),
             );

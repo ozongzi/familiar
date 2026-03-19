@@ -112,6 +112,8 @@ export interface ToolBubble {
   result: unknown | null;
   pending: boolean;
   spawnEvents?: SpawnEvent[];
+  widgetCode?: string;
+  _rawArgs?: string;
 }
 
 export interface UploadBubble {
@@ -123,15 +125,7 @@ export interface UploadBubble {
   size: number;
 }
 
-export interface WidgetBubble {
-  kind: "widget";
-  key: string;
-  role: "tool";
-  widgetCode: string;
-  _rawArgs?: string;
-}
-
-export type ChatBubble = TextBubble | ToolBubble | UploadBubble | WidgetBubble;
+export type ChatBubble = TextBubble | ToolBubble | UploadBubble;
 
 // ─── MCPs ─────────────────────────────────────────────────────────────────
 
