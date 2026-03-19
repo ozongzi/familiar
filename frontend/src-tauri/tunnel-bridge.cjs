@@ -23,7 +23,9 @@ const LOG_FILE = path.join(os.tmpdir(), "familiar-tunnel.log");
 function log(msg) {
   const line = `[${new Date().toISOString()}] ${msg}\n`;
   process.stderr.write(line);
-  try { fs.appendFileSync(LOG_FILE, line); } catch {}
+  try {
+    fs.appendFileSync(LOG_FILE, line);
+  } catch {}
 }
 
 log("tunnel-bridge 启动");
@@ -46,8 +48,22 @@ const WS_MODULE = RESOURCE_DIR
   : path.join(__dirname, "mcp-bundle", "node_modules", "ws", "index.js");
 
 const MCP_CLI = RESOURCE_DIR
-  ? path.join(RESOURCE_DIR, "mcp-bundle", "node_modules", "@playwright", "mcp", "cli.js")
-  : path.join(__dirname, "mcp-bundle", "node_modules", "@playwright", "mcp", "cli.js");
+  ? path.join(
+      RESOURCE_DIR,
+      "mcp-bundle",
+      "node_modules",
+      "@playwright",
+      "mcp",
+      "cli.js",
+    )
+  : path.join(
+      __dirname,
+      "mcp-bundle",
+      "node_modules",
+      "@playwright",
+      "mcp",
+      "cli.js",
+    );
 
 log(`ws 模块: ${WS_MODULE} (存在: ${fs.existsSync(WS_MODULE)})`);
 log(`MCP CLI: ${MCP_CLI} (存在: ${fs.existsSync(MCP_CLI)})`);
@@ -69,7 +85,7 @@ function startMcp() {
   log("启动 @playwright/mcp...");
 
   const isWindows = process.platform === "win32";
-  const channelArgs = isWindows ? ["--channel", "msedge"] : [];
+  const channelArgs = isWindows ? ["--browser", "msedge"] : [];
 
   const [cmd, args] = fs.existsSync(MCP_CLI)
     ? [process.execPath, [MCP_CLI, ...channelArgs]]
@@ -94,7 +110,11 @@ function startMcp() {
 
   mcpProc.stdout.on("data", (chunk) => {
     if (ws?.readyState === WebSocket.OPEN) {
-      chunk.toString().split("\n").filter(Boolean).forEach((l) => ws.send(l));
+      chunk
+        .toString()
+        .split("\n")
+        .filter(Boolean)
+        .forEach((l) => ws.send(l));
     }
   });
 }
@@ -118,7 +138,9 @@ function connect() {
 
   ws.on("message", (data) => {
     const text = data.toString();
-    try { if (JSON.parse(text)?.type === "pong") return; } catch {}
+    try {
+      if (JSON.parse(text)?.type === "pong") return;
+    } catch {}
     if (mcpProc?.stdin?.writable) mcpProc.stdin.write(text + "\n");
   });
 
