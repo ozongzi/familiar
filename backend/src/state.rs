@@ -102,6 +102,7 @@ pub struct AppState {
     pub db: Db,
     pub sandbox: Arc<crate::sandbox::SandboxManager>,
     pub mcp_tools: Arc<tokio::sync::Mutex<Vec<(String, McpTool)>>>,
+    pub tunnel_registry: crate::web::tunnel::TunnelRegistry,
 }
 
 impl AppState {
@@ -119,6 +120,7 @@ impl AppState {
             db,
             sandbox,
             mcp_tools: Arc::new(tokio::sync::Mutex::new(mcp_tools)),
+            tunnel_registry: crate::web::tunnel::new_tunnel_registry(),
         }
     }
 
@@ -414,6 +416,16 @@ impl AppState {
                 .push((name.clone(), tool.clone()));
 
             agent = agent.add_tool(tool);
+        }
+
+        // 如果该用户的桌面客户端当前在线，把隧道 MCP 工具也注入进来
+        // tunnel_registry 里存的是已连接客户端暴露的 McpTool（通过 ToolInjection::Add 实时注入）
+        // build_agent 阶段只需要把 inject_tx 注册进去，隧道连接时会自动 push 工具
+        {
+            let registry = self.tunnel_registry.lock().await;
+            if registry.contains_key(&user_id) {
+                info!("用户 {user_id} 客户端在线，隧道工具将通过 inject 实时加载");
+            }
         }
 
         (

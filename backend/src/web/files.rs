@@ -522,8 +522,8 @@ pub async fn upload_avatar(
         .await
         .map_err(|e| AppError::bad_request(&format!("multipart 解析错误: {}", e)))?
     {
-        if let Some(name) = field.name() {
-            if name == "avatar" || name == "file" {
+        if let Some(name) = field.name()
+            && (name == "avatar" || name == "file") {
                 // Get original filename to extract extension
                 if let Some(filename) = field.file_name() {
                     let ext = std::path::Path::new(filename)
@@ -556,7 +556,6 @@ pub async fn upload_avatar(
                 file_data = Some(data);
                 break;
             }
-        }
     }
 
     let (data, ext) = match (file_data, file_ext) {
@@ -591,12 +590,11 @@ pub async fn upload_avatar(
         .await?;
 
     // Delete old avatar file if it exists and is different
-    if let Some(old_path) = old_avatar {
-        if old_path != avatar_db_path {
+    if let Some(old_path) = old_avatar
+        && old_path != avatar_db_path {
             let old_file = std::path::PathBuf::from(&state.artifacts_path).join(&old_path);
             let _ = tokio::fs::remove_file(old_file).await;
         }
-    }
 
     // Log audit
     let _ = crate::audit::log_audit(

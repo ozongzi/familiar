@@ -94,16 +94,14 @@ fn generate_token() -> String {
 
 fn extract_ip(headers: &HeaderMap) -> Option<String> {
     // Try X-Forwarded-For first (for proxies)
-    if let Some(forwarded) = headers.get("x-forwarded-for") {
-        if let Ok(s) = forwarded.to_str() {
+    if let Some(forwarded) = headers.get("x-forwarded-for")
+        && let Ok(s) = forwarded.to_str() {
             return Some(s.split(',').next().unwrap_or("").trim().to_string());
         }
-    }
     // Try X-Real-IP
-    if let Some(real_ip) = headers.get("x-real-ip") {
-        if let Ok(s) = real_ip.to_str() {
+    if let Some(real_ip) = headers.get("x-real-ip")
+        && let Ok(s) = real_ip.to_str() {
             return Some(s.to_string());
         }
-    }
     None
 }

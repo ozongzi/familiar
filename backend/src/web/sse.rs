@@ -193,11 +193,10 @@ pub async fn sse_handler(
             match live_rx.recv().await {
                 Ok(ev) => {
                     // Skip events we already sent during replay.
-                    if let Some(last) = last_sent_seq {
-                        if ev.seq <= last {
+                    if let Some(last) = last_sent_seq
+                        && ev.seq <= last {
                             continue;
                         }
-                    }
                     last_sent_seq = Some(ev.seq);
                     let terminal = is_terminal(&ev.payload);
                     yield Ok(Event::default().data(ev.payload.clone()));
@@ -222,11 +221,10 @@ pub async fn sse_handler(
                         .unwrap_or(false);
 
                     for ev in &new_log {
-                        if let Some(last) = last_sent_seq {
-                            if ev.seq <= last {
+                        if let Some(last) = last_sent_seq
+                            && ev.seq <= last {
                                 continue;
                             }
-                        }
                         last_sent_seq = Some(ev.seq);
                         yield Ok(Event::default().data(ev.payload.clone()));
                     }

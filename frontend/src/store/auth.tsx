@@ -1,6 +1,7 @@
 import { useEffect, useReducer, type ReactNode } from "react";
 import { api } from "../api/client";
 import { authReducer, AuthContext, TOKEN_KEY } from "./auth.shared";
+import { invoke, isTauri } from "../utils/tauri";
 
 // Provider implementation uses shared reducer/context/constants from auth.shared
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -36,6 +37,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
+  }, [state.token]);
+
+  // 桌面端：token 变化时启动/停止 WS 隧道
+  useEffect(() => {
+    if (!isTauri()) return;
+
+    if (state.token) {
+      const serverUrl = window.location.origin || "http://localhost:3000";
+      invoke("start_tunnel", { token: state.token, serverUrl }).catch((e) =>
+        console.warn("[tunnel] start failed:", e),
+      );
+    } else {
+      invoke("stop_tunnel").catch((e) =>
+        console.warn("[tunnel] stop failed:", e),
+      );
+    }
   }, [state.token]);
 
   async function login(token: string) {

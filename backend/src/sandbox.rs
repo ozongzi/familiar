@@ -39,18 +39,17 @@ impl SandboxManager {
             Ok(output) if output.status.success() => {
                 let running = String::from_utf8_lossy(&output.stdout).trim() == "true";
                 if running {
-                    return Ok(container_name);
+                    Ok(container_name)
                 } else {
                     info!("Starting existing container {}", container_name);
                     let start_status = Command::new("docker")
                         .args(["start", &container_name])
                         .status();
-                    if let Ok(s) = start_status {
-                        if s.success() {
+                    if let Ok(s) = start_status
+                        && s.success() {
                             return Ok(container_name);
                         }
-                    }
-                    return Err("Failed to start container".into());
+                    Err("Failed to start container".into())
                 }
             }
             _ => {
@@ -77,11 +76,10 @@ impl SandboxManager {
                     ])
                     .status();
 
-                if let Ok(s) = run_status {
-                    if s.success() {
+                if let Ok(s) = run_status
+                    && s.success() {
                         return Ok(container_name);
                     }
-                }
                 Err("Failed to create container".into())
             }
         }

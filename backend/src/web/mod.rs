@@ -7,6 +7,7 @@ pub mod mcps;
 pub mod sessions;
 pub mod settings;
 pub mod sse;
+pub mod tunnel;
 pub mod users;
 
 use std::{path::Path, sync::Arc};
@@ -120,6 +121,8 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/files", get(download_file))
         .route("/api/files", post(upload_file))
         .route("/api/files/preview", get(preview_file))
+        // ── 客户端隧道 (WebSocket) ────────────────────────────────────────────
+        .route("/api/tunnel", get(tunnel::tunnel_handler))
         // ── Chat (SSE streaming) ──────────────────────────────────────────────
         .route(
             "/api/conversations/{id}/messages",
