@@ -156,14 +156,15 @@ export function buildToolArgsView(bubble: ToolBubble): ToolArgsView {
       ? getStringValue(normalized, raw, ["path", "file_path", "target_file"])
       : null;
 
-  const oldStr = isReplaceTool
-    ? getStringValue(normalized, raw, [
-        "old_str",
-        "old_string",
-        "old_text",
-        "oldText",
-      ])
-    : null;
+  const oldStr =
+    isReplaceTool || isWriteTool
+      ? getStringValue(normalized, raw, [
+          "old_str",
+          "old_string",
+          "old_text",
+          "oldText",
+        ])
+      : null;
 
   const editContent = isReplaceTool
     ? getStringValue(normalized, raw, [
@@ -173,7 +174,7 @@ export function buildToolArgsView(bubble: ToolBubble): ToolArgsView {
         "newText",
       ])
     : isWriteTool
-      ? getStringValue(normalized, raw, ["content", "file_text", "text"])
+      ? getStringValue(normalized, raw, ["new_content", "content", "file_text", "text"])
       : null;
 
   const question =

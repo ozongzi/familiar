@@ -4,6 +4,7 @@ import type {
   TextBubble,
   ToolBubble,
   UploadBubble,
+  WidgetBubble,
   WsServerEvent,
   Message,
 } from "../api/types";
@@ -35,6 +36,21 @@ function readPersistedStreamId(conversationId: string): string | null {
 function clearPersistedStreamId(conversationId: string | null) {
   if (!conversationId) return;
   sessionStorage.removeItem(streamStorageKey(conversationId));
+}
+
+function tryParseWidgetArgs(raw: string): unknown {
+  try { return JSON.parse(raw); } catch { return null; }
+}
+
+function extractWidgetCode(result: unknown): string | null {
+  if (typeof result === "string") return result || null;
+  if (result && typeof result === "object") {
+    const r = result as Record<string, unknown>;
+    if (typeof r.widget_code === "string") return r.widget_code || null;
+    if (typeof r.html === "string") return r.html || null;
+    if (typeof r.content === "string") return r.content || null;
+  }
+  return null;
 }
 
 function extractDescription(raw: string): string | null {
@@ -268,6 +284,16 @@ export function useChat(
         } catch {
           /* skip */
         }
+        if (m.content && m.content.trim().length > 0) {
+          history.push({
+            kind: "text",
+            key: uid(),
+            role: "assistant",
+            content: m.content,
+            reasoning: m.reasoning ?? "",
+            streaming: false,
+          });
+        }
         for (const tc of calls) {
           console.warn("tc = ", tc);
           if (!tc.id || !tc.function) continue;
@@ -284,16 +310,6 @@ export function useChat(
             pending: result === null,
           };
           history.push(toolBubble);
-        }
-        if (m.content && m.content.trim().length > 0) {
-          history.push({
-            kind: "text",
-            key: uid(),
-            role: "assistant",
-            content: m.content,
-            reasoning: m.reasoning ?? "",
-            streaming: false,
-          });
         }
         continue;
       }
@@ -428,14 +444,17 @@ export function useChat(
         }
         setBubbles((prev) => {
           const exists = prev.some(
-            (b) => b.key === `tool-${event.id}` && b.kind === "tool",
-          );
-          console.log(
-            `[tool_call] id=${event.id}, exists=${exists}, currentBubbles=${prev.length}`,
-            prev.map((b) => b.key),
+            (b) => b.key === `tool-${event.id}` && (b.kind === "tool" || b.kind === "widget"),
           );
           if (exists) {
             return prev.map((b) => {
+              if (b.kind === "widget" && b.key === `tool-${event.id}`) {
+                // streaming widget args in
+                const newCode = extractWidgetCode(
+                  tryParseWidgetArgs(b.widgetCode + event.delta)
+                ) ?? (b.widgetCode + event.delta);
+                return { ...b, widgetCode: newCode };
+              }
               if (b.key !== `tool-${event.id}` || b.kind !== "tool") return b;
               const newArgsRaw = b.argsRaw + event.delta;
               const desc = extractDescription(newArgsRaw);
@@ -447,7 +466,15 @@ export function useChat(
             });
           }
           sealActiveText();
-          console.warn("appending", event);
+          // if this is visualize, start as WidgetBubble immediately
+          if (event.name === "visualize") {
+            return [...prev, {
+              kind: "widget" as const,
+              key: `tool-${event.id}`,
+              role: "tool" as const,
+              widgetCode: event.delta,
+            } as WidgetBubble];
+          }
           const toolBubble: ToolBubble = {
             kind: "tool",
             key: `tool-${event.id}`,
@@ -476,6 +503,27 @@ export function useChat(
           });
           return false;
         }
+
+        // visualize tool → replace ToolBubble with WidgetBubble
+        if (event.name === "visualize") {
+          const widgetCode = extractWidgetCode(event.result);
+          if (widgetCode) {
+            setBubbles((prev) =>
+              prev.map((b) =>
+                b.key === `tool-${event.id}` && b.kind === "tool"
+                  ? ({
+                      kind: "widget",
+                      key: b.key,
+                      role: "tool",
+                      widgetCode,
+                    } as WidgetBubble)
+                  : b,
+              ),
+            );
+            return false;
+          }
+        }
+
         setBubbles((prev) =>
           prev.map((b) =>
             b.key === `tool-${event.id}` && b.kind === "tool"

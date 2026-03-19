@@ -6,11 +6,8 @@ use serde_json::json;
 use tokio::sync::Mutex;
 
 pub struct UiSpells {
-    /// oneshot slot：等待用户回答时写入，ws.rs 收到 answer 后触发
     pub ask_pending: Arc<Mutex<Option<tokio::sync::oneshot::Sender<String>>>>,
-    /// Sandbox manager to resolve file paths and sizes
     pub sandbox: Arc<crate::sandbox::SandboxManager>,
-    /// The authenticated user's id.
     pub user_id: uuid::Uuid,
 }
 
@@ -19,35 +16,30 @@ impl Tool for UiSpells {
     /// 将文件展示给用户（在 UI 中渲染为一个类似 Claude 的文件卡片，支持预览和下载）。
     /// 适合展示生成的图表、导出的数据、或者需要用户重点关注的代码文件。
     ///
-    /// description: 本次展示的简短说明（例如：“我为你生成了数据分析报告”）
+    /// description: 本次展示的简短说明（例如："我为你生成了数据分析报告"）
     /// path: 文件的完整路径（通常以 /workspace/ 开头）
-    async fn present_file(&self, description: Option<String>, path: String) -> Value {
+    async fn present_file(&self, description: Option<String>, path: String) -> serde_json::Value {
         let _ = description;
         let q_path = std::path::PathBuf::from(&path);
-
-        // Map sandbox path back to host path to get file size
         let host_path = if q_path.starts_with("/workspace") {
             let relative = q_path.strip_prefix("/workspace").unwrap();
             self.sandbox.get_user_dir(self.user_id).join(relative)
         } else {
             q_path
         };
-
         let filename = host_path
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("file")
             .to_string();
-
         let size = tokio::fs::metadata(&host_path)
             .await
             .map(|m| m.len())
             .unwrap_or(0);
-
         json!({
             "display": "file",
             "filename": filename,
-            "path": path, // keep the sandbox path for the frontend
+            "path": path,
             "size": size
         })
     }
@@ -64,7 +56,7 @@ impl Tool for UiSpells {
         description: Option<String>,
         question: String,
         options: Option<Vec<String>>,
-    ) -> Value {
+    ) -> serde_json::Value {
         let _ = (description, options, question);
         let (tx, rx) = tokio::sync::oneshot::channel::<String>();
         *self.ask_pending.lock().await = Some(tx);
@@ -73,5 +65,15 @@ impl Tool for UiSpells {
             Ok(Err(_)) => json!({ "error": "连接已关闭，用户未作答" }),
             Err(_) => json!({ "error": "等待超时（5 分钟）" }),
         }
+    }
+
+    /// 在对话中内嵌渲染一个交互式 widget（图表、可视化、计算器等）。
+    /// 适合用来展示数据图表、复利计算器、流程图等视觉内容。
+    ///
+    /// widget_code: 完整的 HTML 代码片段（可使用 Chart.js、D3 等 CDN 库）。
+    ///   不要包含 <!DOCTYPE>、<html>、<head>、<body> 标签，直接写内容。
+    ///   可使用 CSS 变量：--text-primary、--bg-surface、--accent 等与 familiar 主题一致。
+    async fn visualize(&self, widget_code: String) -> serde_json::Value {
+        json!({ "widget_code": widget_code })
     }
 }

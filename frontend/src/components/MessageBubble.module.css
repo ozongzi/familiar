@@ -953,7 +953,18 @@
     gap: 2px;
 }
 
-/* ─── Mobile styles ──────────────────────────────────────────────────────── */
+/* ─── Widget bubble ──────────────────────────────────────────────────────── */
+
+.widgetBubble {
+    width: 100%;
+    max-width: 760px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+}
+
+/* ─── Mobile styles ───────────────────────────────────────────────────────── */
 @media (max-width: 768px) {
     .row {
         gap: 10px;

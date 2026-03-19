@@ -8,8 +8,10 @@ import React, {
   useLayoutEffect,
 } from "react";
 import { MarkdownRenderer } from "./MarkdownRenderer";
-import type { ChatBubble, UploadBubble } from "../api/types";
+import type { ChatBubble, UploadBubble, WidgetBubble } from "../api/types";
 import { buildToolArgsView } from "./messageBubble.toolParsing";
+import { FilePreviewContent } from "./FilePreviewContent";
+import { BashTool, WriteTool } from "./BashWriteTools";
 import styles from "./MessageBubble.module.css";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -23,6 +25,9 @@ export const MessageBubble = memo(function MessageBubble({
   bubble,
   onAnswer,
 }: Props) {
+  if (bubble.kind === "widget") {
+    return <WidgetChatBubble bubble={bubble} />;
+  }
   if (bubble.kind === "tool") {
     return <ToolCallBubble bubble={bubble} onAnswer={onAnswer} />;
   }
@@ -31,6 +36,121 @@ export const MessageBubble = memo(function MessageBubble({
   }
   return <TextChatBubble bubble={bubble} />;
 });
+
+// ─── Widget bubble ────────────────────────────────────────────────────────────
+
+const WIDGET_CSS_VARS = `
+  :host {
+    --bg-base: #faf9f5;
+    --bg-surface: #ffffff;
+    --bg-elevated: #f0ede6;
+    --bg-hover: #ebe7de;
+    --border: #ddd8ce;
+    --border-subtle: #e8e4db;
+    --text-primary: #1a1915;
+    --text-secondary: #6b6651;
+    --text-muted: #73726c;
+    --accent: #c96442;
+    --accent-dim: #f5ede8;
+    --radius-sm: 8px;
+    --radius-md: 12px;
+    --radius-lg: 20px;
+    --font-sans: system-ui, -apple-system, sans-serif;
+    --font-mono: "Cascadia Code", "JetBrains Mono", monospace;
+    --color-background-primary: #ffffff;
+    --color-background-secondary: #f0ede6;
+    --color-text-primary: #1a1915;
+    --color-text-secondary: #6b6651;
+    --color-border-tertiary: rgba(29,25,21,0.15);
+    --color-border-secondary: rgba(29,25,21,0.3);
+    --border-radius-md: 8px;
+    --border-radius-lg: 12px;
+    display: block;
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body, :host > div {
+    font-family: var(--font-sans);
+    font-size: 15px;
+    color: var(--text-primary);
+    background: transparent;
+    overflow-x: hidden;
+  }
+`;
+
+function injectShadow(host: HTMLElement, code: string) {
+  let shadow = host.shadowRoot;
+  if (!shadow) {
+    shadow = host.attachShadow({ mode: "open" });
+  }
+
+  // Build content: style + wrapper div + code
+  const style = document.createElement("style");
+  style.textContent = WIDGET_CSS_VARS;
+
+  const wrapper = document.createElement("div");
+  wrapper.innerHTML = code;
+
+  // Clear and re-inject
+  shadow.innerHTML = "";
+  shadow.appendChild(style);
+  shadow.appendChild(wrapper);
+
+  // Re-execute scripts (innerHTML doesn't run them)
+  wrapper.querySelectorAll("script").forEach((oldScript) => {
+    const newScript = document.createElement("script");
+    if (oldScript.src) {
+      newScript.src = oldScript.src;
+    } else {
+      newScript.textContent = oldScript.textContent;
+    }
+    oldScript.replaceWith(newScript);
+  });
+}
+
+function WidgetChatBubble({ bubble }: { bubble: WidgetBubble }) {
+  const hostRef = useRef<HTMLDivElement>(null);
+  const [height, setHeight] = useState<number | "auto">("auto");
+
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host || !bubble.widgetCode) return;
+
+    injectShadow(host, bubble.widgetCode);
+
+    // Use ResizeObserver to track actual rendered height
+    const shadow = host.shadowRoot;
+    if (!shadow) return;
+
+    const ro = new ResizeObserver(() => {
+      const wrapper = shadow.children[1] as HTMLElement | undefined;
+      if (wrapper) {
+        const h = wrapper.scrollHeight;
+        if (h > 0) setHeight(Math.min(h + 16, 800));
+      }
+    });
+
+    const wrapper = shadow.children[1];
+    if (wrapper) ro.observe(wrapper);
+
+    return () => ro.disconnect();
+  }, [bubble.widgetCode]);
+
+  return (
+    <div className={styles.row} style={{ justifyContent: "flex-start" }}>
+      <div className={styles.widgetBubble} style={{ overflow: "visible" }}>
+        <div
+          ref={hostRef}
+          style={{
+            width: "100%",
+            height: height === "auto" ? undefined : height,
+            minHeight: 40,
+            display: "block",
+          }}
+        />
+      </div>
+    </div>
+  );
+}
 
 // ─── Text bubble (user / assistant) ──────────────────────────────────────────
 
@@ -360,6 +480,30 @@ function ToolCallBubble({
       placeholders[Math.floor(Math.random() * placeholders.length)]
     );
   }, [bubble.description]);
+
+  // ── bash / write → 专用渲染 ──────────────────────────────────────────────
+  const BASH_TOOLS = new Set(["bash", "execute", "execute_command"]);
+  const WRITE_TOOLS = new Set(["write", "write_file", "str_replace", "edit_block"]);
+
+  if (BASH_TOOLS.has(bubble.name)) {
+    return (
+      <div className={nested ? styles.toolRowNested : styles.toolRow}>
+        <div className={styles.toolBubble}>
+          <BashTool bubble={bubble} />
+        </div>
+      </div>
+    );
+  }
+
+  if (WRITE_TOOLS.has(bubble.name)) {
+    return (
+      <div className={nested ? styles.toolRowNested : styles.toolRow}>
+        <div className={styles.toolBubble}>
+          <WriteTool bubble={bubble} />
+        </div>
+      </div>
+    );
+  }
 
   // ── Early return: ask → question card ────────────────────────────────────
   if (bubble.name === "ask") {
@@ -798,50 +942,6 @@ function FileCard({ file, pending }: { file: FileInfo; pending: boolean }) {
           </div>
         )}
       </div>
-    </div>
-  );
-}
-
-// ─── File preview content (with highlight.js) ─────────────────────────────────
-
-function FilePreviewContent({
-  content,
-  lang,
-  lineCount,
-}: {
-  content: string;
-  lang: string;
-  lineCount: number;
-}) {
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  // Import hljs dynamically to keep the main bundle lean — it's already loaded
-  // by MarkdownRenderer so this will hit the module cache.
-  useEffect(() => {
-    import("highlight.js").then((hljs) => {
-      const el = containerRef.current?.querySelector("code");
-      if (!el) return;
-      if (lang && hljs.default.getLanguage(lang)) {
-        el.innerHTML = hljs.default.highlight(content, {
-          language: lang,
-        }).value;
-      } else {
-        el.innerHTML = hljs.default.highlightAuto(content).value;
-      }
-    });
-  }, [content, lang]);
-
-  return (
-    <div ref={containerRef} className={styles.filePreviewCode}>
-      <div className={styles.filePreviewCodeHeader}>
-        {lang && <span className={styles.filePreviewLang}>{lang}</span>}
-        <span className={styles.filePreviewLines}>{lineCount} 行</span>
-      </div>
-      <pre className={styles.filePreviewPre}>
-        <code className={`hljs ${lang ? `language-${lang}` : ""}`}>
-          {content}
-        </code>
-      </pre>
     </div>
   );
 }

@@ -123,7 +123,14 @@ export interface UploadBubble {
   size: number;
 }
 
-export type ChatBubble = TextBubble | ToolBubble | UploadBubble;
+export interface WidgetBubble {
+  kind: "widget";
+  key: string;
+  role: "tool";
+  widgetCode: string;
+}
+
+export type ChatBubble = TextBubble | ToolBubble | UploadBubble | WidgetBubble;
 
 // ─── MCPs ─────────────────────────────────────────────────────────────────
 

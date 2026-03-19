@@ -69,8 +69,9 @@ impl SandboxManager {
                         "/workspace",
                         "--restart",
                         "always",
-                        "node:20-slim",
+                        "--entrypoint",
                         "tail",
+                        "autocheck-mcp:latest",
                         "-f",
                         "/dev/null",
                     ])

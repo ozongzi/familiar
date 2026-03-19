@@ -1,0 +1,225 @@
+.header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 14px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+  border-radius: 0;
+}
+.header:hover {
+  background: var(--bg-hover);
+}
+.headerIcon {
+  display: flex;
+  align-items: center;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+.headerLabel {
+  font-size: 13px;
+  color: var(--text-secondary);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.headerLabelPending {
+  color: var(--text-primary);
+  font-weight: 500;
+  animation: zenBreath 3.5s ease-in-out infinite;
+}
+@keyframes zenBreath {
+  0%, 100% { opacity: 0.4; letter-spacing: 0em; }
+  50% { opacity: 0.85; letter-spacing: 0.1em; }
+}
+.headerBadges {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.chevron {
+  display: flex;
+  align-items: center;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  transition: transform 0.15s;
+}
+.chevronOpen {
+  transform: rotate(180deg);
+}
+
+.badgeOk {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: #EAF3DE;
+  color: #3B6D11;
+  border: 0.5px solid #97C459;
+  white-space: nowrap;
+}
+.badgeErr {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: #FCEBEB;
+  color: #A32D2D;
+  border: 0.5px solid #F09595;
+  white-space: nowrap;
+}
+.badgeWarn {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: #FAEEDA;
+  color: #854F0B;
+  border: 0.5px solid #EF9F27;
+  white-space: nowrap;
+}
+.badgePending {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+  border: 0.5px solid var(--border);
+  white-space: nowrap;
+}
+
+.body {
+  border-top: 0.5px solid var(--border-subtle);
+}
+
+.cmdBar {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 14px;
+  background: var(--bg-elevated);
+  border-bottom: 0.5px solid var(--border-subtle);
+}
+.cmdPrompt {
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  flex-shrink: 0;
+  line-height: 1.7;
+}
+.cmdText {
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+  word-break: break-all;
+  line-height: 1.7;
+}
+.output {
+  padding: 10px 14px;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+  line-height: 1.7;
+  max-height: 200px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.outputEmpty {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.diffPath {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 8px 14px;
+  background: var(--bg-elevated);
+  border-bottom: 0.5px solid var(--border-subtle);
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+}
+.diffLines {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.diffArea {
+  font-size: 12px;
+  font-family: var(--font-mono);
+  line-height: 1.7;
+  overflow-x: auto;
+  max-height: 280px;
+  overflow-y: auto;
+}
+.diffLine {
+  display: block;
+  padding: 0 14px;
+  white-space: pre;
+}
+.diffDel {
+  background: #FCEBEB;
+  color: #791F1F;
+}
+.diffAdd {
+  background: #EAF3DE;
+  color: #27500A;
+}
+.diffCtx {
+  color: var(--text-secondary);
+}
+.diffLn {
+  display: inline-block;
+  width: 32px;
+  color: var(--text-muted);
+  font-size: 11px;
+  user-select: none;
+  opacity: 0.6;
+}
+
+.autocheckList {
+  border-top: 0.5px solid var(--border-subtle);
+  padding: 6px 14px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.autocheckItem {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 12px;
+}
+.autocheckLoc {
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+.autocheckMsg {
+  color: var(--text-secondary);
+}
+
+.codePreview {
+  max-height: 240px;
+  overflow-y: auto;
+  overflow-x: auto;
+}
+.codePreviewPre {
+  margin: 0;
+  padding: 10px 14px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.7;
+  background: var(--bg-surface);
+  white-space: pre;
+}
