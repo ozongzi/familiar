@@ -1,13 +1,19 @@
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Manager, State};
-use tauri_plugin_shell::{ShellExt, process::CommandChild};
 use tauri_plugin_store::StoreExt;
+
+#[cfg(not(target_os = "android"))]
+use tauri_plugin_shell::{ShellExt, process::CommandChild};
 
 // ── 状态 ──────────────────────────────────────────────────────────────────────
 
+#[cfg(not(target_os = "android"))]
 struct TunnelState {
     child: Option<CommandChild>,
 }
+
+#[cfg(target_os = "android")]
+struct TunnelState {}
 
 type SharedTunnelState = Arc<Mutex<TunnelState>>;
 
@@ -18,6 +24,7 @@ const LOCAL_MCP_KEY: &str = "mcps";
 
 /// 登录完成后由前端调用，用 token 启动隧道桥接进程
 #[tauri::command]
+#[cfg(not(target_os = "android"))]
 async fn start_tunnel(
     token: String,
     server_url: String,
@@ -86,11 +93,13 @@ async fn start_tunnel(
 
 /// 登出后由前端调用，停止隧道桥接进程
 #[tauri::command]
+#[cfg(not(target_os = "android"))]
 async fn stop_tunnel(state: State<'_, SharedTunnelState>) -> Result<(), String> {
     stop_tunnel_inner(&state);
     Ok(())
 }
 
+#[cfg(not(target_os = "android"))]
 fn stop_tunnel_inner(state: &SharedTunnelState) {
     let child = state.lock().unwrap().child.take();
     if let Some(c) = child {
@@ -99,14 +108,33 @@ fn stop_tunnel_inner(state: &SharedTunnelState) {
     }
 }
 
+#[cfg(target_os = "android")]
+#[tauri::command]
+async fn start_tunnel(_token: String, _server_url: String) -> Result<(), String> {
+    Ok(()) // Android 暂不支持本地 MCP 隧道
+}
+
+#[cfg(target_os = "android")]
+#[tauri::command]
+async fn stop_tunnel() -> Result<(), String> {
+    Ok(())
+}
+
 /// 读取本地 MCP 列表
 #[tauri::command]
 fn get_local_mcps(app: AppHandle) -> serde_json::Value {
     load_local_mcps(&app)
 }
 
+#[cfg(target_os = "android")]
+#[tauri::command]
+fn set_local_mcps(_app: AppHandle, _mcps: serde_json::Value) -> Result<(), String> {
+    Ok(()) // Android 暂不支持本地 MCP
+}
+
 /// 保存本地 MCP 列表并热重启隧道桥接进程
 #[tauri::command]
+#[cfg(not(target_os = "android"))]
 async fn set_local_mcps(
     app: AppHandle,
     mcps: serde_json::Value,
@@ -139,12 +167,19 @@ fn load_local_mcps(app: &AppHandle) -> serde_json::Value {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(not(target_os = "android"))]
     let tunnel_state: SharedTunnelState = Arc::new(Mutex::new(TunnelState { child: None }));
+    #[cfg(target_os = "android")]
+    let tunnel_state: SharedTunnelState = Arc::new(Mutex::new(TunnelState {}));
 
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .manage(tunnel_state)
-        .plugin(tauri_plugin_shell::init())
-        .plugin(tauri_plugin_store::Builder::default().build())
+        .plugin(tauri_plugin_store::Builder::default().build());
+
+    #[cfg(not(target_os = "android"))]
+    let builder = builder.plugin(tauri_plugin_shell::init());
+
+    builder
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(

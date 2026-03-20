@@ -188,6 +188,32 @@ export function ChatPage() {
     }
   }, [convsLoading, conversations, activeId, navigate]);
 
+  const layoutRef = useRef<HTMLDivElement>(null);
+
+  // ── Handle Visual Viewport (Mobile Keyboard) ──────────────────────────
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+
+    const handleVVChange = () => {
+      if (layoutRef.current) {
+        layoutRef.current.style.height = `${vv.height}px`;
+      }
+      // On some iOS versions, we might need to scroll the body to top to prevent
+      // the browser from "helping" us by scrolling the page and hiding our header.
+      window.scrollTo(0, 0);
+    };
+
+    vv.addEventListener("resize", handleVVChange);
+    vv.addEventListener("scroll", handleVVChange);
+    handleVVChange();
+
+    return () => {
+      vv.removeEventListener("resize", handleVVChange);
+      vv.removeEventListener("scroll", handleVVChange);
+    };
+  }, []);
+
   // ── Handle resize ──────────────────────────────────────────────────────
   useEffect(() => {
     const handleResize = () => {
@@ -275,7 +301,7 @@ export function ChatPage() {
   const activeConv = conversations.find((c) => c.id === activeId);
 
   return (
-    <div className={styles.layout}>
+    <div ref={layoutRef} className={styles.layout}>
       {/* Sidebar overlay for mobile */}
       <div
         className={`${styles.sidebarOverlay} ${sidebarOpen ? styles.visible : ""}`}

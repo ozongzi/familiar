@@ -52,16 +52,19 @@
     overflow: hidden;
     background: var(--bg-base);
     position: relative;
+    padding-right: var(--safe-area-right, 0px);
 }
 
 /* ─── Header ─────────────────────────────────────────────────────────────── */
 
 .header {
     flex-shrink: 0;
-    height: var(--header-height);
+    height: calc(var(--header-height) + var(--safe-area-top, 0px));
+    padding-top: var(--safe-area-top, 0px);
     display: flex;
     align-items: center;
-    padding: 0 16px;
+    padding-left: calc(16px + var(--safe-area-left, 0px));
+    padding-right: calc(16px + var(--safe-area-right, 0px));
     border-bottom: 1px solid var(--border-subtle);
     background: #faf9f5;
     gap: 12px;
@@ -251,7 +254,7 @@
     }
 
     .messages {
-        padding: 12px;
+        padding: 8px 12px;
     }
 
     .empty {

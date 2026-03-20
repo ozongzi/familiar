@@ -68,6 +68,8 @@
     border: none;
     border-bottom-left-radius: var(--radius-sm);
     color: var(--text-primary);
+    max-width: 100%;
+    flex: 1;
 }
 
 /* ─── User text ──────────────────────────────────────────────────────────── */
@@ -1011,6 +1013,13 @@
     .bubble {
         padding: 10px 14px;
         max-width: calc(100% - 60px);
+    }
+
+    .bubbleAssistant {
+        max-width: 100%;
+        flex: 1;
+        padding-left: 4px; /* Move closer to avatar */
+        padding-right: 4px;
     }
 
     .toolRow {
