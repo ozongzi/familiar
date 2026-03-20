@@ -2,17 +2,10 @@ import { useAuth } from "./store/auth.shared";
 import { LoginPage } from "./pages/LoginPage";
 import { ChatPage } from "./pages/ChatPage";
 import { AdminPage } from "./pages/AdminPage";
-import { useState, useEffect } from "react";
+import { Routes, Route, Navigate } from "react-router-dom";
 
 export function App() {
   const { token, loading, user } = useAuth();
-  const [currentPath, setCurrentPath] = useState(window.location.pathname);
-
-  useEffect(() => {
-    const handlePopState = () => setCurrentPath(window.location.pathname);
-    window.addEventListener("popstate", handlePopState);
-    return () => window.removeEventListener("popstate", handlePopState);
-  }, []);
 
   if (loading) {
     return (
@@ -38,20 +31,15 @@ export function App() {
     return <LoginPage />;
   }
 
-  // Route guard: only admins can access /admin
-  if (currentPath.startsWith("/admin")) {
-    if (!user?.is_admin) {
-      window.history.pushState({}, "", "/");
-      setCurrentPath("/");
-      return <ChatPage initialConversationId={null} />;
-    }
-    return <AdminPage />;
-  }
-
-  // Extract conversation ID from path
-  // Path format: "/" (draft) or "/conversation-id" (existing conversation)
-  const pathSegments = currentPath.split("/").filter(Boolean);
-  const conversationId = pathSegments.length > 0 ? pathSegments[0] : null;
-
-  return <ChatPage initialConversationId={conversationId} />;
+  return (
+    <Routes>
+      <Route path="/" element={<ChatPage />} />
+      <Route path="/:conversationId" element={<ChatPage />} />
+      <Route
+        path="/admin"
+        element={user?.is_admin ? <AdminPage /> : <Navigate to="/" replace />}
+      />
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
+  );
 }

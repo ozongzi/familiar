@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, type KeyboardEvent } from "react";
 import type { Conversation, MeResponse } from "../api/types";
 import { Avatar } from "./Avatar";
 import styles from "./Sidebar.module.css";
+import { useNavigate } from "react-router-dom";
 
 interface Props {
   conversations: Conversation[];
@@ -39,6 +40,7 @@ export function Sidebar({
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const editInputRef = useRef<HTMLInputElement>(null);
   const confirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const navigate = useNavigate();
 
   // Focus the rename input when it appears
   useEffect(() => {
@@ -211,10 +213,7 @@ export function Sidebar({
           {user?.is_admin && (
             <button
               className={styles.adminBtn}
-              onClick={() => {
-                window.history.pushState({}, "", "/admin");
-                window.dispatchEvent(new PopStateEvent("popstate"));
-              }}
+              onClick={() => navigate("/admin")}
               title="管理面板"
               aria-label="打开管理面板"
             >

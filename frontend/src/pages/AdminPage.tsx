@@ -3,15 +3,16 @@ import styles from "./AdminPage.module.css";
 import { UserManagement } from "../components/UserManagement";
 import { AuditLogView } from "../components/AuditLogView";
 import { AdminConfig } from "../components/AdminConfig";
+import { useNavigate } from "react-router-dom";
 
 type AdminView = "users" | "audit" | "config";
 
 export function AdminPage() {
   const [currentView, setCurrentView] = useState<AdminView>("users");
+  const navigate = useNavigate();
 
   const navigateToChat = () => {
-    window.history.pushState({}, "", "/");
-    window.dispatchEvent(new PopStateEvent("popstate"));
+    navigate("/");
   };
 
   return (

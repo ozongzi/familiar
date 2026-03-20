@@ -4,10 +4,13 @@ import type { Conversation } from "../api/types";
 
 export function useConversations(token: string | null) {
   const [conversations, setConversations] = useState<Conversation[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
 
   const fetchConversations = useCallback(async () => {
-    if (!token) return;
+    if (!token) {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     try {
       const data = await api.listConversations(token);

@@ -5,6 +5,7 @@ import { LocalMcpSettings } from "../components/LocalMcpSettings";
 import { UserSettingsModal } from "../components/UserSettingsModal";
 import { MessageBubble } from "../components/MessageBubble";
 import type { ChatBubble, BubbleGroup } from "../api/types";
+import { useParams, useNavigate } from "react-router-dom";
 
 /** 把连续 ToolBubble 合并成一个 tools 组，其余保持 single */
 function groupBubbles(bubbles: ChatBubble[]): BubbleGroup[] {
@@ -34,12 +35,11 @@ import { getZenGreetingBySeason } from "../utils/seasonalGreeting";
 // Sentinel value meaning "new draft conversation, not yet persisted".
 const DRAFT_ID = "__draft__" as const;
 
-export function ChatPage({
-  initialConversationId,
-}: {
-  initialConversationId: string | null;
-}) {
+export function ChatPage() {
   const { token, user, logout } = useAuth();
+  const { conversationId } = useParams();
+  const navigate = useNavigate();
+
   const {
     conversations,
     loading: convsLoading,
@@ -48,11 +48,9 @@ export function ChatPage({
     renameConversation,
   } = useConversations(token);
 
-  // null  = loading, DRAFT_ID = new draft, otherwise a real conversation id.
-  const [activeId, setActiveId] = useState<string | null>(() => {
-    // Initialize from URL if provided, otherwise null (will be set to DRAFT_ID later)
-    return initialConversationId || null;
-  });
+  // Derived from URL
+  const activeId = conversationId ?? DRAFT_ID;
+
   const [historyLoading, setHistoryLoading] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarVisible, setSidebarVisible] = useState(true);
@@ -68,19 +66,17 @@ export function ChatPage({
   const skipNextHistoryLoadRef = useRef(false);
 
   // ── Draft-mode conversation factory passed to useChat ──────────────────
-  // Creates a real conversation and returns its id.  Does NOT call setActiveId
-  // here — that happens in onConversationCreated so we can set the skip flag
-  // first.
+  // Creates a real conversation and returns its id.
   const createDraftConversation = useCallback(async (): Promise<
     string | null
   > => {
     const conv = await createConversation();
     if (!conv) return null;
-    // Set the flag before setActiveId so the effect sees it synchronously.
+    // Set the flag before navigating so the effect sees it synchronously.
     skipNextHistoryLoadRef.current = true;
-    setActiveId(conv.id);
+    navigate(`/${conv.id}`, { replace: true });
     return conv.id;
-  }, [createConversation]);
+  }, [createConversation, navigate]);
 
   const autoTitle = useCallback(
     async (convId: string, firstMessage: string) => {
@@ -158,7 +154,6 @@ export function ChatPage({
     }
 
     let cancelled = false;
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setHistoryLoading(true);
     clearBubbles();
 
@@ -183,35 +178,15 @@ export function ChatPage({
     };
   }, [activeId, token, clearBubbles, setHistory, reattach]);
 
-  // ── On initial load: validate activeId and start in draft mode if needed ────
+  // ── Validation: if direct link is invalid, go back to root ────────────
   useEffect(() => {
-    if (!convsLoading) {
-      // If activeId is null, set to draft mode
-      if (activeId === null) {
-        // eslint-disable-next-line react-hooks/set-state-in-effect
-        setActiveId(DRAFT_ID);
-      }
-      // If activeId is a real conversation, verify it exists in the list
-      else if (activeId !== DRAFT_ID) {
-        const exists = conversations.some((c) => c.id === activeId);
-        if (!exists) {
-          // Conversation doesn't exist, fall back to draft mode
-          setActiveId(DRAFT_ID);
-        }
+    if (!convsLoading && activeId !== DRAFT_ID) {
+      const exists = conversations.some((c) => c.id === activeId);
+      if (!exists) {
+        navigate("/", { replace: true });
       }
     }
-  }, [convsLoading, activeId, conversations]);
-
-  // ── Sync activeId to URL ────────────────────────────────────────────────
-  useEffect(() => {
-    if (activeId === DRAFT_ID) {
-      // Draft mode: use root path
-      window.history.pushState({}, "", "/");
-    } else if (activeId && activeId !== null) {
-      // Real conversation: use conversation ID as path
-      window.history.pushState({}, "", `/${activeId}`);
-    }
-  }, [activeId]);
+  }, [convsLoading, conversations, activeId, navigate]);
 
   // ── Handle resize ──────────────────────────────────────────────────────
   useEffect(() => {
@@ -226,28 +201,28 @@ export function ChatPage({
 
   // Enter draft mode (new conversation).
   const handleCreate = useCallback(() => {
-    setActiveId(DRAFT_ID);
+    navigate("/");
     if (window.innerWidth < 768) setSidebarOpen(false);
-  }, []);
+  }, [navigate]);
 
   const handleSelectConversation = useCallback(
     (id: string) => {
       if (id !== activeId) {
-        setActiveId(id);
+        navigate(`/${id}`);
         if (window.innerWidth < 768) setSidebarOpen(false);
       }
     },
-    [activeId],
+    [activeId, navigate],
   );
 
   const handleDelete = useCallback(
     async (id: string) => {
       const ok = await deleteConversation(id);
       if (ok && activeId === id) {
-        setActiveId(DRAFT_ID);
+        navigate("/");
       }
     },
-    [deleteConversation, activeId],
+    [deleteConversation, activeId, navigate],
   );
 
   const handleRename = useCallback(
