@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { Sidebar } from "../components/Sidebar";
 import { McpSettings } from "../components/McpSettings";
+import { LocalMcpSettings } from "../components/LocalMcpSettings";
 import { UserSettingsModal } from "../components/UserSettingsModal";
 import { MessageBubble } from "../components/MessageBubble";
 import { ChatInput } from "../components/ChatInput";
@@ -30,6 +31,7 @@ export function ChatPage() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarVisible, setSidebarVisible] = useState(true);
   const [mcpOpen, setMcpOpen] = useState(false);
+  const [localMcpOpen, setLocalMcpOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   // When useChat creates a conversation in draft mode, we want to update
@@ -283,6 +285,10 @@ export function ChatPage() {
         <McpSettings token={token} onClose={() => setMcpOpen(false)} />
       )}
 
+      {localMcpOpen && (
+        <LocalMcpSettings onClose={() => setLocalMcpOpen(false)} />
+      )}
+
       {settingsOpen && token && (
         <UserSettingsModal token={token} onClose={() => setSettingsOpen(false)} />
       )}
@@ -373,6 +379,7 @@ export function ChatPage() {
           requestConversationId={handleRequestConversationId}
           onUpload={handleUpload}
           onOpenMcp={() => setMcpOpen(true)}
+          onOpenLocalMcp={() => setLocalMcpOpen(true)}
           placeholder="发消息… (Enter 发送，Shift+Enter 换行)"
         />
       </main>

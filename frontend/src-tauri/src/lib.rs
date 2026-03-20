@@ -1,6 +1,7 @@
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Manager, State};
 use tauri_plugin_shell::{ShellExt, process::CommandChild};
+use tauri_plugin_store::StoreExt;
 
 // ── 状态 ──────────────────────────────────────────────────────────────────────
 
@@ -9,6 +10,9 @@ struct TunnelState {
 }
 
 type SharedTunnelState = Arc<Mutex<TunnelState>>;
+
+const LOCAL_MCP_STORE: &str = "local-mcps.json";
+const LOCAL_MCP_KEY: &str = "mcps";
 
 // ── Tauri commands ────────────────────────────────────────────────────────────
 
@@ -36,9 +40,11 @@ async fn start_tunnel(
         ));
     }
 
+    // 读取本地 MCP 配置，序列化后传给 tunnel-bridge
+    let local_mcps = load_local_mcps(&app);
+
     log::info!("启动隧道桥接 → {server_url}");
-    log::info!("resource_dir: {}", resource_dir.display());
-    log::info!("script_path: {}", script_path.display());
+    log::info!("本地 MCP 数量: {}", local_mcps.as_array().map(|a| a.len()).unwrap_or(0));
 
     let (mut rx, child) = app
         .shell()
@@ -48,10 +54,10 @@ async fn start_tunnel(
         .env("FAMILIAR_TOKEN", &token)
         .env("FAMILIAR_SERVER", &server_url)
         .env("FAMILIAR_RESOURCE_DIR", resource_dir.to_string_lossy().as_ref())
+        .env("FAMILIAR_LOCAL_MCPS", serde_json::to_string(&local_mcps).unwrap_or_default())
         .spawn()
         .map_err(|e| format!("无法启动 node 进程: {e}"))?;
 
-    // 消费事件流，同时把输出写到日志
     tokio::spawn(async move {
         use tauri_plugin_shell::process::CommandEvent;
         while let Some(event) = rx.recv().await {
@@ -93,6 +99,42 @@ fn stop_tunnel_inner(state: &SharedTunnelState) {
     }
 }
 
+/// 读取本地 MCP 列表
+#[tauri::command]
+fn get_local_mcps(app: AppHandle) -> serde_json::Value {
+    load_local_mcps(&app)
+}
+
+/// 保存本地 MCP 列表并热重启隧道桥接进程
+#[tauri::command]
+async fn set_local_mcps(
+    app: AppHandle,
+    mcps: serde_json::Value,
+    state: State<'_, SharedTunnelState>,
+) -> Result<(), String> {
+    let store = app.store(LOCAL_MCP_STORE).map_err(|e| e.to_string())?;
+    store.set(LOCAL_MCP_KEY, mcps);
+    store.save().map_err(|e| e.to_string())?;
+
+    // 如果隧道正在运行，重启它以加载新配置
+    let is_running = state.lock().unwrap().child.is_some();
+    if is_running {
+        // 读取当前运行参数并重启
+        // 通过 stop + start 实现热重载，需要前端重新调 start_tunnel
+        stop_tunnel_inner(&state);
+        log::info!("本地 MCP 配置已更新，隧道已停止，等待前端重启");
+    }
+
+    Ok(())
+}
+
+fn load_local_mcps(app: &AppHandle) -> serde_json::Value {
+    app.store(LOCAL_MCP_STORE)
+        .ok()
+        .and_then(|store| store.get(LOCAL_MCP_KEY))
+        .unwrap_or(serde_json::Value::Array(vec![]))
+}
+
 // ── 入口 ──────────────────────────────────────────────────────────────────────
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -102,6 +144,7 @@ pub fn run() {
     tauri::Builder::default()
         .manage(tunnel_state)
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_store::Builder::default().build())
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -112,7 +155,12 @@ pub fn run() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![start_tunnel, stop_tunnel])
+        .invoke_handler(tauri::generate_handler![
+            start_tunnel,
+            stop_tunnel,
+            get_local_mcps,
+            set_local_mcps,
+        ])
         .run(tauri::generate_context!())
         .expect("运行 Tauri 应用时出错");
 }

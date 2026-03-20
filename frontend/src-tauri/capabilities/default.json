@@ -10,6 +10,7 @@
     "shell:allow-spawn",
     "shell:allow-kill",
     "shell:allow-stdin-write",
-    "log:default"
+    "log:default",
+    "store:default"
   ]
 }
