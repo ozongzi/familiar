@@ -74,6 +74,6 @@ impl Tool for UiSpells {
     ///   不要包含 <!DOCTYPE>、<html>、<head>、<body> 标签，直接写内容。
     ///   可使用 CSS 变量：--text-primary、--bg-surface、--accent 等与 familiar 主题一致。
     async fn visualize(&self, widget_code: String) -> serde_json::Value {
-        json!({ "widget_code": widget_code })
+        json!({ "status": "success" })
     }
 }

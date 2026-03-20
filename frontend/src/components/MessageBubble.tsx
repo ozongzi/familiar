@@ -33,7 +33,9 @@ export const MessageBubble = memo(function MessageBubble({
 }: Props) {
   if (bubble.kind === "tool") {
     if (extraTools && extraTools.length > 0) {
-      return <ToolCallGroup first={bubble} rest={extraTools} onAnswer={onAnswer} />;
+      return (
+        <ToolCallGroup first={bubble} rest={extraTools} onAnswer={onAnswer} />
+      );
     }
     return <ToolCallBubble bubble={bubble} onAnswer={onAnswer} />;
   }
@@ -81,12 +83,44 @@ function buildWidgetSrcdoc(code: string): string {
 function WidgetChatBubble({ bubble }: { bubble: ToolBubble }) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [height, setHeight] = useState(200);
+  const [visible, setVisible] = useState(false);
+
+  // Track how much of the srcdoc we've already written into the iframe
+  const writtenLenRef = useRef(0);
+  const docOpenedRef = useRef(false);
 
   const srcdoc = useMemo(
     () => (bubble.widgetCode ? buildWidgetSrcdoc(bubble.widgetCode) : ""),
     [bubble.widgetCode],
   );
 
+  // Incrementally write new content into the iframe without rebuilding it
+  useEffect(() => {
+    const iframe = iframeRef.current;
+    if (!iframe || !srcdoc) return;
+
+    const doc = iframe.contentDocument;
+    if (!doc) return;
+
+    if (!docOpenedRef.current) {
+      doc.open();
+      docOpenedRef.current = true;
+      setTimeout(() => setVisible(true), 30);
+    }
+
+    const delta = srcdoc.slice(writtenLenRef.current);
+    if (delta) {
+      doc.write(delta);
+      writtenLenRef.current = srcdoc.length;
+    }
+
+    // Only close (which triggers script execution) when streaming is done
+    if (!bubble.pending) {
+      doc.close();
+    }
+  }, [srcdoc, bubble.pending]);
+
+  // Height: postMessage + RAF poll
   useEffect(() => {
     const iframe = iframeRef.current;
     if (!iframe) return;
@@ -102,7 +136,6 @@ function WidgetChatBubble({ bubble }: { bubble: ToolBubble }) {
     };
     window.addEventListener("message", onMessage);
 
-    // Also poll the iframe body height for widgets that don't post messages
     let raf: number;
     let prevH = 0;
     const poll = () => {
@@ -126,16 +159,22 @@ function WidgetChatBubble({ bubble }: { bubble: ToolBubble }) {
       window.removeEventListener("message", onMessage);
       cancelAnimationFrame(raf);
     };
-  }, [srcdoc]);
+  }, []);
 
   if (!srcdoc) return null;
 
   return (
     <div className={styles.row} style={{ justifyContent: "flex-start" }}>
-      <div className={styles.widgetBubble}>
+      <div
+        className={styles.widgetBubble}
+        style={{
+          opacity: visible ? 1 : 0,
+          transform: visible ? "translateY(0)" : "translateY(6px)",
+          transition: "opacity 0.25s ease, transform 0.25s ease",
+        }}
+      >
         <iframe
           ref={iframeRef}
-          srcDoc={srcdoc}
           sandbox="allow-scripts allow-same-origin"
           className={styles.widgetIframe}
           style={{ height }}
@@ -384,7 +423,9 @@ const TOOL_PLACEHOLDERS = [
 ];
 
 function randomPlaceholder() {
-  return TOOL_PLACEHOLDERS[Math.floor(Math.random() * TOOL_PLACEHOLDERS.length)];
+  return TOOL_PLACEHOLDERS[
+    Math.floor(Math.random() * TOOL_PLACEHOLDERS.length)
+  ];
 }
 
 // ─── Tool call group ─────────────────────────────────────────────────────────
@@ -450,7 +491,9 @@ function ToolCallGroup({
           <span className={styles.toolIcon} aria-hidden="true">
             {anyPending ? <ToolRunningIcon /> : <ToolDoneIcon />}
           </span>
-          <span className={`${styles.toolName} ${anyPending ? styles.toolNamePending : ""}`}>
+          <span
+            className={`${styles.toolName} ${anyPending ? styles.toolNamePending : ""}`}
+          >
             {label}
           </span>
           {!anyPending && (
