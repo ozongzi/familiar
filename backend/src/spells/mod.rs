@@ -2,6 +2,7 @@ mod a2a_spell;
 mod history_spell;
 mod manage_mcp_spell;
 mod skill_spell;
+mod sourcegraph_spell;
 mod spawn_spell;
 mod ui_spells;
 
@@ -21,6 +22,7 @@ use a2a_spell::A2aSpell;
 use history_spell::HistorySpell;
 use manage_mcp_spell::ManageMcpSpell;
 use skill_spell::SkillSpell;
+use sourcegraph_spell::SourcegraphSearch;
 use spawn_spell::SpawnSpell;
 use ui_spells::UiSpells;
 
@@ -66,6 +68,7 @@ pub fn build_all_spells(deps: SpellDeps) -> ToolBundle {
             user_id: deps.user_id,
             sandbox: deps.sandbox.clone(),
         })
+        .add(SourcegraphSearch)
         .add(SpawnSpell {
             cheap_model: deps.cheap_model,
             subagent_prompt: deps.subagent_prompt,

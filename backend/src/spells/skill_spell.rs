@@ -11,6 +11,7 @@ pub struct SkillSpell {
 #[tool]
 impl Tool for SkillSpell {
     /// 加载指定 skill 的完整指令内容。
+    /// name: skill 名称
     async fn load_skill(&self, name: String) -> String {
         if name.contains('/') || name.contains('.') {
             return "error: 无效的 skill 名称".into();
