@@ -127,6 +127,11 @@ export interface UploadBubble {
 
 export type ChatBubble = TextBubble | ToolBubble | UploadBubble;
 
+/** 渲染用：连续工具调用合并成一个组 */
+export type BubbleGroup =
+  | { kind: "single"; bubble: TextBubble | UploadBubble }
+  | { kind: "tools"; bubbles: ToolBubble[] };
+
 // ─── MCPs ─────────────────────────────────────────────────────────────────
 
 export interface Mcp {

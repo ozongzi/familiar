@@ -22,13 +22,19 @@ const BASE = () => getServerBase();
 interface Props {
   bubble: ChatBubble;
   onAnswer?: (text: string) => void;
+  /** 连续工具调用时，后续的工具 bubble 合并到第一个里渲染 */
+  extraTools?: Extract<ChatBubble, { kind: "tool" }>[];
 }
 
 export const MessageBubble = memo(function MessageBubble({
   bubble,
   onAnswer,
+  extraTools,
 }: Props) {
   if (bubble.kind === "tool") {
+    if (extraTools && extraTools.length > 0) {
+      return <ToolCallGroup first={bubble} rest={extraTools} onAnswer={onAnswer} />;
+    }
     return <ToolCallBubble bubble={bubble} onAnswer={onAnswer} />;
   }
   if (bubble.kind === "upload") {
@@ -364,6 +370,105 @@ function ObjectFieldsView({
   );
 }
 
+const TOOL_PLACEHOLDERS = [
+  "鼓捣鼓捣中",
+  "捯饬捯饬中",
+  "倒腾倒腾中",
+  "琢磨琢磨中",
+  "摆弄摆弄中",
+  "折腾折腾中",
+  "捣鼓捣鼓中",
+  "拾掇拾掇中",
+  "张罗张罗中",
+  "腾挪腾挪中",
+];
+
+function randomPlaceholder() {
+  return TOOL_PLACEHOLDERS[Math.floor(Math.random() * TOOL_PLACEHOLDERS.length)];
+}
+
+// ─── Tool call group ─────────────────────────────────────────────────────────
+
+/**
+ * 连续工具调用合并成一个 bubble。
+ * 折叠时：「✓ 工具A, 工具B, 工具C」一行
+ * 展开时：每个工具各自展开显示
+ */
+function ToolCallGroup({
+  first,
+  rest,
+  onAnswer,
+}: {
+  first: Extract<ChatBubble, { kind: "tool" }>;
+  rest: Extract<ChatBubble, { kind: "tool" }>[];
+  onAnswer?: (text: string) => void;
+}) {
+  const all = [first, ...rest];
+  const [expanded, setExpanded] = useState(false);
+  const anyPending = all.some((b) => b.pending);
+
+  // 有任何工具 pending 时自动展开，全部完成后折叠
+  useEffect(() => {
+    if (anyPending) setExpanded(true);
+    else setExpanded(false);
+  }, [anyPending]);
+
+  const fallbackLabel = useRef(randomPlaceholder());
+  const last = all[all.length - 1];
+  const label = last.description || fallbackLabel.current;
+
+  if (!expanded) {
+    return (
+      <div className={styles.toolRow}>
+        <div className={styles.toolBubble}>
+          <button
+            className={styles.toolHeader}
+            onClick={() => setExpanded(true)}
+            aria-expanded={false}
+          >
+            <span className={styles.toolIcon} aria-hidden="true">
+              <ToolDoneIcon />
+            </span>
+            <span className={styles.toolName}>{label}</span>
+            <span className={styles.toolChevron} aria-hidden="true">
+              <ChevronIcon expanded={false} />
+            </span>
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className={styles.toolRow}>
+      <div className={styles.toolBubble}>
+        <button
+          className={styles.toolHeader}
+          onClick={() => setExpanded(false)}
+          aria-expanded={true}
+        >
+          <span className={styles.toolIcon} aria-hidden="true">
+            {anyPending ? <ToolRunningIcon /> : <ToolDoneIcon />}
+          </span>
+          <span className={`${styles.toolName} ${anyPending ? styles.toolNamePending : ""}`}>
+            {label}
+          </span>
+          {!anyPending && (
+            <span className={styles.toolChevron} aria-hidden="true">
+              <ChevronIcon expanded={true} />
+            </span>
+          )}
+        </button>
+        <div className={styles.toolBody}>
+          {all.map((b) => (
+            <ToolCallBubble key={b.key} bubble={b} onAnswer={onAnswer} nested />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ToolCallBubble({
   bubble,
   onAnswer,
@@ -449,24 +554,8 @@ function ToolCallBubble({
   // Header label: prefer the model-written description (arrives early in the
   // stream because description is always the first parameter).  Fall back to
   // a per-tool heuristic derived from the args when description is absent.
-  const toolLabel = useMemo(() => {
-    const placeholders = [
-      "鼓捣鼓捣中",
-      "捯饬捯饬中",
-      "倒腾倒腾中",
-      "琢磨琢磨中",
-      "摆弄摆弄中",
-      "折腾折腾中",
-      "捣鼓捣鼓中",
-      "拾掇拾掇中",
-      "张罗张罗中",
-      "腾挪腾挪中",
-    ];
-    return (
-      bubble.description ||
-      placeholders[Math.floor(Math.random() * placeholders.length)]
-    );
-  }, [bubble.description]);
+  const fallbackLabel = useRef(randomPlaceholder());
+  const toolLabel = bubble.description || fallbackLabel.current;
 
   // ── visualize → widget 渲染 ──────────────────────────────────────────────
   if (bubble.widgetCode) {

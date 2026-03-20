@@ -4,6 +4,25 @@ import { McpSettings } from "../components/McpSettings";
 import { LocalMcpSettings } from "../components/LocalMcpSettings";
 import { UserSettingsModal } from "../components/UserSettingsModal";
 import { MessageBubble } from "../components/MessageBubble";
+import type { ChatBubble, BubbleGroup } from "../api/types";
+
+/** 把连续 ToolBubble 合并成一个 tools 组，其余保持 single */
+function groupBubbles(bubbles: ChatBubble[]): BubbleGroup[] {
+  const groups: BubbleGroup[] = [];
+  for (const b of bubbles) {
+    if (b.kind === "tool") {
+      const last = groups[groups.length - 1];
+      if (last?.kind === "tools") {
+        last.bubbles.push(b);
+      } else {
+        groups.push({ kind: "tools", bubbles: [b] });
+      }
+    } else {
+      groups.push({ kind: "single", bubble: b });
+    }
+  }
+  return groups;
+}
 import { ChatInput } from "../components/ChatInput";
 import { useAuth } from "../store/auth.shared";
 import { useConversations } from "../hooks/useConversations";
@@ -290,7 +309,10 @@ export function ChatPage() {
       )}
 
       {settingsOpen && token && (
-        <UserSettingsModal token={token} onClose={() => setSettingsOpen(false)} />
+        <UserSettingsModal
+          token={token}
+          onClose={() => setSettingsOpen(false)}
+        />
       )}
 
       {/* Main panel */}
@@ -352,13 +374,26 @@ export function ChatPage() {
             </div>
           )}
 
-          {bubbles.map((bubble) => (
-            <MessageBubble
-              key={bubble.key}
-              bubble={bubble}
-              onAnswer={answerQuestion}
-            />
-          ))}
+          {groupBubbles(bubbles).map((group) => {
+            if (group.kind === "single") {
+              return (
+                <MessageBubble
+                  key={group.bubble.key}
+                  bubble={group.bubble}
+                  onAnswer={answerQuestion}
+                />
+              );
+            }
+            // 工具组：合并渲染
+            return (
+              <MessageBubble
+                key={group.bubbles[0].key}
+                bubble={group.bubbles[0]}
+                extraTools={group.bubbles.slice(1)}
+                onAnswer={answerQuestion}
+              />
+            );
+          })}
 
           {errorMsg && (
             <div className={styles.errorBanner} role="alert">
