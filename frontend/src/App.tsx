@@ -43,10 +43,15 @@ export function App() {
     if (!user?.is_admin) {
       window.history.pushState({}, "", "/");
       setCurrentPath("/");
-      return <ChatPage />;
+      return <ChatPage initialConversationId={null} />;
     }
     return <AdminPage />;
   }
 
-  return <ChatPage />;
+  // Extract conversation ID from path
+  // Path format: "/" (draft) or "/conversation-id" (existing conversation)
+  const pathSegments = currentPath.split("/").filter(Boolean);
+  const conversationId = pathSegments.length > 0 ? pathSegments[0] : null;
+
+  return <ChatPage initialConversationId={conversationId} />;
 }

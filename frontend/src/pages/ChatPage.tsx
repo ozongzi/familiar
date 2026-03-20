@@ -34,7 +34,11 @@ import { getZenGreetingBySeason } from "../utils/seasonalGreeting";
 // Sentinel value meaning "new draft conversation, not yet persisted".
 const DRAFT_ID = "__draft__" as const;
 
-export function ChatPage() {
+export function ChatPage({
+  initialConversationId,
+}: {
+  initialConversationId: string | null;
+}) {
   const { token, user, logout } = useAuth();
   const {
     conversations,
@@ -45,7 +49,10 @@ export function ChatPage() {
   } = useConversations(token);
 
   // null  = loading, DRAFT_ID = new draft, otherwise a real conversation id.
-  const [activeId, setActiveId] = useState<string | null>(null);
+  const [activeId, setActiveId] = useState<string | null>(() => {
+    // Initialize from URL if provided, otherwise null (will be set to DRAFT_ID later)
+    return initialConversationId || null;
+  });
   const [historyLoading, setHistoryLoading] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarVisible, setSidebarVisible] = useState(true);
@@ -176,13 +183,35 @@ export function ChatPage() {
     };
   }, [activeId, token, clearBubbles, setHistory, reattach]);
 
-  // ── On initial load: start in draft mode (not the most recent conv) ────
+  // ── On initial load: validate activeId and start in draft mode if needed ────
   useEffect(() => {
-    if (!convsLoading && activeId === null) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setActiveId(DRAFT_ID);
+    if (!convsLoading) {
+      // If activeId is null, set to draft mode
+      if (activeId === null) {
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        setActiveId(DRAFT_ID);
+      }
+      // If activeId is a real conversation, verify it exists in the list
+      else if (activeId !== DRAFT_ID) {
+        const exists = conversations.some((c) => c.id === activeId);
+        if (!exists) {
+          // Conversation doesn't exist, fall back to draft mode
+          setActiveId(DRAFT_ID);
+        }
+      }
     }
-  }, [convsLoading, activeId]);
+  }, [convsLoading, activeId, conversations]);
+
+  // ── Sync activeId to URL ────────────────────────────────────────────────
+  useEffect(() => {
+    if (activeId === DRAFT_ID) {
+      // Draft mode: use root path
+      window.history.pushState({}, "", "/");
+    } else if (activeId && activeId !== null) {
+      // Real conversation: use conversation ID as path
+      window.history.pushState({}, "", `/${activeId}`);
+    }
+  }, [activeId]);
 
   // ── Handle resize ──────────────────────────────────────────────────────
   useEffect(() => {
