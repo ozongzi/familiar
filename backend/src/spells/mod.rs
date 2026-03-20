@@ -22,7 +22,7 @@ use a2a_spell::A2aSpell;
 use history_spell::HistorySpell;
 use manage_mcp_spell::ManageMcpSpell;
 use skill_spell::SkillSpell;
-use sourcegraph_spell::SourcegraphSearch;
+use sourcegraph_spell::search_code;
 use spawn_spell::SpawnSpell;
 use ui_spells::UiSpells;
 
@@ -68,7 +68,7 @@ pub fn build_all_spells(deps: SpellDeps) -> ToolBundle {
             user_id: deps.user_id,
             sandbox: deps.sandbox.clone(),
         })
-        .add(SourcegraphSearch)
+        .add(search_code)
         .add(SpawnSpell {
             cheap_model: deps.cheap_model,
             subagent_prompt: deps.subagent_prompt,
