@@ -22,7 +22,7 @@ impl Tool for PlanSpell {
     ///   - status: "pending" | "in_progress" | "completed" | "skipped"
     ///   - priority: "high" | "medium" | "low"（可选，默认 "medium"）
     ///
-    /// 示例 steps（直接传 JSON 数组，不要字符串化）:
+    /// 示例 steps
     /// [{"id":"1","content":"分析需求","status":"completed","priority":"high"},
     ///  {"id":"2","content":"实现功能","status":"in_progress","priority":"high"},
     ///  {"id":"3","content":"编写测试","status":"pending","priority":"medium"}]
