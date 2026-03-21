@@ -138,6 +138,13 @@
   font-style: italic;
 }
 
+.multiWriteEntry {
+  border-bottom: 0.5px solid var(--border-subtle);
+}
+.multiWriteEntry:last-child {
+  border-bottom: none;
+}
+
 .diffPath {
   display: flex;
   align-items: baseline;

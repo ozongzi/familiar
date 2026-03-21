@@ -7,11 +7,19 @@ import { MessageBubble } from "../components/MessageBubble";
 import type { ChatBubble, BubbleGroup } from "../api/types";
 import { useParams, useNavigate } from "react-router-dom";
 
-/** 把连续 ToolBubble 合并成一个 tools 组，其余保持 single */
+/** 把连续 ToolBubble 合并成一个 tools 组，其余保持 single
+ *  特判：present_file 这类展示工具不折叠，保持独立（作为单元素 tools 组）
+ */
 function groupBubbles(bubbles: ChatBubble[]): BubbleGroup[] {
   const groups: BubbleGroup[] = [];
   for (const b of bubbles) {
     if (b.kind === "tool") {
+      // present_file 等展示类工具不合并到相邻工具组，作为独立单元素组
+      const isStandaloneTool = b.name === "present" || b.name === "present_file";
+      if (isStandaloneTool) {
+        groups.push({ kind: "tools", bubbles: [b] });
+        continue;
+      }
       const last = groups[groups.length - 1];
       if (last?.kind === "tools") {
         last.bubbles.push(b);
@@ -445,7 +453,7 @@ export function ChatPage() {
           onUpload={handleUpload}
           onOpenMcp={() => setMcpOpen(true)}
           onOpenLocalMcp={() => setLocalMcpOpen(true)}
-          placeholder="发消息… (Enter 发送，Shift+Enter 换行)"
+          placeholder="请说……"
         />
       </main>
     </div>

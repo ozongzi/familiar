@@ -11,7 +11,7 @@ import { MarkdownRenderer } from "./MarkdownRenderer";
 import type { ChatBubble, ToolBubble, UploadBubble } from "../api/types";
 import { buildToolArgsView } from "./messageBubble.toolParsing";
 import { FilePreviewContent } from "./FilePreviewContent";
-import { BashTool, WriteTool } from "./BashWriteTools";
+import { BashTool, WriteTool, MultiWriteTool } from "./BashWriteTools";
 import styles from "./MessageBubble.module.css";
 import { getServerBase } from "../utils/tauri";
 
@@ -550,6 +550,7 @@ function ToolCallBubble({
     filename: string;
     path: string;
     size: number;
+    description?: string;
   } | null = null;
   if (bubble.result && typeof bubble.result === "object") {
     const maybe = bubble.result as Record<string, unknown>;
@@ -560,6 +561,7 @@ function ToolCallBubble({
         filename: string;
         path: string;
         size: number;
+        description?: string;
       };
     } else if (typeof maybe["text"] === "string") {
       // wrapped string case: try to parse the text field as JSON
@@ -574,6 +576,7 @@ function ToolCallBubble({
             filename: string;
             path: string;
             size: number;
+            description?: string;
           };
         }
       } catch {
@@ -619,6 +622,16 @@ function ToolCallBubble({
       <div className={nested ? styles.toolRowNested : styles.toolRow}>
         <div className={styles.toolBubble}>
           <BashTool bubble={bubble} />
+        </div>
+      </div>
+    );
+  }
+
+  if (bubble.name === "multiwrite") {
+    return (
+      <div className={nested ? styles.toolRowNested : styles.toolRow}>
+        <div className={styles.toolBubble}>
+          <MultiWriteTool bubble={bubble} />
         </div>
       </div>
     );
@@ -932,6 +945,7 @@ interface FileInfo {
   filename: string;
   path: string;
   size: number;
+  description?: string;
 }
 
 type PreviewState =
@@ -1017,6 +1031,9 @@ function FileCard({ file, pending }: { file: FileInfo; pending: boolean }) {
             </span>
             <div className={styles.fileCardMeta}>
               <span className={styles.fileCardName}>{file.filename}</span>
+              {file.description && (
+                <span className={styles.fileCardDesc}>{file.description}</span>
+              )}
               {!pending && (
                 <span className={styles.fileCardSize}>
                   {formatBytes(file.size)}
