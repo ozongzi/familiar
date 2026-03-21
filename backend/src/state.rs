@@ -11,7 +11,6 @@ use agentix::agent::agent_core::{AnthropicAgent, DeepSeekAgent, GeminiAgent, Ope
 use agentix::agent::stream::AgentStream;
 use agentix::AgentEvent;
 use agentix::McpTool;
-use agentix::Tool as _;
 use agentix::ToolCommand;
 use agentix::request::Message as AgentMessage;
 use crate::config::Provider;

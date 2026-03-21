@@ -84,10 +84,10 @@ function extractObjectsFromArray(arrayStr: string): PlanStep[] {
   if (bracketPos === -1) return [];
 
   const steps: PlanStep[] = [];
-  let depth = 0;
+  let depth = 1;
   let objStart = -1;
 
-  for (let i = bracketPos; i < arrayStr.length; i++) {
+  for (let i = bracketPos + 1; i < arrayStr.length; i++) {
     const ch = arrayStr[i];
     if (ch === "{") {
       if (depth === 1) objStart = i;

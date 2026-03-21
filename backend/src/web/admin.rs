@@ -3,11 +3,14 @@ use axum::{
     extract::{Path, State},
 };
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 use uuid::Uuid;
 
-use crate::config::Config;
+use agentix::McpTool;
+use crate::config::{Config, McpServerConfig};
 use crate::errors::{AppError, AppResult};
 use crate::web::{AppState, auth::AuthUser};
+use tracing::warn;
 
 #[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
 pub struct AppSkill {
@@ -532,7 +535,6 @@ pub async fn create_global_mcp(
     if req.r#type != "http" && req.r#type != "stdio" {
         return Err(AppError::bad_request("Type must be 'http' or 'stdio'"));
     }
-    // (Additional validation logic could go here)
 
     let row = sqlx::query_as::<_, crate::config::GlobalMcp>(
         r#"
@@ -553,6 +555,14 @@ pub async fn create_global_mcp(
             AppError::internal(&e.to_string())
         }
     })?;
+
+    // Hot-reload: initialize the MCP connection and add it to the in-process global list.
+    let mcp_cfg = mcp_config_from_req(&req.name, &req.r#type, &req.config);
+    if let Some(tool) = try_init_mcp(&mcp_cfg).await {
+        let mut guard = state.mcp_tools.lock().await;
+        guard.retain(|(n, _)| n != &req.name);
+        guard.push((req.name.clone(), tool));
+    }
 
     Ok(Json(row))
 }
@@ -601,6 +611,17 @@ pub async fn update_global_mcp(
 
     let row = query.fetch_optional(&state.pool).await?.ok_or_else(|| AppError::not_found("Global MCP not found"))?;
 
+    // Hot-reload: re-initialize the MCP connection with updated config.
+    let effective_name = row.name.clone();
+    let effective_type = row.r#type.clone();
+    let effective_config = row.config.clone();
+    let mcp_cfg = mcp_config_from_req(&effective_name, &effective_type, &effective_config);
+    if let Some(tool) = try_init_mcp(&mcp_cfg).await {
+        let mut guard = state.mcp_tools.lock().await;
+        guard.retain(|(n, _)| n != &effective_name);
+        guard.push((effective_name, tool));
+    }
+
     Ok(Json(row))
 }
 
@@ -610,6 +631,13 @@ pub async fn delete_global_mcp(
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<serde_json::Value>> {
     guard_admin(&auth)?;
+
+    // Fetch the name before deleting so we can remove it from the in-process list.
+    let name: Option<String> = sqlx::query_scalar("SELECT name FROM global_mcps WHERE id = $1")
+        .bind(id)
+        .fetch_optional(&state.pool)
+        .await?;
+
     let res = sqlx::query("DELETE FROM global_mcps WHERE id = $1")
         .bind(id)
         .execute(&state.pool)
@@ -618,5 +646,88 @@ pub async fn delete_global_mcp(
     if res.rows_affected() == 0 {
         return Err(AppError::not_found("Global MCP not found"));
     }
+
+    // Hot-reload: remove from the in-process global list.
+    if let Some(n) = name {
+        let mut guard = state.mcp_tools.lock().await;
+        guard.retain(|(existing, _)| existing != &n);
+    }
+
     Ok(Json(serde_json::json!({"ok": true})))
+}
+
+// ── helpers ───────────────────────────────────────────────────────────────────
+
+fn mcp_config_from_req(
+    name: &str,
+    mcp_type: &str,
+    config: &serde_json::Value,
+) -> McpServerConfig {
+    match mcp_type {
+        "http" => {
+            let url = config
+                .get("url")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            McpServerConfig::Http { name: name.to_string(), url }
+        }
+        _ => {
+            let command = config
+                .get("command")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let args: Vec<String> = config
+                .get("args")
+                .and_then(|v| v.as_array())
+                .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+                .unwrap_or_default();
+            let env = config
+                .get("env")
+                .and_then(|v| serde_json::from_value(v.clone()).ok())
+                .unwrap_or_default();
+            McpServerConfig::Studio { name: name.to_string(), command, args, env }
+        }
+    }
+}
+
+async fn try_init_mcp(cfg: &McpServerConfig) -> Option<McpTool> {
+    match cfg {
+        McpServerConfig::Http { name, url } => {
+            match tokio::time::timeout(Duration::from_secs(15), McpTool::http(url)).await {
+                Ok(Ok(t)) => {
+                    tracing::info!("global MCP '{}' hot-reloaded ({} tools)", name, t.raw_tools().len());
+                    Some(t)
+                }
+                Ok(Err(e)) => { warn!("global MCP '{}' hot-reload failed: {e}", name); None }
+                Err(_) => { warn!("global MCP '{}' hot-reload timed out", name); None }
+            }
+        }
+        McpServerConfig::Studio { name, command, args, env } => {
+            use std::collections::HashMap;
+            let env_map: &HashMap<String, String> = env;
+            let args_ref: Vec<&str> = args.iter().map(String::as_str).collect();
+            let (cmd, wrapped_args) = if env_map.is_empty() {
+                (command.as_str().to_string(), args_ref.iter().map(|s| s.to_string()).collect::<Vec<_>>())
+            } else {
+                let env_args: Vec<String> = env_map
+                    .iter()
+                    .map(|(k, v)| format!("{k}={v}"))
+                    .chain(std::iter::once(command.clone()))
+                    .chain(args.iter().cloned())
+                    .collect();
+                ("env".to_string(), env_args)
+            };
+            let wrapped_refs: Vec<&str> = wrapped_args.iter().map(String::as_str).collect();
+            match tokio::time::timeout(Duration::from_secs(300), McpTool::stdio(&cmd, &wrapped_refs)).await {
+                Ok(Ok(t)) => {
+                    tracing::info!("global MCP '{}' hot-reloaded ({} tools)", name, t.raw_tools().len());
+                    Some(t)
+                }
+                Ok(Err(e)) => { warn!("global MCP '{}' hot-reload failed: {e}", name); None }
+                Err(_) => { warn!("global MCP '{}' hot-reload timed out", name); None }
+            }
+        }
+    }
 }

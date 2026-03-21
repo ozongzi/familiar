@@ -5,7 +5,7 @@
 /// 心跳：客户端发 {"type":"ping"}，服务器回 {"type":"pong"}（在 MCP 消息之外处理）。
 use std::{collections::HashMap, sync::Arc};
 
-use agentix::{McpTool, Tool as _};
+use agentix::McpTool;
 use axum::{
     extract::{
         State, WebSocketUpgrade,

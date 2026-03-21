@@ -6,7 +6,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-use agentix::Tool as _;
 use agentix::{McpTool, ToolCommand};
 use std::time::Duration;
 use tokio::time::timeout;
