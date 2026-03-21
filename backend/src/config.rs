@@ -60,6 +60,9 @@ pub struct ServerConfig {
     pub port: u16,
     pub system_prompt: Option<String>,
     pub subagent_prompt: Option<String>,
+    /// If set, only this origin is allowed for CORS. Leave unset to allow any origin (dev mode).
+    #[serde(default)]
+    pub allowed_origin: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -134,6 +137,7 @@ impl Default for Config {
                 port: 3000,
                 system_prompt: None,
                 subagent_prompt: None,
+                allowed_origin: None,
             },
             mcp: vec![],
             mcp_catalog: vec![],

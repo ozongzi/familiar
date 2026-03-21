@@ -1,6 +1,7 @@
 mod a2a_spell;
 mod history_spell;
 mod manage_mcp_spell;
+mod plan_spell;
 mod skill_spell;
 mod sourcegraph_spell;
 mod spawn_spell;
@@ -21,6 +22,7 @@ use crate::embedding::EmbeddingClient;
 use a2a_spell::A2aSpell;
 use history_spell::HistorySpell;
 use manage_mcp_spell::ManageMcpSpell;
+use plan_spell::PlanSpell;
 use skill_spell::SkillSpell;
 use sourcegraph_spell::search_code;
 use spawn_spell::SpawnSpell;
@@ -83,9 +85,13 @@ pub fn build_all_spells(deps: SpellDeps) -> ToolBundle {
         + ManageMcpSpell {
             mcp_tools: deps.mcp_tools,
             tool_inject_tx: deps.tool_inject_tx,
-            pool: deps.pool,
+            pool: deps.pool.clone(),
             user_id: deps.user_id,
             sandbox: deps.sandbox,
             catalog: deps.mcp_catalog,
+        }
+        + PlanSpell {
+            pool: deps.pool,
+            conversation_id: deps.conversation_id,
         }
 }

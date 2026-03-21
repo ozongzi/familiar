@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -20,7 +20,7 @@ use sqlx::PgPool;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::broadcast;
 use tokio::sync::mpsc::UnboundedSender;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 const EVENT_LOG_CAP: usize = 4096;
@@ -170,7 +170,7 @@ pub struct ChatEntry {
     pub tool_inject_tx: UnboundedSender<ToolCommand>,
     pub user_mcp_tools: Arc<tokio::sync::Mutex<Vec<(String, McpTool)>>>,
     pub broadcast_tx: broadcast::Sender<Arc<WsEvent>>,
-    pub event_log: Vec<Arc<WsEvent>>,
+    pub event_log: VecDeque<Arc<WsEvent>>,
     pub generating: bool,
     pub abort_flag: Arc<AtomicBool>,
     pub ask_user_pending: Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<String>>>>,
@@ -199,7 +199,7 @@ impl ChatEntry {
             tool_inject_tx,
             user_mcp_tools,
             broadcast_tx,
-            event_log: Vec::new(),
+            event_log: VecDeque::new(),
             generating: false,
             abort_flag,
             ask_user_pending,
@@ -212,9 +212,9 @@ impl ChatEntry {
         let seq = NEXT_SEQ.fetch_add(1, AtomicOrdering::Relaxed);
         let ev = Arc::new(WsEvent { seq, payload });
         if self.event_log.len() >= EVENT_LOG_CAP {
-            self.event_log.remove(0);
+            self.event_log.pop_front();
         }
-        self.event_log.push(Arc::clone(&ev));
+        self.event_log.push_back(Arc::clone(&ev));
         let _ = self.broadcast_tx.send(ev);
     }
 
@@ -357,7 +357,10 @@ impl AppState {
                 .fetch_optional(&self.pool)
                 .await
                 .unwrap_or(None)
-                .unwrap_or_default();
+                .unwrap_or_else(|| {
+                    warn!(conversation = %conversation_id, "conversation not found, using nil user_id");
+                    Uuid::nil()
+                });
 
         let user_mcp_rows: Vec<(String, String, serde_json::Value)> = sqlx::query_as(
             r#"SELECT name, "type", config FROM user_mcps WHERE user_id = $1 ORDER BY created_at ASC"#
@@ -428,6 +431,22 @@ impl AppState {
                 skills.join("\n")
             );
             system_prompt = Some(system_prompt.unwrap_or_default() + &summary);
+        }
+
+        let plan_row: Option<(String, String)> = sqlx::query_as(
+            "SELECT title, steps_json FROM conversation_plans WHERE conversation_id = $1",
+        )
+        .bind(conversation_id)
+        .fetch_optional(&self.pool)
+        .await
+        .unwrap_or(None);
+
+        if let Some((plan_title, plan_steps)) = plan_row {
+            let plan_section = format!(
+                "\n\n## 当前执行计划\n标题：{}\n步骤（JSON）：{}\n\n每次更新步骤状态时，调用 todo_list 工具同步最新进度。",
+                plan_title, plan_steps
+            );
+            system_prompt = Some(system_prompt.unwrap_or_default() + &plan_section);
         }
 
         let mut base: AnyAgent = match frontier_cfg.provider {
@@ -620,7 +639,7 @@ impl AppState {
             let map = self.chats.lock().unwrap();
             if let Some(entry) = map.get(&conversation_id) {
                 let rx = entry.broadcast_tx.subscribe();
-                let log = entry.event_log.clone();
+                let log: Vec<Arc<WsEvent>> = entry.event_log.iter().cloned().collect();
                 let generating = entry.generating;
                 return (rx, log, generating);
             }
@@ -632,7 +651,10 @@ impl AppState {
                 .fetch_optional(&self.pool)
                 .await
                 .unwrap_or(None)
-                .unwrap_or_default();
+                .unwrap_or_else(|| {
+                    warn!(conversation = %conversation_id, "conversation not found in attach, using nil user_id");
+                    Uuid::nil()
+                });
 
         let (agent, tx, ask_user_pending, inject_tx, user_mcp_tools, spawn_tx, abort_flag) =
             self.build_agent(conversation_id).await;
@@ -664,7 +686,7 @@ impl AppState {
         );
 
         let rx = entry.broadcast_tx.subscribe();
-        let log = entry.event_log.clone();
+        let log: Vec<Arc<WsEvent>> = entry.event_log.iter().cloned().collect();
         let generating = entry.generating;
         self.chats.lock().unwrap().insert(conversation_id, entry);
 
@@ -759,16 +781,31 @@ impl AppState {
         }
     }
 
+    /// Persist a message to the database and (for user/assistant messages) embed it.
+    /// Always fire-and-forget — spawns a background task and returns immediately.
+    /// Use `persist_message_async` if you need to await completion before continuing.
+    pub fn persist_message(
+        &self,
+        conversation_id: Uuid,
+        msg: &agentix::raw::request::message::Message,
+    ) {
+        let state = self.clone();
+        let msg = msg.clone();
+        tokio::spawn(async move {
+            state.persist_message_async(conversation_id, &msg).await;
+        });
+    }
+
+    /// Persist a message to the database and embed it, awaiting completion.
     pub async fn persist_message_async(
         &self,
         conversation_id: Uuid,
         msg: &agentix::raw::request::message::Message,
     ) {
         let db = self.db.clone();
-        let msg = msg.clone();
         let state = self.clone();
 
-        let row_id = match db.append(conversation_id, &msg, None).await {
+        let row_id = match db.append(conversation_id, msg, None).await {
             Ok(id) => id,
             Err(e) => {
                 error!("db append failed: {e}");
@@ -794,7 +831,6 @@ impl AppState {
                     global_cfg.embedding.api_base,
                     global_cfg.embedding.name,
                 );
-
                 match embed.embed(&text).await {
                     Ok(vec) => {
                         let vector = to_vector(vec);
@@ -806,54 +842,6 @@ impl AppState {
                 }
             });
         }
-    }
-
-    pub fn persist_message(
-        &self,
-        conversation_id: Uuid,
-        msg: &agentix::raw::request::message::Message,
-    ) {
-        let db = self.db.clone();
-        let msg = msg.clone();
-        let state = self.clone();
-
-        tokio::spawn(async move {
-            let row_id = match db.append(conversation_id, &msg, None).await {
-                Ok(id) => id,
-                Err(e) => {
-                    error!("db append failed: {e}");
-                    return;
-                }
-            };
-
-            let should_embed = matches!(
-                msg.role,
-                agentix::raw::request::message::Role::User
-                    | agentix::raw::request::message::Role::Assistant
-            );
-
-            if should_embed
-                && let Some(text) = &msg.content
-                && !text.is_empty()
-            {
-                let global_cfg = state.get_global_config().await.unwrap_or_default();
-                let embed = EmbeddingClient::new(
-                    global_cfg.embedding.api_key,
-                    global_cfg.embedding.api_base,
-                    global_cfg.embedding.name,
-                );
-
-                match embed.embed(text).await {
-                    Ok(vec) => {
-                        let vector = to_vector(vec);
-                        if let Err(e) = db.set_embedding(row_id, vector).await {
-                            error!("set_embedding failed: {e}");
-                        }
-                    }
-                    Err(e) => error!("embed failed: {e}"),
-                }
-            }
-        });
     }
 }
 
@@ -931,10 +919,10 @@ async fn run_generation(
     use agentix::raw::request::message::{Message as AgentMessage, Role};
     use serde_json::json;
 
-    info!(conversation = %conversation_id, "[TIMING] run_generation started, calling chat_from_history");
+    debug!(conversation = %conversation_id, "[TIMING] run_generation started, calling chat_from_history");
     let t_start = std::time::Instant::now();
     let mut stream = agent.chat_from_history();
-    info!(conversation = %conversation_id, "[TIMING] chat_from_history returned in {:?}", t_start.elapsed());
+    debug!(conversation = %conversation_id, "[TIMING] chat_from_history returned in {:?}", t_start.elapsed());
 
     let mut reply_buf = String::new();
     let mut reasoning_buf = String::new();
@@ -972,7 +960,7 @@ async fn run_generation(
 
         poll_count += 1;
         let t_poll = std::time::Instant::now();
-        info!(conversation = %conversation_id, "[TIMING] poll #{poll_count}: calling stream.next()");
+        debug!(conversation = %conversation_id, "[TIMING] poll #{poll_count}: calling stream.next()");
 
         tokio::select! {
             biased;
@@ -980,18 +968,18 @@ async fn run_generation(
                 let elapsed = t_poll.elapsed();
 
                 let Some(event) = agent_event else {
-                    info!(conversation = %conversation_id, "[TIMING] poll #{poll_count}: stream.next() -> None (stream ended) in {elapsed:?}");
+                    debug!(conversation = %conversation_id, "[TIMING] poll #{poll_count}: stream.next() -> None (stream ended) in {elapsed:?}");
                     break;
                 };
 
                 let payload = match event {
                     Ok(AgentEvent::Token(token)) => {
-                        info!(conversation = %conversation_id, "[TIMING] poll #{poll_count}: stream.next() -> Token ({} chars) in {elapsed:?}", token.len());
+                        debug!(conversation = %conversation_id, "[TIMING] poll #{poll_count}: stream.next() -> Token ({} chars) in {elapsed:?}", token.len());
                         reply_buf.push_str(&token);
                         json!({"type": "token", "content": token}).to_string()
                     }
                     Ok(AgentEvent::ToolCall(c)) => {
-                        info!(conversation = %conversation_id, "[TIMING] poll #{poll_count}: stream.next() -> ToolCall name={} id={} index={} delta_len={} in {elapsed:?}", c.name, c.id, c.index, c.delta.len());
+                        debug!(conversation = %conversation_id, "[TIMING] poll #{poll_count}: stream.next() -> ToolCall name={} id={} index={} delta_len={} in {elapsed:?}", c.name, c.id, c.index, c.delta.len());
 
                         if c.id.is_empty() {
                             if let Some(known_id) = index_to_id.get(&c.index).cloned() {
@@ -1055,7 +1043,7 @@ async fn run_generation(
                         }
                     }
                     Ok(AgentEvent::ToolResult(res)) => {
-                        info!(conversation = %conversation_id, "[TIMING] poll #{poll_count}: stream.next() -> ToolResult name={} id={} in {elapsed:?}", res.name, res.id);
+                        debug!(conversation = %conversation_id, "[TIMING] poll #{poll_count}: stream.next() -> ToolResult name={} id={} in {elapsed:?}", res.name, res.id);
 
                         {
                             let mut map = state.chats.lock().unwrap();
@@ -1134,13 +1122,13 @@ async fn run_generation(
                         }).to_string()
                     }
                     Ok(AgentEvent::ReasoningToken(token)) => {
-                        info!(conversation = %conversation_id, "[TIMING] poll #{poll_count}: stream.next() -> ReasoningToken ({} chars) in {elapsed:?}", token.len());
+                        debug!(conversation = %conversation_id, "[TIMING] poll #{poll_count}: stream.next() -> ReasoningToken ({} chars) in {elapsed:?}", token.len());
                         reasoning_buf.push_str(&token);
                         json!({"type": "reasoning_token", "content": token}).to_string()
                     }
                     Err(e) => {
                         let err_msg = e.to_string();
-                        error!(conversation = %conversation_id, "[TIMING] poll #{poll_count}: stream.next() -> Error in {elapsed:?}: {err_msg}");
+                        error!(conversation = %conversation_id, "stream error after {elapsed:?}: {err_msg}");
 
                         let is_benign_tail_error = err_msg.contains("Error in input stream")
                             && !reply_buf.trim().is_empty();
@@ -1204,7 +1192,7 @@ async fn run_generation(
             }
 
             else => {
-                info!(conversation = %conversation_id, "[TIMING] poll #{poll_count}: select! else branch triggered in {:?}", t_poll.elapsed());
+                debug!(conversation = %conversation_id, "[TIMING] poll #{poll_count}: select! else branch triggered in {:?}", t_poll.elapsed());
                 break;
             }
         }

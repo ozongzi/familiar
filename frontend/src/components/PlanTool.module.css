@@ -1,0 +1,93 @@
+.stepList {
+  list-style: none;
+  margin: 0;
+  padding: 6px 0;
+}
+
+.step {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  padding: 6px 14px;
+}
+
+.step + .step {
+  border-top: 0.5px solid var(--border-subtle);
+}
+
+.stepIcon {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  position: relative;
+  top: 1px;
+}
+
+.stepContent {
+  font-size: 13px;
+  line-height: 1.5;
+  flex: 1;
+  min-width: 0;
+}
+
+/* status-based text colour */
+.step_completed .stepContent {
+  color: var(--text-muted);
+  text-decoration: line-through;
+  text-decoration-color: var(--border);
+}
+
+.step_in_progress .stepContent {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.step_pending .stepContent {
+  color: var(--text-secondary);
+}
+
+.step_skipped .stepContent {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* status icons */
+.statusIconCompleted {
+  color: #5A9E27;
+}
+
+.statusIconActive {
+  color: var(--accent, #6B8FD6);
+  animation: pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+
+.statusIconPending {
+  color: var(--border);
+}
+
+.statusIconSkipped {
+  color: var(--text-muted);
+}
+
+/* high-priority dot */
+.priorityDot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #EF9F27;
+  flex-shrink: 0;
+  align-self: center;
+}
+
+/* pending placeholder */
+.pendingHint {
+  padding: 10px 14px;
+  font-size: 12px;
+  color: var(--text-muted);
+  font-style: italic;
+}

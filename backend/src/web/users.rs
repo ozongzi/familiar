@@ -107,9 +107,21 @@ pub async fn update_profile(
 ) -> AppResult<Json<UserResponse>> {
     // Validate email format if provided
     if let Some(ref email) = req.email
-        && !email.is_empty() && !email.contains('@') {
+        && !email.is_empty()
+    {
+        let valid = email.split_once('@')
+            .map(|(local, domain)| {
+                !local.is_empty()
+                    && domain.contains('.')
+                    && !domain.starts_with('.')
+                    && !domain.ends_with('.')
+                    && domain.len() > 2
+            })
+            .unwrap_or(false);
+        if !valid {
             return Err(AppError::bad_request("邮箱格式无效"));
         }
+    }
 
     // Update profile
     sqlx::query(

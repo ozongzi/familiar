@@ -19,6 +19,19 @@ use tokio::io::AsyncWriteExt;
 use crate::errors::AppError;
 use crate::web::AppState;
 
+/// Resolve a raw bearer token string to a user_id, checking session validity.
+async fn user_id_from_token(state: &AppState, token: &str) -> Result<Uuid, AppError> {
+    sqlx::query_scalar("SELECT user_id FROM sessions WHERE token = $1 AND expires_at > NOW()")
+        .bind(token)
+        .fetch_optional(&state.pool)
+        .await
+        .map_err(|e| {
+            tracing::error!("file auth query: {e}");
+            AppError::internal("数据库错误")
+        })?
+        .ok_or_else(AppError::unauthorized)
+}
+
 #[derive(Deserialize)]
 pub struct FileQuery {
     path: String,
@@ -39,16 +52,7 @@ pub async fn download_file(
         .or_else(|| q.token.clone())
         .ok_or_else(AppError::unauthorized)?;
 
-    // Validate the token and fetch user_id.
-    let user_id: Uuid = sqlx::query_scalar("SELECT user_id FROM sessions WHERE token = $1")
-        .bind(&token)
-        .fetch_optional(&state.pool)
-        .await
-        .map_err(|e| {
-            tracing::error!("file download auth query: {e}");
-            AppError::internal("数据库错误")
-        })?
-        .ok_or_else(AppError::unauthorized)?;
+    let user_id = user_id_from_token(&state, &token).await?;
 
     // Resolve to an absolute path.
     // If the path starts with /workspace, map it back to the host path.
@@ -155,15 +159,7 @@ pub async fn preview_file(
         .or_else(|| q.token.clone())
         .ok_or_else(AppError::unauthorized)?;
 
-    let user_id: Uuid = sqlx::query_scalar("SELECT user_id FROM sessions WHERE token = $1")
-        .bind(&token)
-        .fetch_optional(&state.pool)
-        .await
-        .map_err(|e| {
-            tracing::error!("file preview auth query: {e}");
-            AppError::internal("数据库错误")
-        })?
-        .ok_or_else(AppError::unauthorized)?;
+    let user_id = user_id_from_token(&state, &token).await?;
 
     let q_path = std::path::PathBuf::from(&q.path);
     let path = if q_path.starts_with("/workspace") {
@@ -335,16 +331,7 @@ pub async fn upload_file(
         .map(|TypedHeader(Authorization(b))| b.token().to_string())
         .ok_or_else(AppError::unauthorized)?;
 
-    // Validate the token and fetch user_id.
-    let user_id: Uuid = sqlx::query_scalar("SELECT user_id FROM sessions WHERE token = $1")
-        .bind(&token)
-        .fetch_optional(&state.pool)
-        .await
-        .map_err(|e| {
-            tracing::error!("file upload auth query: {e}");
-            AppError::internal("数据库错误")
-        })?
-        .ok_or_else(AppError::unauthorized)?;
+    let user_id = user_id_from_token(&state, &token).await?;
 
     // Storage directory scoped to the user (the sandbox workspace).
     let upload_dir = state.sandbox.get_user_dir(user_id);
@@ -497,15 +484,7 @@ pub async fn upload_avatar(
         .map(|TypedHeader(Authorization(b))| b.token().to_string())
         .ok_or_else(AppError::unauthorized)?;
 
-    let user_id: Uuid = sqlx::query_scalar("SELECT user_id FROM sessions WHERE token = $1")
-        .bind(&token)
-        .fetch_optional(&state.pool)
-        .await
-        .map_err(|e| {
-            tracing::error!("avatar upload auth query: {e}");
-            AppError::internal("数据库错误")
-        })?
-        .ok_or_else(AppError::unauthorized)?;
+    let user_id = user_id_from_token(&state, &token).await?;
 
     // Get the avatars directory
     let avatars_dir = std::path::PathBuf::from(&state.artifacts_path).join("avatars");

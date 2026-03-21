@@ -42,7 +42,7 @@ pub async fn login(
 
     let token = generate_token();
 
-    sqlx::query("INSERT INTO sessions (token, user_id) VALUES ($1, $2)")
+    sqlx::query("INSERT INTO sessions (token, user_id, expires_at) VALUES ($1, $2, NOW() + INTERVAL '30 days')")
         .bind(&token)
         .bind(id)
         .execute(&state.pool)

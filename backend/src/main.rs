@@ -61,7 +61,7 @@ async fn main() {
 
     // ── Web server ────────────────────────────────────────────────────────────
 
-    let router = web::create_router(web_state);
+    let router = web::create_router(web_state, cfg.server.allowed_origin.as_deref());
     let addr = format!("0.0.0.0:{}", cfg.server.port);
     let listener = tokio::net::TcpListener::bind(&addr)
         .await

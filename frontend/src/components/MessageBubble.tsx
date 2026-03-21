@@ -12,6 +12,7 @@ import type { ChatBubble, ToolBubble, UploadBubble } from "../api/types";
 import { buildToolArgsView } from "./messageBubble.toolParsing";
 import { FilePreviewContent } from "./FilePreviewContent";
 import { BashTool, WriteTool, MultiWriteTool } from "./BashWriteTools";
+import { PlanTool } from "./PlanTool";
 import styles from "./MessageBubble.module.css";
 import { getServerBase } from "../utils/tauri";
 
@@ -632,6 +633,16 @@ function ToolCallBubble({
       <div className={nested ? styles.toolRowNested : styles.toolRow}>
         <div className={styles.toolBubble}>
           <MultiWriteTool bubble={bubble} />
+        </div>
+      </div>
+    );
+  }
+
+  if (bubble.name === "todo_list") {
+    return (
+      <div className={nested ? styles.toolRowNested : styles.toolRow}>
+        <div className={styles.toolBubble}>
+          <PlanTool bubble={bubble} />
         </div>
       </div>
     );

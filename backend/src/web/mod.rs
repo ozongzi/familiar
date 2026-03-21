@@ -29,6 +29,7 @@ use settings::{
 };
 use sqlx::PgPool;
 use tower_http::cors::{Any, CorsLayer};
+use axum::http::HeaderValue;
 use tower_http::services::{ServeDir, ServeFile};
 
 use conversations::*;
@@ -56,11 +57,18 @@ impl AsRef<PgPool> for AppState {
     }
 }
 
-pub fn create_router(state: AppState) -> Router {
-    let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
-        .allow_headers(Any);
+pub fn create_router(state: AppState, allowed_origin: Option<&str>) -> Router {
+    let cors = if let Some(origin) = allowed_origin.and_then(|o| o.parse::<HeaderValue>().ok()) {
+        CorsLayer::new()
+            .allow_origin(origin)
+            .allow_methods(Any)
+            .allow_headers(Any)
+    } else {
+        CorsLayer::new()
+            .allow_origin(Any)
+            .allow_methods(Any)
+            .allow_headers(Any)
+    };
 
     let public_path = Path::new(&state.public_path);
     let artifacts_path = Path::new(&state.artifacts_path);
