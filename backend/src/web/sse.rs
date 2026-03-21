@@ -112,7 +112,7 @@ pub async fn send_message_handler(
 
     // Persist the user message.
     {
-        use ds_api::raw::request::message::{Message as AgentMessage, Role};
+        use agentix::raw::request::message::{Message as AgentMessage, Role};
         let msg = AgentMessage::new(Role::User, &content);
         state.persist_message(conversation_id, &msg);
     }
@@ -275,7 +275,7 @@ pub async fn stream_interrupt_handler(
 
     // Persist the interrupt as a user message.
     {
-        use ds_api::raw::request::message::{Message as AgentMessage, Role};
+        use agentix::raw::request::message::{Message as AgentMessage, Role};
         let msg = AgentMessage::new(Role::User, &content);
         state.persist_message(conversation_id, &msg);
     }

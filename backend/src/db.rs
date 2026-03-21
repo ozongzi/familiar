@@ -19,7 +19,8 @@ use pgvector::Vector;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use ds_api::raw::request::message::{Message, Role};
+use agentix::raw::request::message::{Message as RawMessage, Role};
+use agentix::request::{Message, ToolCall as AgentToolCall, UserContent};
 
 // ── Row type ──────────────────────────────────────────────────────────────────
 
@@ -57,7 +58,7 @@ impl Db {
     pub async fn append(
         &self,
         conversation_id: Uuid,
-        msg: &Message,
+        msg: &RawMessage,
         embedding: Option<Vector>,
     ) -> anyhow::Result<i64> {
         let role = role_to_str(&msg.role);
@@ -65,7 +66,7 @@ impl Db {
             .tool_calls
             .as_ref()
             .and_then(|tc| serde_json::to_string(tc).ok());
-        let is_summary = msg.is_auto_summary();
+        let is_summary = false;
         let now = unix_now();
 
         let row_id: i64 = sqlx::query_scalar(
@@ -112,7 +113,7 @@ impl Db {
     /// 2. Return [that summary row] + [all rows after it].
     ///
     /// If there is no summary, return all rows.
-    pub async fn restore(&self, conversation_id: Uuid) -> anyhow::Result<Vec<Message>> {
+    pub async fn restore(&self, conversation_id: Uuid) -> anyhow::Result<Vec<agentix::request::Message>> {
         let since_id: i64 = sqlx::query_scalar(
             r#"
             SELECT COALESCE(
@@ -279,6 +280,7 @@ pub fn role_to_str(role: &Role) -> &'static str {
     }
 }
 
+#[allow(unused)]
 pub fn str_to_role(s: &str) -> Role {
     match s {
         "system" => Role::System,
@@ -289,21 +291,35 @@ pub fn str_to_role(s: &str) -> Role {
 }
 
 pub fn row_to_message(row: MessageRow) -> Message {
-    use ds_api::raw::request::message::ToolCall;
+    use agentix::raw::request::message::ToolCall as RawToolCall;
 
-    let tool_calls: Option<Vec<ToolCall>> = row
-        .spell_casts
-        .as_deref()
-        .and_then(|s| serde_json::from_str(s).ok());
-
-    Message {
-        role: str_to_role(&row.role),
-        content: row.content,
-        name: row.name,
-        tool_call_id: row.spell_cast_id,
-        tool_calls,
-        reasoning_content: row.reasoning,
-        prefix: None,
+    match row.role.as_str() {
+        "tool" => Message::ToolResult {
+            call_id: row.spell_cast_id.unwrap_or_default(),
+            content: row.content.unwrap_or_default(),
+        },
+        "assistant" => {
+            let tool_calls: Vec<AgentToolCall> = row
+                .spell_casts
+                .as_deref()
+                .and_then(|s| serde_json::from_str::<Vec<RawToolCall>>(s).ok())
+                .unwrap_or_default()
+                .into_iter()
+                .map(|tc| AgentToolCall {
+                    id: tc.id,
+                    name: tc.function.name,
+                    arguments: tc.function.arguments,
+                })
+                .collect();
+            Message::Assistant {
+                content: row.content,
+                reasoning: row.reasoning,
+                tool_calls,
+            }
+        }
+        _ => Message::User(vec![UserContent::Text(
+            row.content.unwrap_or_default(),
+        )]),
     }
 }
 

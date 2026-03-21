@@ -155,13 +155,17 @@ export interface UserSettings {
   api_key: string | null;
   api_base: string | null;
   model_name: string | null;
+  provider: Provider | null;
   system_prompt: string | null;
 }
+
+export type Provider = "deepseek" | "openai" | "anthropic" | "gemini";
 
 export interface ModelConfig {
   name: string;
   api_key: string;
   api_base: string;
+  provider: Provider;
   extra_body: Record<string, unknown>;
 }
 
@@ -170,6 +174,7 @@ export interface UpdateSettingsRequest {
   api_key?: string | null;
   api_base?: string | null;
   model_name?: string | null;
+  provider?: Provider | null;
   system_prompt?: string | null;
 }
 

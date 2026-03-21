@@ -7,11 +7,14 @@ use crate::config::{Config, McpServerConfig, ModelConfig};
 use crate::db::{Db, to_vector};
 use crate::embedding::EmbeddingClient;
 use crate::spells::{SpellDeps, build_all_spells};
-use ds_api::AgentEvent;
-use ds_api::DeepseekAgent;
-use ds_api::McpTool;
-use ds_api::Tool as _;
-use ds_api::ToolInjection;
+use agentix::agent::agent_core::{AnthropicAgent, DeepSeekAgent, GeminiAgent, OpenAIAgent};
+use agentix::agent::stream::AgentStream;
+use agentix::AgentEvent;
+use agentix::McpTool;
+use agentix::Tool as _;
+use agentix::ToolCommand;
+use agentix::request::Message as AgentMessage;
+use crate::config::Provider;
 use serde_json::Value;
 use sqlx::PgPool;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -23,6 +26,135 @@ use uuid::Uuid;
 const EVENT_LOG_CAP: usize = 4096;
 const BROADCAST_CAP: usize = 256;
 
+// ── AnyAgent ──────────────────────────────────────────────────────────────────
+
+/// A type-erased wrapper so familiar can support all four agentix providers
+/// without making the rest of the code generic over `P`.
+pub enum AnyAgent {
+    DeepSeek(DeepSeekAgent),
+    OpenAI(OpenAIAgent),
+    Anthropic(AnthropicAgent),
+    Gemini(GeminiAgent),
+}
+
+macro_rules! any_agent_delegate {
+    ($self:ident, $inner:ident => $expr:expr) => {
+        match $self {
+            AnyAgent::DeepSeek($inner) => $expr,
+            AnyAgent::OpenAI($inner) => $expr,
+            AnyAgent::Anthropic($inner) => $expr,
+            AnyAgent::Gemini($inner) => $expr,
+        }
+    };
+}
+
+impl AnyAgent {
+    pub fn with_tool<T: agentix::Tool + 'static>(self, tool: T) -> Self {
+        match self {
+            AnyAgent::DeepSeek(a) => AnyAgent::DeepSeek(a.with_tool(tool)),
+            AnyAgent::OpenAI(a) => AnyAgent::OpenAI(a.with_tool(tool)),
+            AnyAgent::Anthropic(a) => AnyAgent::Anthropic(a.with_tool(tool)),
+            AnyAgent::Gemini(a) => AnyAgent::Gemini(a.with_tool(tool)),
+        }
+    }
+
+    pub fn streaming(self) -> Self {
+        match self {
+            AnyAgent::DeepSeek(a) => AnyAgent::DeepSeek(a.streaming()),
+            AnyAgent::OpenAI(a) => AnyAgent::OpenAI(a.streaming()),
+            AnyAgent::Anthropic(a) => AnyAgent::Anthropic(a.streaming()),
+            AnyAgent::Gemini(a) => AnyAgent::Gemini(a.streaming()),
+        }
+    }
+
+    pub fn with_history(self, history: Vec<AgentMessage>) -> Self {
+        match self {
+            AnyAgent::DeepSeek(a) => AnyAgent::DeepSeek(a.with_history(history)),
+            AnyAgent::OpenAI(a) => AnyAgent::OpenAI(a.with_history(history)),
+            AnyAgent::Anthropic(a) => AnyAgent::Anthropic(a.with_history(history)),
+            AnyAgent::Gemini(a) => AnyAgent::Gemini(a.with_history(history)),
+        }
+    }
+
+    pub fn with_system_prompt(self, prompt: impl Into<String>) -> Self {
+        let p = prompt.into();
+        match self {
+            AnyAgent::DeepSeek(a) => AnyAgent::DeepSeek(a.with_system_prompt(p)),
+            AnyAgent::OpenAI(a) => AnyAgent::OpenAI(a.with_system_prompt(p)),
+            AnyAgent::Anthropic(a) => AnyAgent::Anthropic(a.with_system_prompt(p)),
+            AnyAgent::Gemini(a) => AnyAgent::Gemini(a.with_system_prompt(p)),
+        }
+    }
+
+    pub fn extra_field(self, key: impl Into<String>, value: serde_json::Value) -> Self {
+        let k = key.into();
+        match self {
+            AnyAgent::DeepSeek(a) => AnyAgent::DeepSeek(a.extra_field(k, value)),
+            AnyAgent::OpenAI(a) => AnyAgent::OpenAI(a.extra_field(k, value)),
+            AnyAgent::Anthropic(a) => AnyAgent::Anthropic(a.extra_field(k, value)),
+            AnyAgent::Gemini(a) => AnyAgent::Gemini(a.extra_field(k, value)),
+        }
+    }
+
+    pub fn interrupt_sender(&self) -> tokio::sync::mpsc::UnboundedSender<String> {
+        any_agent_delegate!(self, a => a.interrupt_sender())
+    }
+
+    pub fn tool_inject_sender(&self) -> tokio::sync::mpsc::UnboundedSender<ToolCommand> {
+        any_agent_delegate!(self, a => a.tool_inject_sender())
+    }
+
+    pub fn push_user_message(&mut self, text: &str) {
+        any_agent_delegate!(self, a => a.push_user_message(text))
+    }
+
+    pub fn chat(self, user_message: &str) -> AnyAgentStream {
+        match self {
+            AnyAgent::DeepSeek(a) => AnyAgentStream::DeepSeek(a.chat(user_message)),
+            AnyAgent::OpenAI(a) => AnyAgentStream::OpenAI(a.chat(user_message)),
+            AnyAgent::Anthropic(a) => AnyAgentStream::Anthropic(a.chat(user_message)),
+            AnyAgent::Gemini(a) => AnyAgentStream::Gemini(a.chat(user_message)),
+        }
+    }
+
+    pub fn chat_from_history(self) -> AnyAgentStream {
+        match self {
+            AnyAgent::DeepSeek(a) => AnyAgentStream::DeepSeek(a.chat_from_history()),
+            AnyAgent::OpenAI(a) => AnyAgentStream::OpenAI(a.chat_from_history()),
+            AnyAgent::Anthropic(a) => AnyAgentStream::Anthropic(a.chat_from_history()),
+            AnyAgent::Gemini(a) => AnyAgentStream::Gemini(a.chat_from_history()),
+        }
+    }
+}
+
+pub enum AnyAgentStream {
+    DeepSeek(AgentStream<agentix::agent::agent_core::DeepSeek>),
+    OpenAI(AgentStream<agentix::agent::agent_core::OpenAI>),
+    Anthropic(AgentStream<agentix::agent::agent_core::Anthropic>),
+    Gemini(AgentStream<agentix::agent::agent_core::Gemini>),
+}
+
+impl AnyAgentStream {
+    pub async fn next(&mut self) -> Option<Result<AgentEvent, agentix::error::ApiError>> {
+        use futures::StreamExt;
+        match self {
+            AnyAgentStream::DeepSeek(s) => s.next().await,
+            AnyAgentStream::OpenAI(s) => s.next().await,
+            AnyAgentStream::Anthropic(s) => s.next().await,
+            AnyAgentStream::Gemini(s) => s.next().await,
+        }
+    }
+
+    pub fn into_agent(self) -> Option<AnyAgent> {
+        match self {
+            AnyAgentStream::DeepSeek(s) => s.into_agent().map(AnyAgent::DeepSeek),
+            AnyAgentStream::OpenAI(s) => s.into_agent().map(AnyAgent::OpenAI),
+            AnyAgentStream::Anthropic(s) => s.into_agent().map(AnyAgent::Anthropic),
+            AnyAgentStream::Gemini(s) => s.into_agent().map(AnyAgent::Gemini),
+        }
+    }
+}
+
 static NEXT_SEQ: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone)]
@@ -33,9 +165,9 @@ pub struct WsEvent {
 
 pub struct ChatEntry {
     pub user_id: Uuid,
-    pub agent: Option<DeepseekAgent>,
+    pub agent: Option<AnyAgent>,
     pub interrupt_tx: UnboundedSender<String>,
-    pub tool_inject_tx: UnboundedSender<ToolInjection>,
+    pub tool_inject_tx: UnboundedSender<ToolCommand>,
     pub user_mcp_tools: Arc<tokio::sync::Mutex<Vec<(String, McpTool)>>>,
     pub broadcast_tx: broadcast::Sender<Arc<WsEvent>>,
     pub event_log: Vec<Arc<WsEvent>>,
@@ -49,10 +181,10 @@ pub struct ChatEntry {
 impl ChatEntry {
     fn new(
         user_id: Uuid,
-        agent: DeepseekAgent,
+        agent: AnyAgent,
         (interrupt_tx, tool_inject_tx, spawn_tx): (
             UnboundedSender<String>,
-            UnboundedSender<ToolInjection>,
+            UnboundedSender<ToolCommand>,
             tokio::sync::broadcast::Sender<String>,
         ),
         user_mcp_tools: Arc<tokio::sync::Mutex<Vec<(String, McpTool)>>>,
@@ -190,10 +322,10 @@ impl AppState {
         &self,
         conversation_id: Uuid,
     ) -> (
-        DeepseekAgent,
+        AnyAgent,
         UnboundedSender<String>,
         Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<String>>>>,
-        tokio::sync::mpsc::UnboundedSender<ToolInjection>,
+        tokio::sync::mpsc::UnboundedSender<ToolCommand>,
         Arc<tokio::sync::Mutex<Vec<(String, McpTool)>>>,
         tokio::sync::broadcast::Sender<String>,
         Arc<AtomicBool>,
@@ -298,13 +430,37 @@ impl AppState {
             system_prompt = Some(system_prompt.unwrap_or_default() + &summary);
         }
 
-        let mut base = DeepseekAgent::custom(
-            frontier_cfg.api_key.clone(),
-            frontier_cfg.api_base.clone(),
-            frontier_cfg.name.clone(),
-        )
-        .with_streaming()
-        .with_history(history);
+        let mut base: AnyAgent = match frontier_cfg.provider {
+            Provider::DeepSeek => AnyAgent::DeepSeek(
+                DeepSeekAgent::custom(
+                    frontier_cfg.api_key.clone(),
+                    frontier_cfg.api_base.clone(),
+                    frontier_cfg.name.clone(),
+                )
+            ),
+            Provider::OpenAI => AnyAgent::OpenAI(
+                OpenAIAgent::new(
+                    frontier_cfg.api_key.clone(),
+                    frontier_cfg.api_base.clone(),
+                    frontier_cfg.name.clone(),
+                )
+            ),
+            Provider::Anthropic => AnyAgent::Anthropic(
+                AnthropicAgent::new(
+                    frontier_cfg.api_key.clone(),
+                    frontier_cfg.api_base.clone(),
+                    frontier_cfg.name.clone(),
+                )
+            ),
+            Provider::Gemini => AnyAgent::Gemini(
+                GeminiAgent::new(
+                    frontier_cfg.api_key.clone(),
+                    frontier_cfg.api_base.clone(),
+                    frontier_cfg.name.clone(),
+                )
+            ),
+        };
+        base = base.streaming().with_history(history);
 
         for (k, v) in &frontier_cfg.extra_body {
             base = base.extra_field(k.clone(), v.clone());
@@ -341,10 +497,10 @@ impl AppState {
             abort_flag: Arc::clone(&abort_flag),
         };
 
-        let mut agent = base.add_tool(build_all_spells(spell_deps));
+        let mut agent = base.with_tool(build_all_spells(spell_deps));
 
         for (_, tool) in mcp_snapshot {
-            agent = agent.add_tool(tool);
+            agent = agent.with_tool(tool);
         }
 
         for (name, mcp_type, config) in user_mcp_rows {
@@ -415,7 +571,7 @@ impl AppState {
                 .await
                 .push((name.clone(), tool.clone()));
 
-            agent = agent.add_tool(tool);
+            agent = agent.with_tool(tool);
         }
 
         // 如果该用户的桌面客户端当前在线，从注册表获取隧道工具并加入
@@ -426,7 +582,7 @@ impl AppState {
                     "用户 {user_id} 隧道工具已在线，加入 agent ({} tools)",
                     tunnel_tool.raw_tools().len()
                 );
-                agent = agent.add_tool(tunnel_tool.clone());
+                agent = agent.with_tool(tunnel_tool.clone());
             }
         }
 
@@ -577,7 +733,7 @@ impl AppState {
             }
         };
 
-        agent.push_user_message_with_name(&user_text, None);
+        agent.push_user_message(&user_text);
 
         let state = self.clone();
 
@@ -606,7 +762,7 @@ impl AppState {
     pub async fn persist_message_async(
         &self,
         conversation_id: Uuid,
-        msg: &ds_api::raw::request::message::Message,
+        msg: &agentix::raw::request::message::Message,
     ) {
         let db = self.db.clone();
         let msg = msg.clone();
@@ -622,8 +778,8 @@ impl AppState {
 
         let should_embed = matches!(
             msg.role,
-            ds_api::raw::request::message::Role::User
-                | ds_api::raw::request::message::Role::Assistant
+            agentix::raw::request::message::Role::User
+                | agentix::raw::request::message::Role::Assistant
         );
 
         if should_embed
@@ -655,7 +811,7 @@ impl AppState {
     pub fn persist_message(
         &self,
         conversation_id: Uuid,
-        msg: &ds_api::raw::request::message::Message,
+        msg: &agentix::raw::request::message::Message,
     ) {
         let db = self.db.clone();
         let msg = msg.clone();
@@ -672,8 +828,8 @@ impl AppState {
 
             let should_embed = matches!(
                 msg.role,
-                ds_api::raw::request::message::Role::User
-                    | ds_api::raw::request::message::Role::Assistant
+                agentix::raw::request::message::Role::User
+                    | agentix::raw::request::message::Role::Assistant
             );
 
             if should_embed
@@ -704,7 +860,7 @@ impl AppState {
 async fn generation_loop(
     state: AppState,
     conversation_id: Uuid,
-    initial_agent: DeepseekAgent,
+    initial_agent: AnyAgent,
     initial_abort: Arc<AtomicBool>,
 ) {
     let mut agent = initial_agent;
@@ -759,7 +915,7 @@ async fn generation_loop(
         };
 
         let mut next_agent = next_agent;
-        next_agent.push_user_message_with_name(&text, None);
+        next_agent.push_user_message(&text);
 
         agent = next_agent;
         abort_flag = new_abort;
@@ -769,11 +925,10 @@ async fn generation_loop(
 async fn run_generation(
     state: AppState,
     conversation_id: Uuid,
-    agent: DeepseekAgent,
+    agent: AnyAgent,
     abort_flag: Arc<AtomicBool>,
 ) -> Option<String> {
-    use ds_api::raw::request::message::{Message as AgentMessage, Role};
-    use futures::StreamExt;
+    use agentix::raw::request::message::{Message as AgentMessage, Role};
     use serde_json::json;
 
     info!(conversation = %conversation_id, "[TIMING] run_generation started, calling chat_from_history");
@@ -910,7 +1065,7 @@ async fn run_generation(
                         }
 
                         {
-                            use ds_api::raw::request::message::{FunctionCall, ToolCall, ToolType};
+                            use agentix::raw::request::message::{FunctionCall, ToolCall, ToolType};
 
                             if let Some(entry) = pending_tools.get_mut(&res.id) {
                                 entry.1 = res.args.clone();

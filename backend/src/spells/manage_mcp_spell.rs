@@ -1,6 +1,6 @@
 use crate::config::McpCatalogEntry;
-use ds_api::tool;
-use ds_api::{McpTool, ToolInjection};
+use agentix::tool;
+use agentix::{McpTool, ToolCommand};
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use std::sync::Arc;
@@ -14,7 +14,7 @@ pub struct ManageMcpSpell {
     /// All currently running MCP tools for this user's session.
     pub mcp_tools: Arc<Mutex<Vec<(String, McpTool)>>>,
     /// Channel to inject/remove tools in the running agent without rebuilding it.
-    pub tool_inject_tx: UnboundedSender<ToolInjection>,
+    pub tool_inject_tx: UnboundedSender<ToolCommand>,
     /// DB pool for persisting MCP config.
     pub pool: PgPool,
     /// The authenticated user's id.
@@ -103,7 +103,7 @@ impl Tool for ManageMcpSpell {
 
         let _ = self
             .tool_inject_tx
-            .send(ToolInjection::Add(Box::new(tool.clone())));
+            .send(ToolCommand::Add(Box::new(tool.clone())));
         {
             let mut tools = self.mcp_tools.lock().await;
             tools.push((name.clone(), tool));
@@ -167,7 +167,7 @@ impl Tool for ManageMcpSpell {
 
         let _ = self
             .tool_inject_tx
-            .send(ToolInjection::Add(Box::new(tool.clone())));
+            .send(ToolCommand::Add(Box::new(tool.clone())));
         {
             let mut tools = self.mcp_tools.lock().await;
             tools.push((name.clone(), tool));
@@ -211,7 +211,7 @@ impl Tool for ManageMcpSpell {
             tracing::warn!("failed to delete MCP '{}' from DB: {e}", name);
         }
 
-        let _ = self.tool_inject_tx.send(ToolInjection::Remove(tool_names));
+        let _ = self.tool_inject_tx.send(ToolCommand::Remove(tool_names));
         {
             let mut tools = self.mcp_tools.lock().await;
             if let Some(idx) = tools.iter().position(|(n, _)| n == &name) {

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use ds_api::tool;
+use agentix::tool;
 use serde_json::json;
 use tokio::sync::Mutex;
 

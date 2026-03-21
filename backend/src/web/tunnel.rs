@@ -5,6 +5,7 @@
 /// 心跳：客户端发 {"type":"ping"}，服务器回 {"type":"pong"}（在 MCP 消息之外处理）。
 use std::{collections::HashMap, sync::Arc};
 
+use agentix::{McpTool, Tool as _};
 use axum::{
     extract::{
         State, WebSocketUpgrade,
@@ -12,7 +13,6 @@ use axum::{
     },
     response::IntoResponse,
 };
-use ds_api::{McpTool, Tool as _};
 use futures::{Sink, SinkExt, Stream, StreamExt};
 use rmcp::{
     service::{RoleClient, RxJsonRpcMessage, TxJsonRpcMessage},
@@ -239,7 +239,7 @@ async fn handle_tunnel(socket: WebSocket, user_id: Uuid, state: AppState) {
         if let Some(entry) = chats.get(&user_id) {
             let _ = entry
                 .tool_inject_tx
-                .send(ds_api::ToolInjection::Add(Box::new(mcp_tool.clone())));
+                .send(agentix::ToolCommand::Add(Box::new(mcp_tool.clone())));
             true
         } else {
             false
@@ -272,7 +272,7 @@ async fn handle_tunnel(socket: WebSocket, user_id: Uuid, state: AppState) {
         if let Some(entry) = chats.get(&user_id) {
             let _ = entry
                 .tool_inject_tx
-                .send(ds_api::ToolInjection::Remove(tool_names));
+                .send(agentix::ToolCommand::Remove(tool_names));
         }
     }
 

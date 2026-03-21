@@ -8,9 +8,87 @@ import {
   updateGlobalMcp, 
   deleteGlobalMcp 
 } from "../api/admin";
-import type { AdminConfig, GlobalMcp } from "../api/types";
+import type { AdminConfig, GlobalMcp, ModelConfig, Provider } from "../api/types";
 import styles from "./AdminConfig.module.css";
 import "highlight.js/styles/github.css";
+
+const PROVIDER_LABELS: Record<Provider, string> = {
+  deepseek: "DeepSeek",
+  openai: "OpenAI",
+  anthropic: "Anthropic",
+  gemini: "Gemini",
+};
+
+const PROVIDER_DEFAULTS: Record<Provider, { api_base: string }> = {
+  deepseek:  { api_base: "https://api.deepseek.com/v1" },
+  openai:    { api_base: "https://api.openai.com/v1" },
+  anthropic: { api_base: "https://api.anthropic.com" },
+  gemini:    { api_base: "https://generativelanguage.googleapis.com/v1beta" },
+};
+
+function ModelConfigBlock({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: ModelConfig;
+  onChange: (v: ModelConfig) => void;
+}) {
+  const provider: Provider = value.provider ?? "deepseek";
+
+  function setProvider(p: Provider) {
+    onChange({
+      ...value,
+      provider: p,
+      api_base: PROVIDER_DEFAULTS[p].api_base,
+    });
+  }
+
+  return (
+    <div className={styles.group}>
+      <h4>{label}</h4>
+      <div className={styles.field}>
+        <label>Provider</label>
+        <div className={styles.typeToggle}>
+          {(Object.keys(PROVIDER_LABELS) as Provider[]).map((p) => (
+            <button
+              key={p}
+              className={`${styles.typeBtn} ${provider === p ? styles.active : ""}`}
+              onClick={() => setProvider(p)}
+            >
+              {PROVIDER_LABELS[p]}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className={styles.field}>
+        <label>Model Name</label>
+        <input
+          type="text"
+          value={value.name}
+          onChange={(e) => onChange({ ...value, name: e.target.value })}
+        />
+      </div>
+      <div className={styles.field}>
+        <label>API Base</label>
+        <input
+          type="text"
+          value={value.api_base}
+          onChange={(e) => onChange({ ...value, api_base: e.target.value })}
+        />
+      </div>
+      <div className={styles.field}>
+        <label>API Key</label>
+        <input
+          type="password"
+          value={value.api_key}
+          onChange={(e) => onChange({ ...value, api_key: e.target.value })}
+        />
+      </div>
+    </div>
+  );
+}
 
 export function AdminConfig() {
   const { token } = useAuth();
@@ -273,61 +351,17 @@ export function AdminConfig() {
               </div>
             </div>
 
-            <div className={styles.group}>
-              <h4>Frontier Model</h4>
-              <div className={styles.field}>
-                <label>Name</label>
-                <input
-                  type="text"
-                  value={config.frontier_model.name}
-                  onChange={(e) => setConfig({ ...config, frontier_model: { ...config.frontier_model, name: e.target.value } })}
-                />
-              </div>
-              <div className={styles.field}>
-                <label>API Base</label>
-                <input
-                  type="text"
-                  value={config.frontier_model.api_base}
-                  onChange={(e) => setConfig({ ...config, frontier_model: { ...config.frontier_model, api_base: e.target.value } })}
-                />
-              </div>
-              <div className={styles.field}>
-                <label>API Key</label>
-                <input
-                  type="password"
-                  value={config.frontier_model.api_key}
-                  onChange={(e) => setConfig({ ...config, frontier_model: { ...config.frontier_model, api_key: e.target.value } })}
-                />
-              </div>
-            </div>
+            <ModelConfigBlock
+              label="Frontier Model"
+              value={config.frontier_model}
+              onChange={(v) => setConfig({ ...config, frontier_model: v })}
+            />
 
-            <div className={styles.group}>
-              <h4>Cheap Model</h4>
-              <div className={styles.field}>
-                <label>Name</label>
-                <input
-                  type="text"
-                  value={config.cheap_model.name}
-                  onChange={(e) => setConfig({ ...config, cheap_model: { ...config.cheap_model, name: e.target.value } })}
-                />
-              </div>
-              <div className={styles.field}>
-                <label>API Base</label>
-                <input
-                  type="text"
-                  value={config.cheap_model.api_base}
-                  onChange={(e) => setConfig({ ...config, cheap_model: { ...config.cheap_model, api_base: e.target.value } })}
-                />
-              </div>
-              <div className={styles.field}>
-                <label>API Key</label>
-                <input
-                  type="password"
-                  value={config.cheap_model.api_key}
-                  onChange={(e) => setConfig({ ...config, cheap_model: { ...config.cheap_model, api_key: e.target.value } })}
-                />
-              </div>
-            </div>
+            <ModelConfigBlock
+              label="Cheap Model"
+              value={config.cheap_model}
+              onChange={(v) => setConfig({ ...config, cheap_model: v })}
+            />
 
             <div className={styles.actions}>
               <button className={styles.saveBtn} onClick={handleSave} disabled={saving}>

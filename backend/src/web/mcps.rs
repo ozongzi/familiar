@@ -6,8 +6,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-use ds_api::Tool as _;
-use ds_api::{McpTool, ToolInjection};
+use agentix::Tool as _;
+use agentix::{McpTool, ToolCommand};
 use std::time::Duration;
 use tokio::time::timeout;
 use tracing::warn;
@@ -180,7 +180,7 @@ pub async fn create_mcp(
         };
 
         for (tx, mcp_vec) in sessions {
-            let _ = tx.send(ToolInjection::Add(Box::new(tool.clone())));
+            let _ = tx.send(ToolCommand::Add(Box::new(tool.clone())));
 
             // Also update the session-scoped list so list_installed_mcp reflects it.
             // Try the fast non-blocking path first.
@@ -304,7 +304,7 @@ pub async fn update_mcp(
         };
 
         for (tx, mcp_vec) in sessions {
-            let _ = tx.send(ToolInjection::Add(Box::new(tool.clone())));
+            let _ = tx.send(ToolCommand::Add(Box::new(tool.clone())));
 
             // Also update the session-scoped list so list_installed_mcp reflects it.
             let name = req.name.clone();
@@ -439,7 +439,7 @@ pub async fn delete_mcp(
         };
 
         for (tx, mcp_vec) in sessions {
-            let _ = tx.send(ToolInjection::Remove(tool_names.clone()));
+            let _ = tx.send(ToolCommand::Remove(tool_names.clone()));
 
             // Also remove matching entries from the session-scoped list so list_installed_mcp reflects it.
             if let Ok(mut guard) = mcp_vec.try_lock() {

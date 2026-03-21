@@ -26,11 +26,31 @@ pub struct McpCatalogEntry {
     pub args: Vec<String>,
 }
 
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+pub enum Provider {
+    #[serde(rename = "deepseek")]
+    DeepSeek,
+    #[serde(rename = "openai")]
+    OpenAI,
+    #[serde(rename = "anthropic")]
+    Anthropic,
+    #[serde(rename = "gemini")]
+    Gemini,
+}
+
+impl Default for Provider {
+    fn default() -> Self {
+        Provider::DeepSeek
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct ModelConfig {
     pub api_key: String,
     pub api_base: String,
     pub name: String,
+    #[serde(default)]
+    pub provider: Provider,
     #[serde(default)]
     pub extra_body: HashMap<String, Value>,
 }
@@ -100,6 +120,7 @@ impl Default for Config {
             api_key: String::new(),
             api_base: "https://api.deepseek.com/v1".to_string(),
             name: "deepseek-chat".to_string(),
+            provider: Provider::DeepSeek,
             extra_body: HashMap::new(),
         };
 

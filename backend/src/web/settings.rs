@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
+use crate::config::Provider;
 use crate::errors::{AppError, AppResult};
 use crate::web::AppState;
 use crate::web::auth::AuthUser;
@@ -16,6 +17,7 @@ pub struct UserSettingsResponse {
     pub api_key: Option<String>,
     pub api_base: Option<String>,
     pub model_name: Option<String>,
+    pub provider: Option<String>,
     pub system_prompt: Option<String>,
 }
 
@@ -25,6 +27,7 @@ pub struct UpdateSettingsRequest {
     pub api_key: Option<String>,
     pub api_base: Option<String>,
     pub model_name: Option<String>,
+    pub provider: Option<String>,
     pub system_prompt: Option<String>,
 }
 
@@ -84,16 +87,20 @@ pub async fn get_settings(
             .and_then(|v| v.as_str())
             .map(str::to_string);
 
-        if api_key.is_some()
-            && r.system_prompt
-                .as_ref()
-                .is_some_and(|s| !s.trim().is_empty())
-        {
+        let provider = r
+            .frontier_model
+            .as_ref()
+            .and_then(|v| v.get("provider"))
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+
+        if api_key.is_some() {
             return Ok(Json(UserSettingsResponse {
                 mode: "custom".to_string(),
                 api_key,
                 api_base,
                 model_name,
+                provider,
                 system_prompt: r.system_prompt,
             }));
         }
@@ -104,6 +111,7 @@ pub async fn get_settings(
         api_key: None,
         api_base: None,
         model_name: None,
+        provider: None,
         system_prompt: None,
     }))
 }
@@ -146,11 +154,13 @@ pub async fn update_settings(
                 .clone()
                 .filter(|s| !s.trim().is_empty())
                 .ok_or_else(|| AppError::bad_request("自定义模式必须填写 Model Name"))?;
-            let system_prompt = req
-                .system_prompt
-                .clone()
-                .filter(|s| !s.trim().is_empty())
-                .ok_or_else(|| AppError::bad_request("自定义模式必须填写 System Prompt"))?;
+            let system_prompt = req.system_prompt.clone().filter(|s| !s.trim().is_empty());
+
+            let provider: Provider = req
+                .provider
+                .as_deref()
+                .and_then(|s| serde_json::from_value(serde_json::Value::String(s.to_string())).ok())
+                .unwrap_or(Provider::DeepSeek);
 
             let global_cfg = state.get_global_config().await?;
 
@@ -158,11 +168,13 @@ pub async fn update_settings(
             frontier.api_key = api_key.clone();
             frontier.api_base = api_base.clone();
             frontier.name = model_name.clone();
+            frontier.provider = provider.clone();
 
             let mut cheap = global_cfg.cheap_model;
             cheap.api_key = api_key;
             cheap.api_base = api_base;
             cheap.name = model_name;
+            cheap.provider = provider;
 
             sqlx::query(
                 r#"

@@ -1,4 +1,4 @@
-use ds_api::tool;
+use agentix::tool;
 use serde_json::{Value, json};
 use uuid::Uuid;
 

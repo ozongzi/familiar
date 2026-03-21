@@ -6,12 +6,12 @@ mod sourcegraph_spell;
 mod spawn_spell;
 mod ui_spells;
 
-use ds_api::ToolInjection;
+use agentix::ToolCommand;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use ds_api::McpTool;
-pub use ds_api::tool_trait::ToolBundle;
+use agentix::McpTool;
+pub use agentix::tool_trait::ToolBundle;
 use uuid::Uuid;
 
 use crate::config::{McpCatalogEntry, ModelConfig};
@@ -44,7 +44,7 @@ pub struct SpellDeps {
     pub embed: EmbeddingClient,
     pub conversation_id: Uuid,
     // ManageMcpSpell
-    pub tool_inject_tx: tokio::sync::mpsc::UnboundedSender<ToolInjection>,
+    pub tool_inject_tx: tokio::sync::mpsc::UnboundedSender<ToolCommand>,
     pub pool: sqlx::PgPool,
     pub user_id: Uuid,
     pub sandbox: Arc<crate::sandbox::SandboxManager>,
@@ -56,37 +56,36 @@ pub struct SpellDeps {
 /// Build the complete built-in spell bundle from the given dependencies.
 /// Returns a `ToolBundle` ready to be passed to `builder.add_tool(...)`.
 pub fn build_all_spells(deps: SpellDeps) -> ToolBundle {
-    let bundle = ToolBundle::new().add(SkillSpell {
-        pool: deps.pool.clone(),
-        user_id: deps.user_id,
-    });
-
-    bundle
-        // .add(A2aSpell)
-        .add(UiSpells {
+    ToolBundle::new()
+        + SkillSpell {
+            pool: deps.pool.clone(),
+            user_id: deps.user_id,
+        }
+        // + A2aSpell
+        + UiSpells {
             ask_pending: deps.ask_pending,
             user_id: deps.user_id,
             sandbox: deps.sandbox.clone(),
-        })
-        .add(search_code)
-        .add(SpawnSpell {
+        }
+        + search_code
+        + SpawnSpell {
             cheap_model: deps.cheap_model,
             subagent_prompt: deps.subagent_prompt,
             mcp_tools: Arc::clone(&deps.mcp_tools),
             broadcast_tx: deps.spawn_tx,
             abort_flag: Arc::clone(&deps.abort_flag),
-        })
-        .add(HistorySpell {
+        }
+        + HistorySpell {
             db: deps.db,
             embed: deps.embed,
             conversation_id: deps.conversation_id,
-        })
-        .add(ManageMcpSpell {
+        }
+        + ManageMcpSpell {
             mcp_tools: deps.mcp_tools,
             tool_inject_tx: deps.tool_inject_tx,
             pool: deps.pool,
             user_id: deps.user_id,
             sandbox: deps.sandbox,
             catalog: deps.mcp_catalog,
-        })
+        }
 }

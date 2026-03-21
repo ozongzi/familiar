@@ -2,7 +2,7 @@
 
 Familiar is a self-hosted personal AI agent designed for Linux servers. It provides a Claude-like experience with real-time streaming, live tool execution, and isolated sandboxes for every user.
 
-Built on [ds-api](https://github.com/ozongzi/ds-api), Familiar turns Rust functions and MCP servers into powerful AI capabilities with minimal overhead.
+Built on [agentix](https://github.com/ozongzi/agentix), Familiar turns Rust functions and MCP servers into powerful AI capabilities with minimal overhead.
 
 ---
 
@@ -91,7 +91,7 @@ It is recommended to run Familiar as a `systemd` service and use a reverse proxy
 
 ## Development
 
-- **Backend**: Rust (Axum, sqlx, ds-api). Spells (tools) are located in `backend/src/spells/`.
+- **Backend**: Rust (Axum, sqlx, agentix). Spells (tools) are located in `backend/src/spells/`.
 - **Frontend**: React (TypeScript, Vite, CSS Modules).
 - **Database Migrations**: Located in `backend/migrations/`.
 

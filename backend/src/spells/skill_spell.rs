@@ -1,4 +1,4 @@
-use ds_api::tool;
+use agentix::tool;
 use sqlx::PgPool;
 use uuid::Uuid;
 

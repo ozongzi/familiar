@@ -2,11 +2,23 @@ import { useMemo, useState, useEffect } from "react";
 import hljs from "highlight.js";
 import { api } from "../api/client";
 import { getProfile, updateProfile, updatePassword, uploadAvatar } from "../api/profile";
-import type {
-  UserSettings,
-} from "../api/types";
+import type { UserSettings, Provider } from "../api/types";
 import styles from "./UserSettingsModal.module.css";
 import "highlight.js/styles/github.css";
+
+const PROVIDER_LABELS: Record<Provider, string> = {
+  deepseek: "DeepSeek",
+  openai: "OpenAI",
+  anthropic: "Anthropic",
+  gemini: "Gemini",
+};
+
+const PROVIDER_DEFAULTS: Record<Provider, string> = {
+  deepseek:  "https://api.deepseek.com/v1",
+  openai:    "https://api.openai.com/v1",
+  anthropic: "https://api.anthropic.com",
+  gemini:    "https://generativelanguage.googleapis.com/v1beta",
+};
 
 interface Props {
   token: string;
@@ -74,6 +86,7 @@ export function UserSettingsModal({ token, onClose }: Props) {
         api_key: settings.api_key,
         api_base: settings.api_base,
         model_name: settings.model_name,
+        provider: settings.provider,
         system_prompt: settings.system_prompt,
       });
       onClose();
@@ -211,6 +224,29 @@ export function UserSettingsModal({ token, onClose }: Props) {
 
               {settings.mode === "custom" && (
                 <div className={styles.customConfig}>
+                  <div className={styles.field}>
+                    <label>Provider</label>
+                    <div className={styles.providerToggle}>
+                      {(Object.keys(PROVIDER_LABELS) as Provider[]).map((p) => (
+                        <button
+                          key={p}
+                          className={`${styles.providerBtn} ${
+                            (settings.provider ?? "deepseek") === p ? styles.providerBtnActive : ""
+                          }`}
+                          onClick={() =>
+                            setSettings({
+                              ...settings,
+                              provider: p,
+                              api_base: PROVIDER_DEFAULTS[p],
+                            })
+                          }
+                        >
+                          {PROVIDER_LABELS[p]}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
                   <div className={styles.field}>
                     <label>API Base</label>
                     <input

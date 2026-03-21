@@ -145,34 +145,39 @@ pub async fn auto_title(
         return Err(AppError::not_found("对话不存在"));
     }
 
-    use ds_api::raw::request::message::Message;
-    use ds_api::{ApiClient, ApiRequest};
+    use agentix::api::ApiClient;
+    use agentix::agent::agent_core::DeepSeek;
+    use agentix::request::{Message as AgentMessage, Request as AgentRequest, UserContent};
 
     let global_cfg = state.get_global_config().await?;
 
-    let client = ApiClient::new(global_cfg.cheap_model.api_key.clone())
+    let client = ApiClient::<DeepSeek>::new(global_cfg.cheap_model.api_key.clone())
         .with_base_url(global_cfg.cheap_model.api_base.clone());
 
-    let prompt = Message::user(&format!(
-        "根据用户发送的第一条消息 {}，生成一个简短的对话标题（5到10个字）。只返回标题文字本身，不加引号、标点或任何解释。",
-        &req.prompt
-    ));
-
-    let mut api_req = ApiRequest::builder()
-        .with_model(global_cfg.cheap_model.name.clone())
-        .messages(vec![prompt])
-        .max_tokens(32);
-
-    for (k, v) in global_cfg.frontier_model.extra_body.iter() {
-        api_req.add_extra_field(k, v.clone());
+    let mut extra_body: Option<serde_json::Map<String, serde_json::Value>> = None;
+    for (k, v) in global_cfg.cheap_model.extra_body.iter() {
+        extra_body
+            .get_or_insert_with(Default::default)
+            .insert(k.clone(), v.clone());
     }
 
-    let resp = client
+    let api_req = AgentRequest {
+        model: global_cfg.cheap_model.name.clone(),
+        messages: vec![AgentMessage::User(vec![UserContent::Text(format!(
+            "根据用户发送的第一条消息 {}，生成一个简短的对话标题（5到10个字）。只返回标题文字本身，不加引号、标点或任何解释。",
+            &req.prompt
+        ))])],
+        max_tokens: Some(32),
+        extra_body,
+        ..Default::default()
+    };
+
+    let raw_resp = client
         .send(api_req)
         .await
         .map_err(|e| AppError::internal(&e.to_string()))?;
 
-    let title = resp
+    let title = raw_resp
         .choices
         .into_iter()
         .next()

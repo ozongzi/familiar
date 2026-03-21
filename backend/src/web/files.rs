@@ -455,7 +455,7 @@ pub async fn upload_file(
             })
             .to_string();
 
-            use ds_api::raw::request::message::{Message as AgentMessage, Role};
+            use agentix::raw::request::message::{Message as AgentMessage, Role};
             let msg = AgentMessage::new(Role::User, &content_str);
             // Persist to DB.
             state.persist_message(conv_id, &msg);
@@ -468,7 +468,7 @@ pub async fn upload_file(
                 if let Some(entry) = map.get_mut(&conv_id)
                     && let Some(ref mut agent) = entry.agent
                 {
-                    agent.push_user_message_with_name(&content_str, None);
+                    agent.push_user_message(&content_str);
                 }
             }
         } else {
@@ -523,39 +523,40 @@ pub async fn upload_avatar(
         .map_err(|e| AppError::bad_request(&format!("multipart 解析错误: {}", e)))?
     {
         if let Some(name) = field.name()
-            && (name == "avatar" || name == "file") {
-                // Get original filename to extract extension
-                if let Some(filename) = field.file_name() {
-                    let ext = std::path::Path::new(filename)
-                        .extension()
-                        .and_then(|e| e.to_str())
-                        .map(|e| e.to_lowercase());
-                    
-                    // Validate file extension
-                    match ext.as_deref() {
-                        Some("jpg") | Some("jpeg") | Some("png") | Some("webp") => {
-                            file_ext = ext;
-                        }
-                        _ => {
-                            return Err(AppError::bad_request("仅支持 JPG、PNG 或 WebP 格式"));
-                        }
+            && (name == "avatar" || name == "file")
+        {
+            // Get original filename to extract extension
+            if let Some(filename) = field.file_name() {
+                let ext = std::path::Path::new(filename)
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .map(|e| e.to_lowercase());
+
+                // Validate file extension
+                match ext.as_deref() {
+                    Some("jpg") | Some("jpeg") | Some("png") | Some("webp") => {
+                        file_ext = ext;
+                    }
+                    _ => {
+                        return Err(AppError::bad_request("仅支持 JPG、PNG 或 WebP 格式"));
                     }
                 }
-
-                let data = field
-                    .bytes()
-                    .await
-                    .map_err(|e| AppError::internal(&format!("读取文件数据错误: {}", e)))?;
-
-                // Validate file size (max 2MB)
-                const MAX_SIZE: usize = 2 * 1024 * 1024;
-                if data.len() > MAX_SIZE {
-                    return Err(AppError::bad_request("文件大小不能超过 2MB"));
-                }
-
-                file_data = Some(data);
-                break;
             }
+
+            let data = field
+                .bytes()
+                .await
+                .map_err(|e| AppError::internal(&format!("读取文件数据错误: {}", e)))?;
+
+            // Validate file size (max 2MB)
+            const MAX_SIZE: usize = 2 * 1024 * 1024;
+            if data.len() > MAX_SIZE {
+                return Err(AppError::bad_request("文件大小不能超过 2MB"));
+            }
+
+            file_data = Some(data);
+            break;
+        }
     }
 
     let (data, ext) = match (file_data, file_ext) {
@@ -564,10 +565,11 @@ pub async fn upload_avatar(
     };
 
     // Get old avatar path to delete it
-    let old_avatar: Option<String> = sqlx::query_scalar("SELECT avatar_path FROM users WHERE id = $1")
-        .bind(user_id)
-        .fetch_optional(&state.pool)
-        .await?;
+    let old_avatar: Option<String> =
+        sqlx::query_scalar("SELECT avatar_path FROM users WHERE id = $1")
+            .bind(user_id)
+            .fetch_optional(&state.pool)
+            .await?;
 
     // Generate new filename: <user_id>.<ext>
     let avatar_filename = format!("{}.{}", user_id, ext);
@@ -591,10 +593,11 @@ pub async fn upload_avatar(
 
     // Delete old avatar file if it exists and is different
     if let Some(old_path) = old_avatar
-        && old_path != avatar_db_path {
-            let old_file = std::path::PathBuf::from(&state.artifacts_path).join(&old_path);
-            let _ = tokio::fs::remove_file(old_file).await;
-        }
+        && old_path != avatar_db_path
+    {
+        let old_file = std::path::PathBuf::from(&state.artifacts_path).join(&old_path);
+        let _ = tokio::fs::remove_file(old_file).await;
+    }
 
     // Log audit
     let _ = crate::audit::log_audit(
@@ -607,10 +610,13 @@ pub async fn upload_avatar(
     )
     .await;
 
-    Ok((StatusCode::OK, Json(json!({ 
-        "avatar_path": avatar_db_path,
-        "message": "头像上传成功" 
-    }))))
+    Ok((
+        StatusCode::OK,
+        Json(json!({
+            "avatar_path": avatar_db_path,
+            "message": "头像上传成功"
+        })),
+    ))
 }
 
 /// GET /api/avatars/:user_id
@@ -620,11 +626,12 @@ pub async fn get_avatar(
     axum::extract::Path(user_id): axum::extract::Path<Uuid>,
 ) -> Result<Response, AppError> {
     // Get avatar path from database
-    let avatar_path: Option<String> = sqlx::query_scalar("SELECT avatar_path FROM users WHERE id = $1")
-        .bind(user_id)
-        .fetch_optional(&state.pool)
-        .await?
-        .ok_or_else(|| AppError::not_found("用户不存在"))?;
+    let avatar_path: Option<String> =
+        sqlx::query_scalar("SELECT avatar_path FROM users WHERE id = $1")
+            .bind(user_id)
+            .fetch_optional(&state.pool)
+            .await?
+            .ok_or_else(|| AppError::not_found("用户不存在"))?;
 
     let avatar_path = avatar_path.ok_or_else(|| AppError::not_found("用户未设置头像"))?;
 

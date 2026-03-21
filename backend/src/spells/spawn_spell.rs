@@ -4,8 +4,10 @@ use crate::config::ModelConfig;
 
 #[allow(unused)]
 use super::a2a_spell::A2aSpell;
-use ds_api::{AgentEvent, DeepseekAgent, McpTool, tool, tool_trait::ToolBundle};
-use futures::StreamExt;
+use agentix::{AgentEvent, McpTool, tool, tool_trait::ToolBundle};
+use agentix::agent::agent_core::{AnthropicAgent, DeepSeekAgent, GeminiAgent, OpenAIAgent};
+use crate::config::Provider;
+use crate::state::AnyAgent;
 use serde_json::json;
 use tokio::sync::Mutex;
 
@@ -38,27 +40,53 @@ impl Tool for SpawnSpell {
         let _ = description;
         let mcp_snapshot: Vec<(String, McpTool)> = self.mcp_tools.lock().await.clone();
 
-        let mut builder = DeepseekAgent::custom(
-            self.cheap_model.api_key.clone(),
-            self.cheap_model.api_base.clone(),
-            if reasoner == Some(true) {
-                "deepseek-reasoner".to_owned()
-            } else {
-                self.cheap_model.name.clone()
-            },
-        )
-        .with_streaming()
-        .with_system_prompt(self.subagent_prompt.clone().unwrap_or("".to_string()))
-        .add_tool(
-            ToolBundle::new(), // .add(A2aSpell)
-        );
+        let model_name = if reasoner == Some(true) && self.cheap_model.provider == Provider::DeepSeek {
+            "deepseek-reasoner".to_owned()
+        } else {
+            self.cheap_model.name.clone()
+        };
+
+        let mut builder: AnyAgent = match self.cheap_model.provider {
+            Provider::DeepSeek => AnyAgent::DeepSeek(
+                DeepSeekAgent::custom(
+                    self.cheap_model.api_key.clone(),
+                    self.cheap_model.api_base.clone(),
+                    model_name,
+                )
+            ),
+            Provider::OpenAI => AnyAgent::OpenAI(
+                OpenAIAgent::new(
+                    self.cheap_model.api_key.clone(),
+                    self.cheap_model.api_base.clone(),
+                    model_name,
+                )
+            ),
+            Provider::Anthropic => AnyAgent::Anthropic(
+                AnthropicAgent::new(
+                    self.cheap_model.api_key.clone(),
+                    self.cheap_model.api_base.clone(),
+                    model_name,
+                )
+            ),
+            Provider::Gemini => AnyAgent::Gemini(
+                GeminiAgent::new(
+                    self.cheap_model.api_key.clone(),
+                    self.cheap_model.api_base.clone(),
+                    model_name,
+                )
+            ),
+        };
+        builder = builder
+            .streaming()
+            .with_system_prompt(self.subagent_prompt.clone().unwrap_or_default())
+            .with_tool(ToolBundle::new());
 
         for (k, v) in &self.cheap_model.extra_body {
             builder = builder.extra_field(k.clone(), v.clone());
         }
 
         for (_, tool) in mcp_snapshot {
-            builder = builder.add_tool(tool);
+            builder = builder.with_tool(tool);
         }
 
         // 保留 interrupt channel，但通过 abort_flag 检查中断
