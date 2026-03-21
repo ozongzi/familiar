@@ -363,6 +363,12 @@ export function AdminConfig() {
               onChange={(v) => setConfig({ ...config, cheap_model: v })}
             />
 
+            <ModelConfigBlock
+              label="Embedding Model"
+              value={config.embedding}
+              onChange={(v) => setConfig({ ...config, embedding: v })}
+            />
+
             <div className={styles.actions}>
               <button className={styles.saveBtn} onClick={handleSave} disabled={saving}>
                 {saving ? "保存中..." : "保存更改"}

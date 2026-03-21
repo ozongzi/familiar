@@ -66,24 +66,74 @@ function StatusIcon({ status }: { status: StepStatus }) {
 
 // ── helpers ────────────────────────────────────────────────────────────────────
 
-function parsePlanResult(result: unknown): { title: string; steps: PlanStep[] } | null {
-  if (!result || typeof result !== "object") return null;
-  const r = result as Record<string, unknown>;
-  let obj: Record<string, unknown> = r;
-  if (typeof r.text === "string") {
-    try { obj = JSON.parse(r.text) as Record<string, unknown>; } catch { return null; }
+
+function parseStepFromArgs(raw: Record<string, unknown>): PlanStep | null {
+  if (!raw || typeof raw.id === "undefined") return null;
+  const content = typeof raw.content === "string" ? raw.content : "";
+  if (!content) return null;
+  return {
+    id: String(raw.id),
+    content,
+    status: (raw.status as StepStatus) ?? "pending",
+    priority: raw.priority != null ? (raw.priority as StepPriority) : undefined,
+  };
+}
+
+function extractObjectsFromArray(arrayStr: string): PlanStep[] {
+  const bracketPos = arrayStr.indexOf("[");
+  if (bracketPos === -1) return [];
+
+  const steps: PlanStep[] = [];
+  let depth = 0;
+  let objStart = -1;
+
+  for (let i = bracketPos; i < arrayStr.length; i++) {
+    const ch = arrayStr[i];
+    if (ch === "{") {
+      if (depth === 1) objStart = i;
+      depth++;
+    } else if (ch === "}") {
+      depth--;
+      if (depth === 1 && objStart !== -1) {
+        const objStr = arrayStr.slice(objStart, i + 1);
+        try {
+          const obj = JSON.parse(objStr) as Record<string, unknown>;
+          const step = parseStepFromArgs(obj);
+          if (step) steps.push(step);
+        } catch {
+          // incomplete object, skip
+        }
+        objStart = -1;
+      }
+      if (depth === 0) break;
+    }
   }
-  if (obj.display !== "plan") return null;
-  const title = typeof obj.title === "string" ? obj.title : "执行计划";
-  const steps: PlanStep[] = Array.isArray(obj.steps)
-    ? (obj.steps as Array<Record<string, unknown>>).map((s) => ({
-        id: String(s.id ?? ""),
-        content: String(s.content ?? ""),
-        status: (s.status as StepStatus) ?? "pending",
-        priority: s.priority != null ? (s.priority as StepPriority) : undefined,
-      }))
-    : [];
-  return { title, steps };
+
+  return steps;
+}
+
+function parseTodosFromArgs(argsRaw: string): PlanStep[] {
+  if (!argsRaw) return [];
+
+  // Try full JSON parse first — args shape: {title, steps: [...]}
+  try {
+    const parsed = JSON.parse(argsRaw) as Record<string, unknown>;
+    if (Array.isArray(parsed.steps)) {
+      return (parsed.steps as Array<Record<string, unknown>>)
+        .map(parseStepFromArgs)
+        .filter((s): s is PlanStep => s !== null);
+    }
+  } catch {
+    // argsRaw not yet complete JSON, fall through to streaming parse
+  }
+
+  // Streaming parse: extract complete objects from the inline "steps" array
+  const keyIdx = argsRaw.indexOf('"steps"');
+  if (keyIdx === -1) return [];
+  const bracketPos = argsRaw.indexOf("[", keyIdx);
+  if (bracketPos === -1) return [];
+
+  return extractObjectsFromArray(argsRaw.slice(bracketPos));
 }
 
 function countByStatus(steps: PlanStep[]) {
@@ -103,11 +153,11 @@ export function PlanTool({ bubble }: { bubble: ToolBubble }) {
     if (bubble.pending) setExpanded(true);
   }, [bubble.pending]);
 
-  const plan = parsePlanResult(bubble.result);
-  const label = bubble.description || (plan?.title ?? "制定计划");
+  const steps = parseTodosFromArgs(bubble.argsRaw);
+  const label = bubble.description || "制定计划";
 
-  const badge = bubble.pending ? null : plan ? (() => {
-    const { completed, in_progress, total } = countByStatus(plan.steps);
+  const badge = bubble.pending ? null : (() => {
+    const { completed, in_progress, total } = countByStatus(steps);
     if (total === 0) return null;
     if (completed === total) {
       return <span className={sharedStyles.badgeOk}>全部完成</span>;
@@ -124,7 +174,7 @@ export function PlanTool({ bubble }: { bubble: ToolBubble }) {
         {completed}/{total}
       </span>
     );
-  })() : null;
+  })();
 
   return (
     <div>
@@ -138,12 +188,12 @@ export function PlanTool({ bubble }: { bubble: ToolBubble }) {
       />
       {expanded && (
         <ToolBodyWrap>
-          {bubble.pending && !plan && (
+          {bubble.pending && steps.length === 0 && (
             <div className={styles.pendingHint}>计划生成中…</div>
           )}
-          {plan && plan.steps.length > 0 && (
+          {steps.length > 0 && (
             <ul className={styles.stepList}>
-              {plan.steps.map((step) => (
+              {steps.map((step) => (
                 <li key={step.id} className={`${styles.step} ${styles[`step_${step.status}`]}`}>
                   <span className={styles.stepIcon}>
                     <StatusIcon status={step.status} />

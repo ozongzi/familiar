@@ -16,13 +16,13 @@ impl Tool for PlanSpell {
     ///
     /// description: 本次操作意图（供 UI 渲染，可不填）
     /// title: 计划标题（简短说明要完成什么）
-    /// steps_json: JSON 数组字符串，每项包含：
+    /// steps: 步骤数组，每项包含：
     ///   - id: 步骤唯一标识（字符串，如 "1"、"2a"）
     ///   - content: 步骤描述
     ///   - status: "pending" | "in_progress" | "completed" | "skipped"
     ///   - priority: "high" | "medium" | "low"（可选，默认 "medium"）
     ///
-    /// 示例 steps_json
+    /// 示例 steps（直接传 JSON 数组，不要字符串化）:
     /// [{"id":"1","content":"分析需求","status":"completed","priority":"high"},
     ///  {"id":"2","content":"实现功能","status":"in_progress","priority":"high"},
     ///  {"id":"3","content":"编写测试","status":"pending","priority":"medium"}]
@@ -30,12 +30,10 @@ impl Tool for PlanSpell {
         &self,
         description: Option<String>,
         title: String,
-        steps_json: String,
+        steps: serde_json::Value,
     ) -> serde_json::Value {
         let _ = description;
-        let steps: serde_json::Value = serde_json::from_str(&steps_json)
-            .unwrap_or(serde_json::Value::Array(vec![]));
-
+        let steps_json = steps.to_string();
         let _ = sqlx::query(
             r#"
             INSERT INTO conversation_plans (conversation_id, title, steps_json, updated_at)
@@ -52,10 +50,6 @@ impl Tool for PlanSpell {
         .execute(&self.pool)
         .await;
 
-        json!({
-            "display": "plan",
-            "title": title,
-            "steps": steps,
-        })
+        json!({ "ok": true })
     }
 }
