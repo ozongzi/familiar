@@ -9,7 +9,6 @@ use uuid::Uuid;
 use agentix::{McpTool, ToolCommand};
 use std::time::Duration;
 use tokio::time::timeout;
-use tracing::warn;
 
 use crate::errors::{AppError, AppResult};
 use crate::web::AppState;
@@ -103,99 +102,63 @@ pub async fn create_mcp(
         }
     })?;
 
-    // Try to construct a McpTool (best-effort) so we can inject it into any
-    // currently-running sessions for this user. Failures here are non-fatal.
-    let created_tool: Option<McpTool> = match req.r#type.as_str() {
-        "http" => {
-            if let Some(url) = req.config.get("url").and_then(|v| v.as_str()) {
-                match timeout(Duration::from_secs(15), McpTool::http(url)).await {
-                    Ok(Ok(t)) => Some(t),
-                    Ok(Err(e)) => {
-                        warn!("create_mcp: failed to start MCP http '{}': {}", url, e);
-                        None
-                    }
-                    Err(_) => {
-                        warn!("create_mcp: MCP http '{}' connection timed out", url);
-                        None
-                    }
-                }
-            } else {
-                None
-            }
-        }
-        "stdio" => {
-            let command = req
-                .config
-                .get("command")
-                .and_then(|v| v.as_str())
-                .unwrap_or_default();
-            let args: Vec<String> = req
-                .config
-                .get("args")
-                .and_then(|v| v.as_array())
-                .map(|a| {
-                    a.iter()
-                        .filter_map(|v| v.as_str().map(str::to_string))
-                        .collect()
-                })
-                .unwrap_or_default();
-            let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-
-            // Wrap with Docker exec
-            let (cmd, args_wrapped_vec) =
-                state
-                    .sandbox
-                    .wrap_mcp_command(auth.user_id, command, &args_ref);
-            let args_wrapped: Vec<&str> = args_wrapped_vec.iter().map(|s| s.as_str()).collect();
-
-            match timeout(
-                Duration::from_secs(300),
-                McpTool::stdio(&cmd, &args_wrapped),
-            )
-            .await
-            {
+    // For stdio tools, we need to construct them per-session to use the correct sandbox.
+    // For http tools, we can construct once.
+    let http_tool: Option<McpTool> = if req.r#type == "http" {
+        if let Some(url) = req.config.get("url").and_then(|v| v.as_str()) {
+            match timeout(Duration::from_secs(15), McpTool::http(url)).await {
                 Ok(Ok(t)) => Some(t),
-                Ok(Err(e)) => {
-                    warn!("create_mcp: failed to start MCP stdio '{}': {}", command, e);
-                    None
-                }
-                Err(_) => {
-                    warn!("create_mcp: MCP stdio '{}' startup timed out", command);
-                    None
-                }
+                _ => None,
             }
+        } else {
+            None
         }
-        _ => None,
+    } else {
+        None
     };
 
-    if let Some(tool) = created_tool {
-        // Collect per-session inject senders and per-session mcp vectors for this user
-        let sessions: Vec<_> = {
-            let map = state.chats.lock().unwrap();
-            map.values()
-                .filter(|e| e.user_id == auth.user_id)
-                .map(|e| (e.tool_inject_tx.clone(), e.user_mcp_tools.clone()))
-                .collect()
+    // Collect per-session inject senders, per-session mcp vectors, and conversation_ids for this user
+    let sessions: Vec<_> = {
+        let map = state.chats.lock().unwrap();
+        map.iter()
+            .filter(|(_, e)| e.user_id == auth.user_id)
+            .map(|(&cid, e)| (cid, e.tool_inject_tx.clone(), e.user_mcp_tools.clone()))
+            .collect()
+    };
+
+    for (cid, tx, mcp_vec) in sessions {
+        let tool = if let Some(ref t) = http_tool {
+            Some(t.clone())
+        } else if req.r#type == "stdio" {
+            let command = req.config.get("command").and_then(|v| v.as_str()).unwrap_or_default();
+            let args: Vec<String> = req.config.get("args").and_then(|v| v.as_array()).map(|a| {
+                a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()
+            }).unwrap_or_default();
+            let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+            let (cmd, args_wrapped_vec) = state.sandbox.wrap_mcp_command(auth.user_id, cid, command, &args_ref);
+            let args_wrapped: Vec<&str> = args_wrapped_vec.iter().map(|s| s.as_str()).collect();
+
+            match timeout(Duration::from_secs(300), McpTool::stdio(&cmd, &args_wrapped)).await {
+                Ok(Ok(t)) => Some(t),
+                _ => None,
+            }
+        } else {
+            None
         };
 
-        for (tx, mcp_vec) in sessions {
+        if let Some(tool) = tool {
             let _ = tx.send(ToolCommand::Add(Box::new(tool.clone())));
-
-            // Also update the session-scoped list so list_installed_mcp reflects it.
-            // Try the fast non-blocking path first.
             let name = req.name.clone();
             if let Ok(mut guard) = mcp_vec.try_lock() {
                 guard.retain(|(n, _)| n != &name);
-                guard.push((name.clone(), tool.clone()));
+                guard.push((name, tool));
             } else {
-                // Fallback to an async update if try_lock fails.
                 let mcp_vec_clone = mcp_vec.clone();
                 let name_clone = name.clone();
-                let tool_clone = tool.clone();
                 tokio::spawn(async move {
                     let mut g = mcp_vec_clone.lock().await;
                     g.retain(|(n, _)| n != &name_clone);
-                    g.push((name_clone, tool_clone));
+                    g.push((name_clone, tool));
                 });
             }
         }
@@ -228,96 +191,61 @@ pub async fn update_mcp(
     .await?
     .ok_or_else(|| AppError::not_found("MCP 不存在"))?;
 
-    // Try to build the updated McpTool and inject to running sessions (best-effort).
-    let created_tool: Option<McpTool> = match req.r#type.as_str() {
-        "http" => {
-            if let Some(url) = req.config.get("url").and_then(|v| v.as_str()) {
-                match timeout(Duration::from_secs(15), McpTool::http(url)).await {
-                    Ok(Ok(t)) => Some(t),
-                    Ok(Err(e)) => {
-                        warn!("update_mcp: failed to start MCP http '{}': {}", url, e);
-                        None
-                    }
-                    Err(_) => {
-                        warn!("update_mcp: MCP http '{}' connection timed out", url);
-                        None
-                    }
-                }
-            } else {
-                None
-            }
-        }
-        "stdio" => {
-            let command = req
-                .config
-                .get("command")
-                .and_then(|v| v.as_str())
-                .unwrap_or_default();
-            let args: Vec<String> = req
-                .config
-                .get("args")
-                .and_then(|v| v.as_array())
-                .map(|a| {
-                    a.iter()
-                        .filter_map(|v| v.as_str().map(str::to_string))
-                        .collect()
-                })
-                .unwrap_or_default();
-            let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-
-            // Wrap with Docker exec
-            let (cmd, args_wrapped_vec) =
-                state
-                    .sandbox
-                    .wrap_mcp_command(auth.user_id, command, &args_ref);
-            let args_wrapped: Vec<&str> = args_wrapped_vec.iter().map(|s| s.as_str()).collect();
-
-            match timeout(
-                Duration::from_secs(300),
-                McpTool::stdio(&cmd, &args_wrapped),
-            )
-            .await
-            {
+    // Per-session injection logic similar to create_mcp
+    let http_tool: Option<McpTool> = if req.r#type == "http" {
+        if let Some(url) = req.config.get("url").and_then(|v| v.as_str()) {
+            match timeout(Duration::from_secs(15), McpTool::http(url)).await {
                 Ok(Ok(t)) => Some(t),
-                Ok(Err(e)) => {
-                    warn!("update_mcp: failed to start MCP stdio '{}': {}", command, e);
-                    None
-                }
-                Err(_) => {
-                    warn!("update_mcp: MCP stdio '{}' startup timed out", command);
-                    None
-                }
+                _ => None,
             }
+        } else {
+            None
         }
-        _ => None,
+    } else {
+        None
     };
 
-    if let Some(tool) = created_tool {
-        // Collect per-session inject senders and per-session mcp vectors for this user
-        let sessions: Vec<_> = {
-            let map = state.chats.lock().unwrap();
-            map.values()
-                .filter(|e| e.user_id == auth.user_id)
-                .map(|e| (e.tool_inject_tx.clone(), e.user_mcp_tools.clone()))
-                .collect()
+    let sessions: Vec<_> = {
+        let map = state.chats.lock().unwrap();
+        map.iter()
+            .filter(|(_, e)| e.user_id == auth.user_id)
+            .map(|(&cid, e)| (cid, e.tool_inject_tx.clone(), e.user_mcp_tools.clone()))
+            .collect()
+    };
+
+    for (cid, tx, mcp_vec) in sessions {
+        let tool = if let Some(ref t) = http_tool {
+            Some(t.clone())
+        } else if req.r#type == "stdio" {
+            let command = req.config.get("command").and_then(|v| v.as_str()).unwrap_or_default();
+            let args: Vec<String> = req.config.get("args").and_then(|v| v.as_array()).map(|a| {
+                a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()
+            }).unwrap_or_default();
+            let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+            let (cmd, args_wrapped_vec) = state.sandbox.wrap_mcp_command(auth.user_id, cid, command, &args_ref);
+            let args_wrapped: Vec<&str> = args_wrapped_vec.iter().map(|s| s.as_str()).collect();
+
+            match timeout(Duration::from_secs(300), McpTool::stdio(&cmd, &args_wrapped)).await {
+                Ok(Ok(t)) => Some(t),
+                _ => None,
+            }
+        } else {
+            None
         };
 
-        for (tx, mcp_vec) in sessions {
+        if let Some(tool) = tool {
             let _ = tx.send(ToolCommand::Add(Box::new(tool.clone())));
-
-            // Also update the session-scoped list so list_installed_mcp reflects it.
             let name = req.name.clone();
             if let Ok(mut guard) = mcp_vec.try_lock() {
                 guard.retain(|(n, _)| n != &name);
-                guard.push((name.clone(), tool.clone()));
+                guard.push((name, tool));
             } else {
                 let mcp_vec_clone = mcp_vec.clone();
                 let name_clone = name.clone();
-                let tool_clone = tool.clone();
                 tokio::spawn(async move {
                     let mut g = mcp_vec_clone.lock().await;
                     g.retain(|(n, _)| n != &name_clone);
-                    g.push((name_clone, tool_clone));
+                    g.push((name_clone, tool));
                 });
             }
         }
@@ -331,7 +259,6 @@ pub async fn delete_mcp(
     auth: AuthUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<Value>> {
-    // Read the row first so we can try to derive tool names to remove.
     let existing = sqlx::query_as::<_, McpRow>(
         r#"SELECT id, name, "type" AS mcp_type, config, created_at FROM user_mcps WHERE id = $1 AND user_id = $2"#
     )
@@ -342,80 +269,42 @@ pub async fn delete_mcp(
 
     let row = existing.ok_or_else(|| AppError::not_found("MCP 不存在"))?;
 
-    // Best-effort: try to construct the McpTool to obtain tool function names.
-    let tool_names: Vec<String> = match row.mcp_type.as_str() {
-        "http" => {
-            let url = row
-                .config
-                .get("url")
-                .and_then(|v| v.as_str())
-                .unwrap_or_default()
-                .to_string();
-            match timeout(Duration::from_secs(15), McpTool::http(&url)).await {
-                Ok(Ok(t)) => t
-                    .raw_tools()
-                    .iter()
-                    .map(|r| r.function.name.clone())
-                    .collect(),
-                Ok(Err(e)) => {
-                    warn!("delete_mcp: failed to connect to MCP http '{}': {}", url, e);
-                    vec![]
-                }
-                Err(_) => {
-                    warn!("delete_mcp: MCP http '{}' connection timed out", url);
-                    vec![]
-                }
-            }
-        }
-        "stdio" => {
-            let command = row
-                .config
-                .get("command")
-                .and_then(|v| v.as_str())
-                .unwrap_or_default()
-                .to_string();
-            let args: Vec<String> = row
-                .config
-                .get("args")
-                .and_then(|v| v.as_array())
-                .map(|a| {
-                    a.iter()
-                        .filter_map(|v| v.as_str().map(str::to_string))
-                        .collect()
-                })
-                .unwrap_or_default();
-            let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-
-            // Wrap with Docker exec
-            let (cmd, args_wrapped_vec) =
-                state
-                    .sandbox
-                    .wrap_mcp_command(auth.user_id, &command, &args_ref);
-            let args_wrapped: Vec<&str> = args_wrapped_vec.iter().map(|s| s.as_str()).collect();
-
-            match timeout(
-                Duration::from_secs(300),
-                McpTool::stdio(&cmd, &args_wrapped),
-            )
-            .await
-            {
-                Ok(Ok(t)) => t
-                    .raw_tools()
-                    .iter()
-                    .map(|r| r.function.name.clone())
-                    .collect(),
-                Ok(Err(e)) => {
-                    warn!("delete_mcp: failed to start MCP stdio '{}': {}", command, e);
-                    vec![]
-                }
-                Err(_) => {
-                    warn!("delete_mcp: MCP stdio '{}' startup timed out", command);
-                    vec![]
-                }
-            }
-        }
-        _ => vec![],
+    let sessions: Vec<_> = {
+        let map = state.chats.lock().unwrap();
+        map.iter()
+            .filter(|(_, e)| e.user_id == auth.user_id)
+            .map(|(&cid, e)| (cid, e.tool_inject_tx.clone(), e.user_mcp_tools.clone()))
+            .collect()
     };
+
+    // To obtain tool names for removal, we only need to start the tool ONCE using any available session's sandbox.
+    let mut tool_names: Vec<String> = Vec::new();
+    if let Some(&(cid, _, _)) = sessions.first() {
+        tool_names = match row.mcp_type.as_str() {
+            "http" => {
+                let url = row.config.get("url").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+                match timeout(Duration::from_secs(15), McpTool::http(&url)).await {
+                    Ok(Ok(t)) => t.raw_tools().iter().map(|r| r.function.name.clone()).collect(),
+                    _ => vec![],
+                }
+            }
+            "stdio" => {
+                let command = row.config.get("command").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+                let args: Vec<String> = row.config.get("args").and_then(|v| v.as_array()).map(|a| {
+                    a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()
+                }).unwrap_or_default();
+                let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+                let (cmd, args_wrapped_vec) = state.sandbox.wrap_mcp_command(auth.user_id, cid, &command, &args_ref);
+                let args_wrapped: Vec<&str> = args_wrapped_vec.iter().map(|s| s.as_str()).collect();
+
+                match timeout(Duration::from_secs(300), McpTool::stdio(&cmd, &args_wrapped)).await {
+                    Ok(Ok(t)) => t.raw_tools().iter().map(|r| r.function.name.clone()).collect(),
+                    _ => vec![],
+                }
+            }
+            _ => vec![],
+        };
+    }
 
     let result = sqlx::query("DELETE FROM user_mcps WHERE id = $1 AND user_id = $2")
         .bind(id)
@@ -428,19 +317,8 @@ pub async fn delete_mcp(
     }
 
     if !tool_names.is_empty() {
-        // Collect per-session inject senders and per-session mcp vectors for this user
-        let sessions: Vec<_> = {
-            let map = state.chats.lock().unwrap();
-            map.values()
-                .filter(|e| e.user_id == auth.user_id)
-                .map(|e| (e.tool_inject_tx.clone(), e.user_mcp_tools.clone()))
-                .collect()
-        };
-
-        for (tx, mcp_vec) in sessions {
+        for (_, tx, mcp_vec) in sessions {
             let _ = tx.send(ToolCommand::Remove(tool_names.clone()));
-
-            // Also remove matching entries from the session-scoped list so list_installed_mcp reflects it.
             if let Ok(mut guard) = mcp_vec.try_lock() {
                 guard.retain(|(n, _)| !tool_names.iter().any(|tn| n == tn));
             } else {

@@ -67,6 +67,7 @@ pub fn build_all_spells(deps: SpellDeps) -> ToolBundle {
         + UiSpells {
             ask_pending: deps.ask_pending,
             user_id: deps.user_id,
+            conversation_id: deps.conversation_id,
             sandbox: deps.sandbox.clone(),
         }
         + search_code
@@ -87,6 +88,7 @@ pub fn build_all_spells(deps: SpellDeps) -> ToolBundle {
             tool_inject_tx: deps.tool_inject_tx,
             pool: deps.pool.clone(),
             user_id: deps.user_id,
+            conversation_id: deps.conversation_id,
             sandbox: deps.sandbox,
             catalog: deps.mcp_catalog,
         }

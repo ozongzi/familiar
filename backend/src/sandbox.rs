@@ -18,16 +18,18 @@ impl SandboxManager {
         Self { base_path }
     }
 
-    pub fn get_user_dir(&self, user_id: Uuid) -> PathBuf {
-        self.base_path.join(user_id.to_string())
+    pub fn get_conversation_dir(&self, user_id: Uuid, conversation_id: Uuid) -> PathBuf {
+        self.base_path
+            .join(user_id.to_string())
+            .join(conversation_id.to_string())
     }
 
-    pub fn ensure_container(&self, user_id: Uuid) -> Result<String, String> {
-        let container_name = format!("familiar-sandbox-{}", user_id);
-        let user_dir = self.get_user_dir(user_id);
+    pub fn ensure_container(&self, user_id: Uuid, conversation_id: Uuid) -> Result<String, String> {
+        let container_name = format!("familiar-sandbox-{}", conversation_id);
+        let conv_dir = self.get_conversation_dir(user_id, conversation_id);
 
-        if !user_dir.exists() {
-            std::fs::create_dir_all(&user_dir).map_err(|e| e.to_string())?;
+        if !conv_dir.exists() {
+            std::fs::create_dir_all(&conv_dir).map_err(|e| e.to_string())?;
         }
 
         // Check if container exists
@@ -63,7 +65,7 @@ impl SandboxManager {
                         "--name",
                         &container_name,
                         "-v",
-                        &format!("{}:/workspace", user_dir.to_str().unwrap()),
+                        &format!("{}:/workspace", conv_dir.to_str().unwrap()),
                         "-w",
                         "/workspace",
                         "--restart",
@@ -88,13 +90,14 @@ impl SandboxManager {
     pub fn wrap_mcp_command(
         &self,
         user_id: Uuid,
+        conversation_id: Uuid,
         command: &str,
         args: &[&str],
     ) -> (String, Vec<String>) {
-        let container_name = format!("familiar-sandbox-{}", user_id);
+        let container_name = format!("familiar-sandbox-{}", conversation_id);
 
         // Ensure container is running (best effort)
-        let _ = self.ensure_container(user_id);
+        let _ = self.ensure_container(user_id, conversation_id);
 
         let mut docker_args = vec![
             "exec".to_string(),

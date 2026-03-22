@@ -35,6 +35,7 @@ async fn user_id_from_token(state: &AppState, token: &str) -> Result<Uuid, AppEr
 #[derive(Deserialize)]
 pub struct FileQuery {
     path: String,
+    conversation_id: Option<Uuid>,
     /// Optional bearer token as query param (used when opening download links directly).
     token: Option<String>,
 }
@@ -54,31 +55,33 @@ pub async fn download_file(
 
     let user_id = user_id_from_token(&state, &token).await?;
 
+    let conv_id = q.conversation_id.ok_or_else(|| AppError::bad_request("缺少 conversation_id"))?;
+
     // Resolve to an absolute path.
     // If the path starts with /workspace, map it back to the host path.
     let q_path = std::path::PathBuf::from(&q.path);
     let path = if q_path.starts_with("/workspace") {
         let relative = q_path.strip_prefix("/workspace").unwrap();
-        state.sandbox.get_user_dir(user_id).join(relative)
+        state.sandbox.get_conversation_dir(user_id, conv_id).join(relative)
     } else {
         q_path
     };
 
     // Enforce ownership: path must be within the sandbox workspace.
-    let user_dir = state.sandbox.get_user_dir(user_id);
-    if !user_dir.exists() {
-        tokio::fs::create_dir_all(&user_dir)
+    let conv_dir = state.sandbox.get_conversation_dir(user_id, conv_id);
+    if !conv_dir.exists() {
+        tokio::fs::create_dir_all(&conv_dir)
             .await
-            .map_err(|e| AppError::internal(&format!("无法创建用户目录: {}", e)))?;
+            .map_err(|e| AppError::internal(&format!("无法创建会话目录: {}", e)))?;
     }
-    let canonical_user_dir = tokio::fs::canonicalize(&user_dir)
+    let canonical_conv_dir = tokio::fs::canonicalize(&conv_dir)
         .await
-        .map_err(|_| AppError::not_found("用户目录无效"))?;
+        .map_err(|_| AppError::not_found("会话目录无效"))?;
     // Canonicalize the requested path only if it exists; otherwise reject.
     let canonical_path = tokio::fs::canonicalize(&path)
         .await
         .map_err(|_| AppError::not_found("文件不存在"))?;
-    if !canonical_path.starts_with(&canonical_user_dir) {
+    if !canonical_path.starts_with(&canonical_conv_dir) {
         return Err(AppError::not_found("文件不存在"));
     }
 
@@ -160,24 +163,25 @@ pub async fn preview_file(
         .ok_or_else(AppError::unauthorized)?;
 
     let user_id = user_id_from_token(&state, &token).await?;
+    let conv_id = q.conversation_id.ok_or_else(|| AppError::bad_request("缺少 conversation_id"))?;
 
     let q_path = std::path::PathBuf::from(&q.path);
     let path = if q_path.starts_with("/workspace") {
         let relative = q_path.strip_prefix("/workspace").unwrap();
-        state.sandbox.get_user_dir(user_id).join(relative)
+        state.sandbox.get_conversation_dir(user_id, conv_id).join(relative)
     } else {
         q_path
     };
 
     // Enforce ownership.
-    let user_dir = state.sandbox.get_user_dir(user_id);
-    let canonical_user_dir = tokio::fs::canonicalize(&user_dir)
+    let conv_dir = state.sandbox.get_conversation_dir(user_id, conv_id);
+    let canonical_conv_dir = tokio::fs::canonicalize(&conv_dir)
         .await
-        .map_err(|_| AppError::not_found("用户目录不存在"))?;
+        .map_err(|_| AppError::not_found("会话目录不存在"))?;
     let canonical_path = tokio::fs::canonicalize(&path)
         .await
         .map_err(|_| AppError::not_found("文件不存在"))?;
-    if !canonical_path.starts_with(&canonical_user_dir) {
+    if !canonical_path.starts_with(&canonical_conv_dir) {
         return Err(AppError::not_found("文件不存在"));
     }
 
@@ -333,14 +337,7 @@ pub async fn upload_file(
 
     let user_id = user_id_from_token(&state, &token).await?;
 
-    // Storage directory scoped to the user (the sandbox workspace).
-    let upload_dir = state.sandbox.get_user_dir(user_id);
-    tokio::fs::create_dir_all(&upload_dir)
-        .await
-        .map_err(|e| AppError::internal(&e.to_string()))?;
-
-    // Parse multipart fields and look for field named "file" and optional conversation_id.
-    // We first collect fields so the conversation_id can appear before or after the file field.
+    // Parse multipart fields and look for field named "file" and conversation_id.
     let mut file_name_opt: Option<String> = None;
     let mut file_data_opt: Option<bytes::Bytes> = None;
     let mut conv_id_opt: Option<Uuid> = None;
@@ -366,24 +363,46 @@ pub async fn upload_file(
                     file_data_opt = Some(data);
                 }
                 "conversation_id" => {
-                    // treat as plain text field
                     if let Ok(text) = field.text().await
                         && let Ok(parsed) = Uuid::parse_str(text.trim())
                     {
                         conv_id_opt = Some(parsed);
                     }
                 }
-                _ => {
-                    // ignore other fields
-                }
+                _ => {}
             }
         }
     }
 
+    let conv_id = conv_id_opt.ok_or_else(|| AppError::bad_request("缺少 conversation_id"))?;
     let (file_name, data) = match (file_name_opt, file_data_opt) {
         (Some(n), Some(d)) => (n, d),
         _ => return Err(AppError::bad_request("未包含 file 字段")),
     };
+
+    // Storage directory scoped to the conversation sandbox.
+    let upload_dir = state.sandbox.get_conversation_dir(user_id, conv_id);
+    tokio::fs::create_dir_all(&upload_dir)
+        .await
+        .map_err(|e| AppError::internal(&e.to_string()))?;
+
+    // Verify that the session token owner owns the conversation.
+    let owned: bool = sqlx::query_scalar::<_, Option<bool>>(
+        "SELECT EXISTS(SELECT 1 FROM conversations WHERE id = $1 AND user_id = (SELECT user_id FROM sessions WHERE token = $2))",
+    )
+    .bind(conv_id)
+    .bind(&token)
+    .fetch_one(&state.pool)
+    .await
+    .map_err(|e| {
+        tracing::error!("file upload conv auth query: {e}");
+        AppError::internal("数据库错误")
+    })?
+    .unwrap_or(false);
+
+    if !owned {
+        return Err(AppError::forbidden("无权上传到此会话"));
+    }
 
     // Compose a unique safe filename (timestamp + sanitized original)
     let uniq = std::time::SystemTime::now()
@@ -397,7 +416,7 @@ pub async fn upload_file(
     let unique_name = format!("{}-{}", uniq, safe);
 
     let dest_path = upload_dir.join(&unique_name);
-    // In the sandbox, the user_dir is mounted at /workspace
+    // In the sandbox, the conversation_dir is mounted at /workspace
     let sandbox_path = format!("/workspace/{}", unique_name);
 
     let mut f = File::create(&dest_path)
@@ -413,57 +432,31 @@ pub async fn upload_file(
         size: data.len(),
     };
 
-    // If a conversation_id was provided, validate ownership and persist a User message
-    // describing the uploaded file. Do NOT trigger model generation — only persist the message.
-    if let Some(conv_id) = conv_id_opt {
-        // Verify that the session token owner owns the conversation.
-        let owned: bool = sqlx::query_scalar::<_, Option<bool>>(
-            "SELECT EXISTS(SELECT 1 FROM conversations WHERE id = $1 AND user_id = (SELECT user_id FROM sessions WHERE token = $2))",
-        )
-        .bind(conv_id)
-        .bind(&token)
-        .fetch_one(&state.pool)
-        .await
-        .map_err(|e| {
-            tracing::error!("file upload conv auth query: {e}");
-            AppError::internal("数据库错误")
-        })?
-        .unwrap_or(false);
+    // Persist a User-role message so DeepSeek's API is not violated
+    // (Tool messages must follow assistant tool_calls; a spontaneous
+    // Tool message would cause a 400 Bad Request).
+    let content_str = json!({
+        "__type": "file_upload",
+        "filename": unique_name,
+        "path": sandbox_path,
+        "size": data.len(),
+    })
+    .to_string();
 
-        if owned {
-            // Persist a User-role message so DeepSeek's API is not violated
-            // (Tool messages must follow assistant tool_calls; a spontaneous
-            // Tool message would cause a 400 Bad Request).
-            let content_str = json!({
-                "__type": "file_upload",
-                "filename": unique_name,
-                "path": sandbox_path,
-                "size": data.len(),
-            })
-            .to_string();
+    use agentix::raw::request::message::{Message as AgentMessage, Role};
+    let msg = AgentMessage::new(Role::User, &content_str);
+    // Persist to DB.
+    state.persist_message(conv_id, &msg);
 
-            use agentix::raw::request::message::{Message as AgentMessage, Role};
-            let msg = AgentMessage::new(Role::User, &content_str);
-            // Persist to DB.
-            state.persist_message(conv_id, &msg);
-
-            // Also push into the in-memory agent if it is currently idle
-            // (not mid-generation). This ensures the next generation turn
-            // sees the uploaded file without having to rebuild the agent.
-            {
-                let mut map = state.chats.lock().unwrap();
-                if let Some(entry) = map.get_mut(&conv_id)
-                    && let Some(ref mut agent) = entry.agent
-                {
-                    agent.push_user_message(&content_str);
-                }
-            }
-        } else {
-            tracing::warn!(
-                "upload attempted for conversation not owned by token: {}",
-                conv_id
-            );
-            // still return 201 for the upload itself, but do not persist to conversation
+    // Also push into the in-memory agent if it is currently idle
+    // (not mid-generation). This ensures the next generation turn
+    // sees the uploaded file without having to rebuild the agent.
+    {
+        let mut map = state.chats.lock().unwrap();
+        if let Some(entry) = map.get_mut(&conv_id)
+            && let Some(ref mut agent) = entry.agent
+        {
+            agent.push_user_message(&content_str);
         }
     }
 
@@ -605,14 +598,15 @@ pub async fn get_avatar(
     axum::extract::Path(user_id): axum::extract::Path<Uuid>,
 ) -> Result<Response, AppError> {
     // Get avatar path from database
-    let avatar_path: Option<String> =
+    let avatar_path: Option<Option<String>> =
         sqlx::query_scalar("SELECT avatar_path FROM users WHERE id = $1")
             .bind(user_id)
             .fetch_optional(&state.pool)
-            .await?
-            .ok_or_else(|| AppError::not_found("用户不存在"))?;
+            .await?;
 
-    let avatar_path = avatar_path.ok_or_else(|| AppError::not_found("用户未设置头像"))?;
+    let avatar_path = avatar_path
+        .ok_or_else(|| AppError::not_found("用户不存在"))?
+        .ok_or_else(|| AppError::not_found("用户未设置头像"))?;
 
     // Build full file path
     let file_path = std::path::PathBuf::from(&state.artifacts_path).join(&avatar_path);

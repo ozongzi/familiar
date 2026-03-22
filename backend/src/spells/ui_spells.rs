@@ -9,6 +9,7 @@ pub struct UiSpells {
     pub ask_pending: Arc<Mutex<Option<tokio::sync::oneshot::Sender<String>>>>,
     pub sandbox: Arc<crate::sandbox::SandboxManager>,
     pub user_id: uuid::Uuid,
+    pub conversation_id: uuid::Uuid,
 }
 
 #[tool]
@@ -23,7 +24,9 @@ impl Tool for UiSpells {
         let q_path = std::path::PathBuf::from(&path);
         let host_path = if q_path.starts_with("/workspace") {
             let relative = q_path.strip_prefix("/workspace").unwrap();
-            self.sandbox.get_user_dir(self.user_id).join(relative)
+            self.sandbox
+                .get_conversation_dir(self.user_id, self.conversation_id)
+                .join(relative)
         } else {
             q_path
         };

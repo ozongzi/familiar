@@ -362,9 +362,13 @@ impl AppState {
                 });
 
         let user_mcp_rows: Vec<(String, String, serde_json::Value)> = sqlx::query_as(
-            r#"SELECT name, "type", config FROM user_mcps WHERE user_id = $1 ORDER BY created_at ASC"#
+            r#"SELECT name, "type", config FROM user_mcps WHERE user_id = $1
+               UNION ALL
+               SELECT name, "type", config FROM conversation_mcps WHERE conversation_id = $2
+               ORDER BY name ASC"#
         )
         .bind(user_id)
+        .bind(conversation_id)
         .fetch_all(&self.pool)
         .await
         .unwrap_or_default();
@@ -560,7 +564,7 @@ impl AppState {
                         .unwrap_or_default();
 
                     let args_ref: Vec<&str> = args.iter().map(String::as_str).collect();
-                    let (cmd, args) = self.sandbox.wrap_mcp_command(user_id, &command, &args_ref);
+                    let (cmd, args) = self.sandbox.wrap_mcp_command(user_id, conversation_id, &command, &args_ref);
                     let args_wrapped: Vec<&str> = args.iter().map(String::as_str).collect();
 
                     match tokio::time::timeout(

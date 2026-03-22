@@ -419,6 +419,7 @@ export function ChatPage() {
                   key={group.bubble.key}
                   bubble={group.bubble}
                   onAnswer={answerQuestion}
+                  conversationId={activeId === DRAFT_ID ? null : activeId}
                 />
               );
             }
@@ -429,6 +430,7 @@ export function ChatPage() {
                 bubble={group.bubbles[0]}
                 extraTools={group.bubbles.slice(1)}
                 onAnswer={answerQuestion}
+                conversationId={activeId === DRAFT_ID ? null : activeId}
               />
             );
           })}

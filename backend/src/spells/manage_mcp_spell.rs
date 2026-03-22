@@ -19,6 +19,8 @@ pub struct ManageMcpSpell {
     pub pool: PgPool,
     /// The authenticated user's id.
     pub user_id: Uuid,
+    /// The current conversation's id.
+    pub conversation_id: Uuid,
     /// Sandbox manager.
     pub sandbox: Arc<crate::sandbox::SandboxManager>,
     pub catalog: Vec<McpCatalogEntry>,
@@ -89,10 +91,10 @@ impl Tool for ManageMcpSpell {
         // Persist to DB so it survives restarts.
         let config = json!({ "url": url });
         if let Err(e) = sqlx::query(
-            r#"INSERT INTO user_mcps (user_id, name, "type", config) VALUES ($1, $2, 'http', $3)
-               ON CONFLICT (user_id, name) DO UPDATE SET "type" = 'http', config = $3"#,
+            r#"INSERT INTO conversation_mcps (conversation_id, name, "type", config) VALUES ($1, $2, 'http', $3)
+               ON CONFLICT (conversation_id, name) DO UPDATE SET "type" = 'http', config = $3"#,
         )
-        .bind(self.user_id)
+        .bind(self.conversation_id)
         .bind(&name)
         .bind(&config)
         .execute(&self.pool)
@@ -133,7 +135,7 @@ impl Tool for ManageMcpSpell {
         // Wrap with Docker exec for sandboxing
         let (cmd, args_wrapped_vec) =
             self.sandbox
-                .wrap_mcp_command(self.user_id, &command, &args_ref);
+                .wrap_mcp_command(self.user_id, self.conversation_id, &command, &args_ref);
         let args_wrapped: Vec<&str> = args_wrapped_vec.iter().map(|s| s.as_str()).collect();
 
         let tool = match timeout(
@@ -153,10 +155,10 @@ impl Tool for ManageMcpSpell {
 
         let config = json!({ "command": command, "args": args });
         if let Err(e) = sqlx::query(
-            r#"INSERT INTO user_mcps (user_id, name, "type", config) VALUES ($1, $2, 'stdio', $3)
-               ON CONFLICT (user_id, name) DO UPDATE SET "type" = 'stdio', config = $3"#,
+            r#"INSERT INTO conversation_mcps (conversation_id, name, "type", config) VALUES ($1, $2, 'stdio', $3)
+               ON CONFLICT (conversation_id, name) DO UPDATE SET "type" = 'stdio', config = $3"#,
         )
-        .bind(self.user_id)
+        .bind(self.conversation_id)
         .bind(&name)
         .bind(&config)
         .execute(&self.pool)
@@ -202,8 +204,8 @@ impl Tool for ManageMcpSpell {
         }
 
         // Remove from DB.
-        if let Err(e) = sqlx::query("DELETE FROM user_mcps WHERE user_id = $1 AND name = $2")
-            .bind(self.user_id)
+        if let Err(e) = sqlx::query("DELETE FROM conversation_mcps WHERE conversation_id = $1 AND name = $2")
+            .bind(self.conversation_id)
             .bind(&name)
             .execute(&self.pool)
             .await

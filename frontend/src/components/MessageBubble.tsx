@@ -25,20 +25,33 @@ interface Props {
   onAnswer?: (text: string) => void;
   /** 连续工具调用时，后续的工具 bubble 合并到第一个里渲染 */
   extraTools?: Extract<ChatBubble, { kind: "tool" }>[];
+  conversationId?: string | null;
 }
 
 export const MessageBubble = memo(function MessageBubble({
   bubble,
   onAnswer,
   extraTools,
+  conversationId,
 }: Props) {
   if (bubble.kind === "tool") {
     if (extraTools && extraTools.length > 0) {
       return (
-        <ToolCallGroup first={bubble} rest={extraTools} onAnswer={onAnswer} />
+        <ToolCallGroup
+          first={bubble}
+          rest={extraTools}
+          onAnswer={onAnswer}
+          conversationId={conversationId}
+        />
       );
     }
-    return <ToolCallBubble bubble={bubble} onAnswer={onAnswer} />;
+    return (
+      <ToolCallBubble
+        bubble={bubble}
+        onAnswer={onAnswer}
+        conversationId={conversationId}
+      />
+    );
   }
   if (bubble.kind === "upload") {
     return <UploadChatBubble bubble={bubble} />;
@@ -440,10 +453,12 @@ function ToolCallGroup({
   first,
   rest,
   onAnswer,
+  conversationId,
 }: {
   first: Extract<ChatBubble, { kind: "tool" }>;
   rest: Extract<ChatBubble, { kind: "tool" }>[];
   onAnswer?: (text: string) => void;
+  conversationId?: string | null;
 }) {
   const all = [first, ...rest];
   const [expanded, setExpanded] = useState(false);
@@ -505,7 +520,13 @@ function ToolCallGroup({
         </button>
         <div className={styles.toolBody}>
           {all.map((b) => (
-            <ToolCallBubble key={b.key} bubble={b} onAnswer={onAnswer} nested />
+            <ToolCallBubble
+              key={b.key}
+              bubble={b}
+              onAnswer={onAnswer}
+              nested
+              conversationId={conversationId}
+            />
           ))}
         </div>
       </div>
@@ -517,10 +538,12 @@ function ToolCallBubble({
   bubble,
   onAnswer,
   nested = false,
+  conversationId,
 }: {
   bubble: Extract<ChatBubble, { kind: "tool" }>;
   onAnswer?: (text: string) => void;
   nested?: boolean;
+  conversationId?: string | null;
 }) {
   const [expanded, setExpanded] = useState(false);
 
@@ -703,7 +726,13 @@ function ToolCallBubble({
     (bubble.name === "present" || bubble.name === "present_file") &&
     fileResult
   ) {
-    return <FileCard file={fileResult} pending={bubble.pending} />;
+    return (
+      <FileCard
+        file={fileResult}
+        pending={bubble.pending}
+        conversationId={conversationId}
+      />
+    );
   }
 
   if (isSpawn) {
@@ -972,16 +1001,25 @@ type PreviewState =
   | { status: "error"; message: string }
   | { status: "binary" };
 
-function FileCard({ file, pending }: { file: FileInfo; pending: boolean }) {
+function FileCard({
+  file,
+  pending,
+  conversationId,
+}: {
+  file: FileInfo;
+  pending: boolean;
+  conversationId?: string | null;
+}) {
   const [preview, setPreview] = useState<PreviewState>({ status: "idle" });
   const [expanded, setExpanded] = useState(false);
 
   const token = localStorage.getItem("familiar_token") ?? "";
-  const fileUrl = useMemo(
-    () =>
-      `/api/files?${new URLSearchParams({ path: file.path, token }).toString()}`,
-    [file.path, token],
-  );
+  const fileUrl = useMemo(() => {
+    const params = new URLSearchParams({ path: file.path, token });
+    if (conversationId) params.append("conversation_id", conversationId);
+    return `/api/files?${params.toString()}`;
+  }, [file.path, token, conversationId]);
+
   const isImageFile = useMemo(() => {
     const target = `${file.filename} ${file.path}`;
     return /\.(png|jpe?g|gif|webp|bmp|svg|tiff?|avif|heic|heif)$/i.test(target);
@@ -992,6 +1030,8 @@ function FileCard({ file, pending }: { file: FileInfo; pending: boolean }) {
     setPreview({ status: "loading" });
     try {
       const params = new URLSearchParams({ path: file.path, token });
+      if (conversationId) params.append("conversation_id", conversationId);
+
       const res = await fetch(`${BASE()}/api/files/preview?${params}`);
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: "无法预览" }));
@@ -1013,7 +1053,7 @@ function FileCard({ file, pending }: { file: FileInfo; pending: boolean }) {
     } catch {
       setPreview({ status: "error", message: "网络错误" });
     }
-  }, [file.path, token, preview.status, isImageFile]);
+  }, [file.path, token, preview.status, isImageFile, conversationId]);
 
   function toggleExpand() {
     if (!expanded && preview.status === "idle" && !isImageFile) {
