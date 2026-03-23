@@ -443,22 +443,9 @@ pub async fn upload_file(
     })
     .to_string();
 
-    use agentix::raw::request::message::{Message as AgentMessage, Role};
-    let msg = AgentMessage::new(Role::User, &content_str);
-    // Persist to DB.
+    use agentix::Message;
+    let msg = Message::User(vec![agentix::UserContent::Text(content_str.clone())]);
     state.persist_message(conv_id, &msg);
-
-    // Also push into the in-memory agent if it is currently idle
-    // (not mid-generation). This ensures the next generation turn
-    // sees the uploaded file without having to rebuild the agent.
-    {
-        let mut map = state.chats.lock().unwrap();
-        if let Some(entry) = map.get_mut(&conv_id)
-            && let Some(ref mut agent) = entry.agent
-        {
-            agent.push_user_message(&content_str);
-        }
-    }
 
     Ok((StatusCode::CREATED, Json(resp)))
 }

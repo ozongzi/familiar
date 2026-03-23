@@ -27,8 +27,10 @@ pub struct McpCatalogEntry {
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+#[derive(Default)]
 pub enum Provider {
     #[serde(rename = "deepseek")]
+    #[default]
     DeepSeek,
     #[serde(rename = "openai")]
     OpenAI,
@@ -38,9 +40,15 @@ pub enum Provider {
     Gemini,
 }
 
-impl Default for Provider {
-    fn default() -> Self {
-        Provider::DeepSeek
+
+impl Provider {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Provider::DeepSeek  => "deepseek",
+            Provider::OpenAI    => "openai",
+            Provider::Anthropic => "anthropic",
+            Provider::Gemini    => "gemini",
+        }
     }
 }
 
@@ -53,6 +61,19 @@ pub struct ModelConfig {
     pub provider: Provider,
     #[serde(default)]
     pub extra_body: HashMap<String, Value>,
+}
+
+impl ModelConfig {
+    /// Build an [`agentix::LlmClient`] from this config — one call replaces the
+    /// four-arm `match provider { ... }` block that used to appear in `build_agent`.
+    pub fn to_client(&self) -> agentix::LlmClient {
+        agentix::LlmClient::from_parts(
+            self.provider.as_str(),
+            self.api_key.clone(),
+            self.api_base.clone(),
+            self.name.clone(),
+        )
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]

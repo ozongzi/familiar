@@ -7,152 +7,18 @@ use crate::config::{Config, McpServerConfig, ModelConfig};
 use crate::db::{Db, to_vector};
 use crate::embedding::EmbeddingClient;
 use crate::spells::{SpellDeps, build_all_spells};
-use agentix::agent::agent_core::{AnthropicAgent, DeepSeekAgent, GeminiAgent, OpenAIAgent};
-use agentix::agent::stream::AgentStream;
-use agentix::AgentEvent;
-use agentix::McpTool;
-use agentix::ToolCommand;
-use agentix::request::Message as AgentMessage;
-use crate::config::Provider;
-use serde_json::Value;
+use agentix::{Agent, AgentEvent, InMemory, McpTool, Message};
+use agentix::types::UsageStats;
+use futures::StreamExt;
+use serde_json::{json};
 use sqlx::PgPool;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::broadcast;
-use tokio::sync::mpsc::UnboundedSender;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 const EVENT_LOG_CAP: usize = 4096;
 const BROADCAST_CAP: usize = 256;
-
-// ── AnyAgent ──────────────────────────────────────────────────────────────────
-
-/// A type-erased wrapper so familiar can support all four agentix providers
-/// without making the rest of the code generic over `P`.
-pub enum AnyAgent {
-    DeepSeek(DeepSeekAgent),
-    OpenAI(OpenAIAgent),
-    Anthropic(AnthropicAgent),
-    Gemini(GeminiAgent),
-}
-
-macro_rules! any_agent_delegate {
-    ($self:ident, $inner:ident => $expr:expr) => {
-        match $self {
-            AnyAgent::DeepSeek($inner) => $expr,
-            AnyAgent::OpenAI($inner) => $expr,
-            AnyAgent::Anthropic($inner) => $expr,
-            AnyAgent::Gemini($inner) => $expr,
-        }
-    };
-}
-
-impl AnyAgent {
-    pub fn with_tool<T: agentix::Tool + 'static>(self, tool: T) -> Self {
-        match self {
-            AnyAgent::DeepSeek(a) => AnyAgent::DeepSeek(a.with_tool(tool)),
-            AnyAgent::OpenAI(a) => AnyAgent::OpenAI(a.with_tool(tool)),
-            AnyAgent::Anthropic(a) => AnyAgent::Anthropic(a.with_tool(tool)),
-            AnyAgent::Gemini(a) => AnyAgent::Gemini(a.with_tool(tool)),
-        }
-    }
-
-    pub fn streaming(self) -> Self {
-        match self {
-            AnyAgent::DeepSeek(a) => AnyAgent::DeepSeek(a.streaming()),
-            AnyAgent::OpenAI(a) => AnyAgent::OpenAI(a.streaming()),
-            AnyAgent::Anthropic(a) => AnyAgent::Anthropic(a.streaming()),
-            AnyAgent::Gemini(a) => AnyAgent::Gemini(a.streaming()),
-        }
-    }
-
-    pub fn with_history(self, history: Vec<AgentMessage>) -> Self {
-        match self {
-            AnyAgent::DeepSeek(a) => AnyAgent::DeepSeek(a.with_history(history)),
-            AnyAgent::OpenAI(a) => AnyAgent::OpenAI(a.with_history(history)),
-            AnyAgent::Anthropic(a) => AnyAgent::Anthropic(a.with_history(history)),
-            AnyAgent::Gemini(a) => AnyAgent::Gemini(a.with_history(history)),
-        }
-    }
-
-    pub fn with_system_prompt(self, prompt: impl Into<String>) -> Self {
-        let p = prompt.into();
-        match self {
-            AnyAgent::DeepSeek(a) => AnyAgent::DeepSeek(a.with_system_prompt(p)),
-            AnyAgent::OpenAI(a) => AnyAgent::OpenAI(a.with_system_prompt(p)),
-            AnyAgent::Anthropic(a) => AnyAgent::Anthropic(a.with_system_prompt(p)),
-            AnyAgent::Gemini(a) => AnyAgent::Gemini(a.with_system_prompt(p)),
-        }
-    }
-
-    pub fn extra_field(self, key: impl Into<String>, value: serde_json::Value) -> Self {
-        let k = key.into();
-        match self {
-            AnyAgent::DeepSeek(a) => AnyAgent::DeepSeek(a.extra_field(k, value)),
-            AnyAgent::OpenAI(a) => AnyAgent::OpenAI(a.extra_field(k, value)),
-            AnyAgent::Anthropic(a) => AnyAgent::Anthropic(a.extra_field(k, value)),
-            AnyAgent::Gemini(a) => AnyAgent::Gemini(a.extra_field(k, value)),
-        }
-    }
-
-    pub fn interrupt_sender(&self) -> tokio::sync::mpsc::UnboundedSender<String> {
-        any_agent_delegate!(self, a => a.interrupt_sender())
-    }
-
-    pub fn tool_inject_sender(&self) -> tokio::sync::mpsc::UnboundedSender<ToolCommand> {
-        any_agent_delegate!(self, a => a.tool_inject_sender())
-    }
-
-    pub fn push_user_message(&mut self, text: &str) {
-        any_agent_delegate!(self, a => a.push_user_message(text))
-    }
-
-    pub fn chat(self, user_message: &str) -> AnyAgentStream {
-        match self {
-            AnyAgent::DeepSeek(a) => AnyAgentStream::DeepSeek(a.chat(user_message)),
-            AnyAgent::OpenAI(a) => AnyAgentStream::OpenAI(a.chat(user_message)),
-            AnyAgent::Anthropic(a) => AnyAgentStream::Anthropic(a.chat(user_message)),
-            AnyAgent::Gemini(a) => AnyAgentStream::Gemini(a.chat(user_message)),
-        }
-    }
-
-    pub fn chat_from_history(self) -> AnyAgentStream {
-        match self {
-            AnyAgent::DeepSeek(a) => AnyAgentStream::DeepSeek(a.chat_from_history()),
-            AnyAgent::OpenAI(a) => AnyAgentStream::OpenAI(a.chat_from_history()),
-            AnyAgent::Anthropic(a) => AnyAgentStream::Anthropic(a.chat_from_history()),
-            AnyAgent::Gemini(a) => AnyAgentStream::Gemini(a.chat_from_history()),
-        }
-    }
-}
-
-pub enum AnyAgentStream {
-    DeepSeek(AgentStream<agentix::agent::agent_core::DeepSeek>),
-    OpenAI(AgentStream<agentix::agent::agent_core::OpenAI>),
-    Anthropic(AgentStream<agentix::agent::agent_core::Anthropic>),
-    Gemini(AgentStream<agentix::agent::agent_core::Gemini>),
-}
-
-impl AnyAgentStream {
-    pub async fn next(&mut self) -> Option<Result<AgentEvent, agentix::error::ApiError>> {
-        use futures::StreamExt;
-        match self {
-            AnyAgentStream::DeepSeek(s) => s.next().await,
-            AnyAgentStream::OpenAI(s) => s.next().await,
-            AnyAgentStream::Anthropic(s) => s.next().await,
-            AnyAgentStream::Gemini(s) => s.next().await,
-        }
-    }
-
-    pub fn into_agent(self) -> Option<AnyAgent> {
-        match self {
-            AnyAgentStream::DeepSeek(s) => s.into_agent().map(AnyAgent::DeepSeek),
-            AnyAgentStream::OpenAI(s) => s.into_agent().map(AnyAgent::OpenAI),
-            AnyAgentStream::Anthropic(s) => s.into_agent().map(AnyAgent::Anthropic),
-            AnyAgentStream::Gemini(s) => s.into_agent().map(AnyAgent::Gemini),
-        }
-    }
-}
 
 static NEXT_SEQ: AtomicU64 = AtomicU64::new(0);
 
@@ -164,9 +30,7 @@ pub struct WsEvent {
 
 pub struct ChatEntry {
     pub user_id: Uuid,
-    pub agent: Option<AnyAgent>,
-    pub interrupt_tx: UnboundedSender<String>,
-    pub tool_inject_tx: UnboundedSender<ToolCommand>,
+    pub agent: Arc<tokio::sync::Mutex<Agent>>,
     pub user_mcp_tools: Arc<tokio::sync::Mutex<Vec<(String, McpTool)>>>,
     pub broadcast_tx: broadcast::Sender<Arc<WsEvent>>,
     pub event_log: VecDeque<Arc<WsEvent>>,
@@ -174,18 +38,15 @@ pub struct ChatEntry {
     pub abort_flag: Arc<AtomicBool>,
     pub ask_user_pending: Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<String>>>>,
     pub queued_interrupts: Vec<String>,
+    #[allow(dead_code)]
     pub spawn_tx: tokio::sync::broadcast::Sender<String>,
 }
 
 impl ChatEntry {
     fn new(
         user_id: Uuid,
-        agent: AnyAgent,
-        (interrupt_tx, tool_inject_tx, spawn_tx): (
-            UnboundedSender<String>,
-            UnboundedSender<ToolCommand>,
-            tokio::sync::broadcast::Sender<String>,
-        ),
+        agent: Arc<tokio::sync::Mutex<Agent>>,
+        spawn_tx: tokio::sync::broadcast::Sender<String>,
         user_mcp_tools: Arc<tokio::sync::Mutex<Vec<(String, McpTool)>>>,
         ask_user_pending: Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<String>>>>,
         abort_flag: Arc<AtomicBool>,
@@ -193,9 +54,7 @@ impl ChatEntry {
         let (broadcast_tx, _) = broadcast::channel(BROADCAST_CAP);
         Self {
             user_id,
-            agent: Some(agent),
-            interrupt_tx,
-            tool_inject_tx,
+            agent,
             user_mcp_tools,
             broadcast_tx,
             event_log: VecDeque::new(),
@@ -234,6 +93,9 @@ pub struct AppState {
     pub sandbox: Arc<crate::sandbox::SandboxManager>,
     pub mcp_tools: Arc<tokio::sync::Mutex<Vec<(String, McpTool)>>>,
     pub tunnel_registry: crate::web::tunnel::TunnelRegistry,
+    pub github_client_id: String,
+    pub github_client_secret: String,
+    pub github_redirect_uri: String,
 }
 
 impl AppState {
@@ -252,6 +114,10 @@ impl AppState {
             sandbox,
             mcp_tools: Arc::new(tokio::sync::Mutex::new(mcp_tools)),
             tunnel_registry: crate::web::tunnel::new_tunnel_registry(),
+            github_client_id: std::env::var("GITHUB_CLIENT_ID").unwrap_or_default(),
+            github_client_secret: std::env::var("GITHUB_CLIENT_SECRET").unwrap_or_default(),
+            github_redirect_uri: std::env::var("GITHUB_REDIRECT_URI")
+                .unwrap_or_else(|_| "http://localhost:5173/api/auth/github/callback".to_string()),
         }
     }
 
@@ -313,22 +179,10 @@ impl AppState {
                 },
             }
         }
-
         tools
     }
 
-    pub async fn build_agent(
-        &self,
-        conversation_id: Uuid,
-    ) -> (
-        AnyAgent,
-        UnboundedSender<String>,
-        Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<String>>>>,
-        tokio::sync::mpsc::UnboundedSender<ToolCommand>,
-        Arc<tokio::sync::Mutex<Vec<(String, McpTool)>>>,
-        tokio::sync::broadcast::Sender<String>,
-        Arc<AtomicBool>,
-    ) {
+    pub async fn build_agent(&self, conversation_id: Uuid) -> Arc<tokio::sync::Mutex<Agent>> {
         let global_cfg = self.get_global_config().await.unwrap_or_default();
 
         let history = match self.db.restore(conversation_id).await {
@@ -341,9 +195,6 @@ impl AppState {
                 vec![]
             }
         };
-
-        let ask_user_pending = Arc::new(tokio::sync::Mutex::new(None));
-        let abort_flag = Arc::new(AtomicBool::new(false));
 
         let mcp_snapshot: Vec<_> = {
             let guard = self.mcp_tools.lock().await;
@@ -361,6 +212,13 @@ impl AppState {
                     Uuid::nil()
                 });
 
+        let user_name: String = sqlx::query_scalar::<_, String>("SELECT name FROM users WHERE id = $1")
+            .bind(user_id)
+            .fetch_optional(&self.pool)
+            .await
+            .unwrap_or(None)
+            .unwrap_or_default();
+
         let user_mcp_rows: Vec<(String, String, serde_json::Value)> = sqlx::query_as(
             r#"SELECT name, "type", config FROM user_mcps WHERE user_id = $1
                UNION ALL
@@ -375,7 +233,7 @@ impl AppState {
 
         let (spawn_tx, _) = tokio::sync::broadcast::channel::<String>(256);
 
-        let user_settings: Option<(Option<Value>, Option<Value>, Option<String>)> = sqlx::query_as(
+        let user_settings: Option<(Option<serde_json::Value>, Option<serde_json::Value>, Option<String>)> = sqlx::query_as(
             "SELECT frontier_model, cheap_model, system_prompt FROM user_settings WHERE user_id = $1"
         )
         .bind(user_id)
@@ -452,55 +310,20 @@ impl AppState {
             system_prompt = Some(system_prompt.unwrap_or_default() + &plan_section);
         }
 
-        let mut base: AnyAgent = match frontier_cfg.provider {
-            Provider::DeepSeek => AnyAgent::DeepSeek(
-                DeepSeekAgent::custom(
-                    frontier_cfg.api_key.clone(),
-                    frontier_cfg.api_base.clone(),
-                    frontier_cfg.name.clone(),
-                )
-            ),
-            Provider::OpenAI => AnyAgent::OpenAI(
-                OpenAIAgent::new(
-                    frontier_cfg.api_key.clone(),
-                    frontier_cfg.api_base.clone(),
-                    frontier_cfg.name.clone(),
-                )
-            ),
-            Provider::Anthropic => AnyAgent::Anthropic(
-                AnthropicAgent::new(
-                    frontier_cfg.api_key.clone(),
-                    frontier_cfg.api_base.clone(),
-                    frontier_cfg.name.clone(),
-                )
-            ),
-            Provider::Gemini => AnyAgent::Gemini(
-                GeminiAgent::new(
-                    frontier_cfg.api_key.clone(),
-                    frontier_cfg.api_base.clone(),
-                    frontier_cfg.name.clone(),
-                )
-            ),
-        };
-        base = base.streaming().with_history(history);
+        let client = frontier_cfg.to_client();
 
-        for (k, v) in &frontier_cfg.extra_body {
-            base = base.extra_field(k.clone(), v.clone());
-        }
-
-        if let Some(prompt) = &system_prompt {
-            base = base.with_system_prompt(prompt.clone());
-        }
-
-        let interrupt_tx = base.interrupt_sender();
-        let inject_tx = base.tool_inject_sender();
-
+        let ask_user_pending = Arc::new(tokio::sync::Mutex::new(None));
+        let abort_flag = Arc::new(AtomicBool::new(false));
         let user_mcp_tools: Arc<tokio::sync::Mutex<Vec<(String, McpTool)>>> =
             Arc::new(tokio::sync::Mutex::new(Vec::new()));
 
+        // OnceLock shared with ManageMcpSpell — filled in after the Arc is created below.
+        let agent_once: Arc<tokio::sync::OnceCell<Arc<tokio::sync::Mutex<Agent>>>> =
+            Arc::new(tokio::sync::OnceCell::new());
+
         let spell_deps = SpellDeps {
-            subagent_prompt: global_cfg.subagent_prompt(),
             ask_pending: Arc::clone(&ask_user_pending),
+            subagent_prompt: global_cfg.subagent_prompt(),
             cheap_model: cheap_cfg,
             mcp_tools: Arc::clone(&user_mcp_tools),
             spawn_tx: spawn_tx.clone(),
@@ -511,7 +334,7 @@ impl AppState {
                 global_cfg.embedding.name.clone(),
             ),
             conversation_id,
-            tool_inject_tx: inject_tx.clone(),
+            agent: Arc::clone(&agent_once),
             pool: self.pool.clone(),
             user_id,
             sandbox: self.sandbox.clone(),
@@ -519,12 +342,26 @@ impl AppState {
             abort_flag: Arc::clone(&abort_flag),
         };
 
-        let mut agent = base.with_tool(build_all_spells(spell_deps));
-
-        for (_, tool) in mcp_snapshot {
-            agent = agent.with_tool(tool);
+        // Build agent once, cleanly — no double construction.
+        let mut agent = Agent::new(client);
+        if let Some(prompt) = system_prompt {
+            let rendered = shared_backend::prompt_template::render_prompt(
+                &prompt,
+                &[("USER_NAME", &user_name)],
+            );
+            agent = agent.system_prompt(rendered);
         }
+        agent = agent.tool(build_all_spells(spell_deps));
+        for (_, tool) in &mcp_snapshot {
+            agent = agent.tool(tool.clone());
+        }
+        agent = agent.memory(InMemory::new().with_history(history));
 
+        let agent_arc = Arc::new(tokio::sync::Mutex::new(agent));
+        // Set the OnceLock so ManageMcpSpell can use the agent for hot-swapping.
+        let _ = agent_once.set(Arc::clone(&agent_arc));
+
+        // Now connect user MCPs
         for (name, mcp_type, config) in user_mcp_rows {
             let tool = match mcp_type.as_str() {
                 "http" => {
@@ -533,7 +370,6 @@ impl AppState {
                         .and_then(|v| v.as_str())
                         .unwrap_or_default()
                         .to_string();
-
                     match tokio::time::timeout(Duration::from_secs(15), McpTool::http(&url)).await {
                         Ok(Ok(t)) => t,
                         Ok(Err(e)) => {
@@ -552,7 +388,6 @@ impl AppState {
                         .and_then(|v| v.as_str())
                         .unwrap_or_default()
                         .to_string();
-
                     let args: Vec<String> = config
                         .get("args")
                         .and_then(|v| v.as_array())
@@ -562,14 +397,12 @@ impl AppState {
                                 .collect()
                         })
                         .unwrap_or_default();
-
                     let args_ref: Vec<&str> = args.iter().map(String::as_str).collect();
-                    let (cmd, args) = self.sandbox.wrap_mcp_command(user_id, conversation_id, &command, &args_ref);
-                    let args_wrapped: Vec<&str> = args.iter().map(String::as_str).collect();
-
+                    let (cmd, args_wrapped) = self.sandbox.wrap_mcp_command(user_id, conversation_id, &command, &args_ref);
+                    let args_wrapped_ref: Vec<&str> = args_wrapped.iter().map(String::as_str).collect();
                     match tokio::time::timeout(
                         Duration::from_secs(300),
-                        McpTool::stdio(&cmd, &args_wrapped),
+                        McpTool::stdio(&cmd, &args_wrapped_ref),
                     )
                     .await
                     {
@@ -588,15 +421,12 @@ impl AppState {
             };
 
             info!("user MCP '{name}' ready ({} tools)", tool.raw_tools().len());
-            user_mcp_tools
-                .lock()
-                .await
-                .push((name.clone(), tool.clone()));
-
-            agent = agent.with_tool(tool);
+            user_mcp_tools.lock().await.push((name.clone(), tool.clone()));
+            let mut agent = agent_arc.lock().await;
+            agent.add_tool(tool).await;
         }
 
-        // 如果该用户的桌面客户端当前在线，从注册表获取隧道工具并加入
+        // If the user's desktop client tunnel is online, add those tools too
         {
             let registry = self.tunnel_registry.lock().await;
             if let Some(tunnel_tool) = registry.get(&user_id) {
@@ -604,19 +434,30 @@ impl AppState {
                     "用户 {user_id} 隧道工具已在线，加入 agent ({} tools)",
                     tunnel_tool.raw_tools().len()
                 );
-                agent = agent.with_tool(tunnel_tool.clone());
+                let mut agent = agent_arc.lock().await;
+                agent.add_tool(tunnel_tool.clone()).await;
             }
         }
 
-        (
-            agent,
-            interrupt_tx,
-            ask_user_pending,
-            inject_tx,
-            user_mcp_tools,
-            spawn_tx,
-            abort_flag,
-        )
+        // Relay spawn_tx messages to the chat entry emitter
+        let relay_state = self.clone();
+        let mut rx = spawn_tx.subscribe();
+        tokio::spawn(async move {
+            loop {
+                match rx.recv().await {
+                    Ok(payload) => {
+                        let mut map = relay_state.chats.lock().unwrap();
+                        if let Some(e) = map.get_mut(&conversation_id) {
+                            e.emit(payload);
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        });
+
+        agent_arc
     }
 
     pub async fn deliver_answer(&self, conversation_id: Uuid, answer: String) {
@@ -659,30 +500,18 @@ impl AppState {
                     Uuid::nil()
                 });
 
-        let (agent, tx, ask_user_pending, inject_tx, user_mcp_tools, spawn_tx, abort_flag) =
-            self.build_agent(conversation_id).await;
+        let (spawn_tx, _) = tokio::sync::broadcast::channel::<String>(256);
+        let ask_user_pending = Arc::new(tokio::sync::Mutex::new(None));
+        let abort_flag = Arc::new(AtomicBool::new(false));
+        let user_mcp_tools: Arc<tokio::sync::Mutex<Vec<(String, McpTool)>>> =
+            Arc::new(tokio::sync::Mutex::new(Vec::new()));
 
-        let mut rx = spawn_tx.subscribe();
-        let relay_state = self.clone();
-        tokio::spawn(async move {
-            loop {
-                match rx.recv().await {
-                    Ok(payload) => {
-                        let mut map = relay_state.chats.lock().unwrap();
-                        if let Some(e) = map.get_mut(&conversation_id) {
-                            e.emit(payload);
-                        }
-                    }
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break, // 通道废弃时干净地退出，不留后患
-                }
-            }
-        });
+        let agent_arc = self.build_agent(conversation_id).await;
 
         let entry = ChatEntry::new(
             user_id,
-            agent,
-            (tx, inject_tx, spawn_tx),
+            agent_arc,
+            spawn_tx,
             user_mcp_tools,
             ask_user_pending,
             abort_flag,
@@ -697,7 +526,7 @@ impl AppState {
     }
 
     pub async fn start_generation(&self, conversation_id: Uuid, user_text: String) -> bool {
-        let (agent, abort_flag) = {
+        let (agent_arc, abort_flag) = {
             let mut map = self.chats.lock().unwrap();
             let entry = match map.get_mut(&conversation_id) {
                 Some(e) => e,
@@ -711,59 +540,12 @@ impl AppState {
             entry.clear_log();
             entry.abort_flag.store(false, Ordering::Release);
             entry.generating = true;
-            (entry.agent.take(), Arc::clone(&entry.abort_flag))
+            (Arc::clone(&entry.agent), Arc::clone(&entry.abort_flag))
         };
-
-        let mut agent = match agent {
-            Some(a) => a,
-            None => {
-                let (
-                    fresh_agent,
-                    fresh_tx,
-                    fresh_pending,
-                    fresh_inject_tx,
-                    fresh_user_mcp_tools,
-                    fresh_spawn_tx,
-                    fresh_abort,
-                ) = self.build_agent(conversation_id).await;
-
-                let mut map = self.chats.lock().unwrap();
-                if let Some(entry) = map.get_mut(&conversation_id) {
-                    entry.interrupt_tx = fresh_tx;
-                    entry.tool_inject_tx = fresh_inject_tx;
-                    entry.user_mcp_tools = fresh_user_mcp_tools;
-                    entry.ask_user_pending = fresh_pending;
-                    entry.spawn_tx = fresh_spawn_tx.clone();
-                    entry.abort_flag = Arc::clone(&fresh_abort);
-                }
-
-                let mut rx = fresh_spawn_tx.subscribe();
-                let relay_state = self.clone();
-                tokio::spawn(async move {
-                    loop {
-                        match rx.recv().await {
-                            Ok(payload) => {
-                                let mut map = relay_state.chats.lock().unwrap();
-                                if let Some(e) = map.get_mut(&conversation_id) {
-                                    e.emit(payload);
-                                }
-                            }
-                            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                            Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-                        }
-                    }
-                });
-
-                fresh_agent
-            }
-        };
-
-        agent.push_user_message(&user_text);
 
         let state = self.clone();
-
         tokio::spawn(async move {
-            generation_loop(state, conversation_id, agent, abort_flag).await;
+            generation_loop(state, conversation_id, agent_arc, abort_flag, user_text).await;
         });
 
         true
@@ -772,7 +554,6 @@ impl AppState {
     pub fn send_interrupt(&self, conversation_id: Uuid, content: String) {
         let mut map = self.chats.lock().unwrap();
         if let Some(entry) = map.get_mut(&conversation_id) {
-            let _ = entry.interrupt_tx.send(content.clone());
             entry.queued_interrupts.push(content);
         }
     }
@@ -784,31 +565,36 @@ impl AppState {
         }
     }
 
-    /// Persist a message to the database and (for user/assistant messages) embed it.
-    /// Always fire-and-forget — spawns a background task and returns immediately.
-    /// Use `persist_message_async` if you need to await completion before continuing.
-    pub fn persist_message(
-        &self,
-        conversation_id: Uuid,
-        msg: &agentix::raw::request::message::Message,
-    ) {
+    pub fn persist_message(&self, conversation_id: Uuid, msg: &Message) {
         let state = self.clone();
         let msg = msg.clone();
         tokio::spawn(async move {
-            state.persist_message_async(conversation_id, &msg).await;
+            state.persist_message_async(conversation_id, msg).await;
         });
     }
 
-    /// Persist a message to the database and embed it, awaiting completion.
-    pub async fn persist_message_async(
-        &self,
-        conversation_id: Uuid,
-        msg: &agentix::raw::request::message::Message,
-    ) {
+    pub async fn persist_message_async(&self, conversation_id: Uuid, msg: Message) {
         let db = self.db.clone();
         let state = self.clone();
 
-        let row_id = match db.append(conversation_id, msg, None).await {
+        let text_for_embed: Option<String> = match &msg {
+            Message::User(parts) => {
+                use agentix::UserContent;
+                let t: String = parts
+                    .iter()
+                    .filter_map(|p| match p {
+                        UserContent::Text(s) => Some(s.as_str()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("");
+                if t.is_empty() { None } else { Some(t) }
+            }
+            Message::Assistant { content: Some(c), .. } if !c.is_empty() => Some(c.clone()),
+            _ => None,
+        };
+
+        let row_id = match db.append(conversation_id, &msg, None).await {
             Ok(id) => id,
             Err(e) => {
                 error!("db append failed: {e}");
@@ -816,17 +602,7 @@ impl AppState {
             }
         };
 
-        let should_embed = matches!(
-            msg.role,
-            agentix::raw::request::message::Role::User
-                | agentix::raw::request::message::Role::Assistant
-        );
-
-        if should_embed
-            && let Some(text) = &msg.content
-            && !text.is_empty()
-        {
-            let text = text.clone();
+        if let Some(content) = text_for_embed {
             tokio::spawn(async move {
                 let global_cfg = state.get_global_config().await.unwrap_or_default();
                 let embed = EmbeddingClient::new(
@@ -834,7 +610,7 @@ impl AppState {
                     global_cfg.embedding.api_base,
                     global_cfg.embedding.name,
                 );
-                match embed.embed(&text).await {
+                match embed.embed(&content).await {
                     Ok(vec) => {
                         let vector = to_vector(vec);
                         if let Err(e) = db.set_embedding(row_id, vector).await {
@@ -851,362 +627,208 @@ impl AppState {
 async fn generation_loop(
     state: AppState,
     conversation_id: Uuid,
-    initial_agent: AnyAgent,
-    initial_abort: Arc<AtomicBool>,
+    agent_arc: Arc<tokio::sync::Mutex<Agent>>,
+    abort_flag: Arc<AtomicBool>,
+    mut user_text: String,
 ) {
-    let mut agent = initial_agent;
-    let mut abort_flag = initial_abort;
-
     loop {
-        let pending_text =
-            run_generation(state.clone(), conversation_id, agent, abort_flag.clone()).await;
-
-        let text = match pending_text {
+        let next = run_generation(
+            state.clone(),
+            conversation_id,
+            Arc::clone(&agent_arc),
+            Arc::clone(&abort_flag),
+            user_text,
+        )
+        .await;
+        match next {
+            Some(interrupt) => user_text = interrupt,
             None => break,
-            Some(t) => t,
-        };
-
-        let next = {
-            let mut map = state.chats.lock().unwrap();
-            if let Some(entry) = map.get_mut(&conversation_id) {
-                entry.clear_log();
-                entry.abort_flag.store(false, Ordering::Release);
-                entry.generating = true;
-                let abort = Arc::clone(&entry.abort_flag);
-                Some((entry.agent.take(), abort))
-            } else {
-                None
-            }
-        };
-
-        let (agent_opt, new_abort) = match next {
-            Some(t) => t,
-            None => break,
-        };
-
-        let next_agent = match agent_opt {
-            Some(a) => a,
-            None => {
-                let (a, tx, pend, new_inject_tx, new_user_mcp_tools, new_spawn_tx, new_abort) =
-                    state.build_agent(conversation_id).await;
-
-                {
-                    let mut map = state.chats.lock().unwrap();
-                    if let Some(entry) = map.get_mut(&conversation_id) {
-                        entry.interrupt_tx = tx;
-                        entry.tool_inject_tx = new_inject_tx;
-                        entry.user_mcp_tools = new_user_mcp_tools;
-                        entry.ask_user_pending = pend;
-                        entry.spawn_tx = new_spawn_tx;
-                        entry.abort_flag = Arc::clone(&new_abort);
-                    }
-                }
-                a
-            }
-        };
-
-        let mut next_agent = next_agent;
-        next_agent.push_user_message(&text);
-
-        agent = next_agent;
-        abort_flag = new_abort;
+        }
     }
 }
 
+/// Returns `Some(interrupt_text)` if a queued interrupt should trigger another turn,
+/// or `None` to stop the loop.
 async fn run_generation(
     state: AppState,
     conversation_id: Uuid,
-    agent: AnyAgent,
+    agent_arc: Arc<tokio::sync::Mutex<Agent>>,
     abort_flag: Arc<AtomicBool>,
+    user_text: String,
 ) -> Option<String> {
-    use agentix::raw::request::message::{Message as AgentMessage, Role};
-    use serde_json::json;
+    debug!(conversation = %conversation_id, "[TIMING] run_generation started");
 
-    debug!(conversation = %conversation_id, "[TIMING] run_generation started, calling chat_from_history");
-    let t_start = std::time::Instant::now();
-    let mut stream = agent.chat_from_history();
-    debug!(conversation = %conversation_id, "[TIMING] chat_from_history returned in {:?}", t_start.elapsed());
+    let mut stream = {
+        let mut agent = agent_arc.lock().await;
+        match agent.chat(user_text.clone()).await {
+            Ok(s) => s,
+            Err(e) => {
+                error!(conversation = %conversation_id, "chat() failed: {e}");
+                let mut map = state.chats.lock().unwrap();
+                if let Some(entry) = map.get_mut(&conversation_id) {
+                    entry.emit(json!({"type": "error", "message": e.to_string()}).to_string());
+                    entry.generating = false;
+                }
+                return None;
+            }
+        }
+    };
 
     let mut reply_buf = String::new();
     let mut reasoning_buf = String::new();
+    let mut tool_calls_buf: Vec<agentix::ToolCall> = Vec::new();
     let mut poll_count = 0u32;
-
-    let mut pending_tools: std::collections::HashMap<String, (String, String, Option<String>)> =
-        std::collections::HashMap::new();
-    let mut pending_tool_order: Vec<String> = Vec::new();
-    let mut pending_name_buf: std::collections::HashMap<u32, (String, String)> =
-        std::collections::HashMap::new();
-    let mut index_to_id: std::collections::HashMap<u32, String> = std::collections::HashMap::new();
+    let mut usage = UsageStats::default();
 
     loop {
         if abort_flag.load(Ordering::Acquire) {
             {
-                let mut map = state.chats.lock().unwrap();
-                if let Some(entry) = map.get_mut(&conversation_id) {
-                    entry.emit(json!({"type": "aborted"}).to_string());
-                }
+                let mut agent = agent_arc.lock().await;
+                let _ = agent.abort().await;
             }
             if !reply_buf.is_empty() {
-                let msg = AgentMessage::new(Role::Assistant, &reply_buf);
-                state.persist_message(conversation_id, &msg);
+                state.persist_message(
+                    conversation_id,
+                    &Message::Assistant {
+                        content: Some(reply_buf.clone()),
+                        reasoning: None,
+                        tool_calls: vec![],
+                    },
+                );
             }
-            if let Some(recovered) = stream.into_agent() {
-                let mut map = state.chats.lock().unwrap();
-                if let Some(entry) = map.get_mut(&conversation_id) {
-                    entry.generating = false;
-                    entry.abort_flag.store(false, Ordering::Release);
-                    entry.agent = Some(recovered);
-                }
+            let mut map = state.chats.lock().unwrap();
+            if let Some(entry) = map.get_mut(&conversation_id) {
+                entry.emit(json!({"type": "aborted"}).to_string());
+                entry.generating = false;
+                entry.abort_flag.store(false, Ordering::Release);
             }
             return None;
         }
 
         poll_count += 1;
-        let t_poll = std::time::Instant::now();
         debug!(conversation = %conversation_id, "[TIMING] poll #{poll_count}: calling stream.next()");
 
-        tokio::select! {
-            biased;
-            agent_event = stream.next() => {
-                let elapsed = t_poll.elapsed();
-
-                let Some(event) = agent_event else {
-                    debug!(conversation = %conversation_id, "[TIMING] poll #{poll_count}: stream.next() -> None (stream ended) in {elapsed:?}");
-                    break;
-                };
-
-                let payload = match event {
-                    Ok(AgentEvent::Token(token)) => {
-                        debug!(conversation = %conversation_id, "[TIMING] poll #{poll_count}: stream.next() -> Token ({} chars) in {elapsed:?}", token.len());
-                        reply_buf.push_str(&token);
-                        json!({"type": "token", "content": token}).to_string()
-                    }
-                    Ok(AgentEvent::ToolCall(c)) => {
-                        debug!(conversation = %conversation_id, "[TIMING] poll #{poll_count}: stream.next() -> ToolCall name={} id={} index={} delta_len={} in {elapsed:?}", c.name, c.id, c.index, c.delta.len());
-
-                        if c.id.is_empty() {
-                            if let Some(known_id) = index_to_id.get(&c.index).cloned() {
-                                if let Some(entry) = pending_tools.get_mut(&known_id) {
-                                    entry.1.push_str(&c.delta);
-                                }
-                                if c.delta.is_empty() {
-                                    String::new()
-                                } else {
-                                    let name = pending_tools.get(&known_id)
-                                        .map(|e| e.0.clone())
-                                        .unwrap_or_default();
-
-                                    json!({
-                                        "type": "tool_call",
-                                        "id": known_id,
-                                        "name": name,
-                                        "delta": c.delta,
-                                    }).to_string()
-                                }
-                            } else {
-                                let entry = pending_name_buf.entry(c.index).or_insert_with(|| (c.name.clone(), String::new()));
-                                if !c.name.is_empty() { entry.0 = c.name.clone(); }
-                                entry.1.push_str(&c.delta);
-                                String::new()
-                            }
-                        } else {
-                            index_to_id.entry(c.index).or_insert_with(|| c.id.clone());
-                            let (buffered_name, buffered_delta) = pending_name_buf.remove(&c.index)
-                                .unwrap_or_default();
-
-                            let name = if pending_tools.contains_key(&c.id) {
-                                c.name.clone()
-                            } else if !buffered_name.is_empty() {
-                                buffered_name
-                            } else {
-                                c.name.clone()
-                            };
-
-                            let order = &mut pending_tool_order;
-                            let tools = &mut pending_tools;
-
-                            let entry = tools.entry(c.id.clone()).or_insert_with(|| {
-                                order.push(c.id.clone());
-                                (name.clone(), String::new(), None)
-                            });
-
-                            let full_delta = format!("{}{}", buffered_delta, c.delta);
-                            entry.1.push_str(&full_delta);
-
-                            if full_delta.is_empty() {
-                                String::new()
-                            } else {
-                                json!({
-                                    "type": "tool_call",
-                                    "id": c.id,
-                                    "name": &entry.0,
-                                    "delta": full_delta,
-                                }).to_string()
-                            }
-                        }
-                    }
-                    Ok(AgentEvent::ToolResult(res)) => {
-                        debug!(conversation = %conversation_id, "[TIMING] poll #{poll_count}: stream.next() -> ToolResult name={} id={} in {elapsed:?}", res.name, res.id);
-
-                        {
-                            let mut map = state.chats.lock().unwrap();
-                            if let Some(entry) = map.get_mut(&conversation_id) {
-                                entry.queued_interrupts.clear();
-                            }
-                        }
-
-                        {
-                            use agentix::raw::request::message::{FunctionCall, ToolCall, ToolType};
-
-                            if let Some(entry) = pending_tools.get_mut(&res.id) {
-                                entry.1 = res.args.clone();
-                                let result_str = serde_json::to_string(&res.result).unwrap_or_default();
-                                entry.2 = Some(result_str);
-                            }
-
-                            let all_done = !pending_tool_order.is_empty()
-                                && pending_tool_order.iter()
-                                    .all(|id| pending_tools.get(id).and_then(|e| e.2.as_ref()).is_some());
-
-                            if all_done {
-                                let tool_calls: Vec<ToolCall> = pending_tool_order.iter()
-                                    .filter_map(|id| {
-                                        pending_tools.get(id).map(|(name, args, _)| ToolCall {
-                                            id: id.clone(),
-                                            r#type: ToolType::Function,
-                                            function: FunctionCall {
-                                                name: name.clone(),
-                                                arguments: args.clone(),
-                                            },
-                                        })
-                                    })
-                                    .collect();
-
-                                let assistant_msg = AgentMessage {
-                                    role: Role::Assistant,
-                                    content: if reply_buf.is_empty() { None } else { Some(reply_buf.clone()) },
-                                    name: None,
-                                    tool_call_id: None,
-                                    tool_calls: Some(tool_calls),
-                                    reasoning_content: if reasoning_buf.is_empty() { None } else { Some(reasoning_buf.clone()) },
-                                    prefix: None,
-                                };
-                                state.persist_message_async(conversation_id, &assistant_msg).await;
-
-                                reply_buf.clear();
-                                reasoning_buf.clear();
-
-                                for id in &pending_tool_order {
-                                    if let Some((name, _, Some(result_str))) = pending_tools.get(id) {
-                                        let tool_msg = AgentMessage {
-                                            role: Role::Tool,
-                                            content: Some(result_str.clone()),
-                                            name: Some(name.clone()),
-                                            tool_call_id: Some(id.clone()),
-                                            tool_calls: None,
-                                            reasoning_content: None,
-                                            prefix: None,
-                                        };
-                                        state.persist_message_async(conversation_id, &tool_msg).await;
-                                    }
-                                }
-
-                                pending_tools.clear();
-                                pending_tool_order.clear();
-                            }
-                        }
-
-                        json!({
-                            "type": "tool_result",
-                            "id": res.id,
-                            "name": res.name,
-                            "args": res.args,
-                            "result": res.result,
-                        }).to_string()
-                    }
-                    Ok(AgentEvent::ReasoningToken(token)) => {
-                        debug!(conversation = %conversation_id, "[TIMING] poll #{poll_count}: stream.next() -> ReasoningToken ({} chars) in {elapsed:?}", token.len());
-                        reasoning_buf.push_str(&token);
-                        json!({"type": "reasoning_token", "content": token}).to_string()
-                    }
-                    Err(e) => {
-                        let err_msg = e.to_string();
-                        error!(conversation = %conversation_id, "stream error after {elapsed:?}: {err_msg}");
-
-                        let is_benign_tail_error = err_msg.contains("Error in input stream")
-                            && !reply_buf.trim().is_empty();
-
-                        if is_benign_tail_error {
-                            warn!(conversation = %conversation_id, "Treating benign tail stream error as done: {err_msg}");
-                            if !reply_buf.is_empty() {
-                                let msg = AgentMessage::new(Role::Assistant, &reply_buf);
-                                state.persist_message(conversation_id, &msg);
-                            }
-
-                            let recovered = stream.into_agent();
-                            let queued_interrupt = {
-                                let mut map = state.chats.lock().unwrap();
-                                if let Some(entry) = map.get_mut(&conversation_id) {
-                                    let next_interrupt = entry.queued_interrupts.drain(..).next();
-                                    if next_interrupt.is_some() {
-                                        entry.emit(json!({"type": "user_interrupt"}).to_string());
-                                    } else {
-                                        entry.emit(json!({"type": "done"}).to_string());
-                                        entry.generating = false;
-                                    }
-
-                                    if let Some(agent) = recovered {
-                                        entry.agent = Some(agent);
-                                    }
-                                    next_interrupt
-                                } else {
-                                    None
-                                }
-                            };
-                            return queued_interrupt;
-                        }
-
-                        let payload = json!({"type": "error", "message": err_msg}).to_string();
-
-                        {
-                            let mut map = state.chats.lock().unwrap();
-                            if let Some(entry) = map.get_mut(&conversation_id) {
-                                entry.emit(payload);
-                            }
-                        }
-
-                        if let Some(recovered) = stream.into_agent() {
-                            let mut map = state.chats.lock().unwrap();
-                            if let Some(entry) = map.get_mut(&conversation_id) {
-                                entry.generating = false;
-                                entry.agent = Some(recovered);
-                            }
-                        }
-                        return None;
-                    }
-                };
-
-                if !payload.is_empty() {
-                    let mut map = state.chats.lock().unwrap();
-                    if let Some(entry) = map.get_mut(&conversation_id) {
-                        entry.emit(payload);
-                    }
+        let event = stream.next().await;
+        match event {
+            None => break,
+            Some(AgentEvent::Done) => break,
+            Some(AgentEvent::Token(token)) => {
+                reply_buf.push_str(&token);
+                let payload = json!({"type": "token", "content": token}).to_string();
+                let mut map = state.chats.lock().unwrap();
+                if let Some(entry) = map.get_mut(&conversation_id) {
+                    entry.emit(payload);
                 }
             }
-
-            else => {
-                debug!(conversation = %conversation_id, "[TIMING] poll #{poll_count}: select! else branch triggered in {:?}", t_poll.elapsed());
-                break;
+            Some(AgentEvent::Reasoning(token)) => {
+                reasoning_buf.push_str(&token);
+                let payload = json!({"type": "reasoning_token", "content": token}).to_string();
+                let mut map = state.chats.lock().unwrap();
+                if let Some(entry) = map.get_mut(&conversation_id) {
+                    entry.emit(payload);
+                }
             }
+            Some(AgentEvent::ToolCallChunk(c)) => {
+                let payload = json!({"type": "tool_call", "id": c.id, "name": c.name, "delta": c.delta}).to_string();
+                let mut map = state.chats.lock().unwrap();
+                if let Some(entry) = map.get_mut(&conversation_id) {
+                    entry.emit(payload);
+                }
+            }
+            Some(AgentEvent::ToolCall(c)) => {
+                let payload = json!({"type": "tool_call_complete", "id": c.id, "name": c.name}).to_string();
+                tool_calls_buf.push(c);
+                let mut map = state.chats.lock().unwrap();
+                if let Some(entry) = map.get_mut(&conversation_id) {
+                    entry.emit(payload);
+                }
+            }
+            Some(AgentEvent::ToolProgress { call_id, name, progress }) => {
+                let payload = json!({"type": "tool_progress", "id": call_id, "name": name, "progress": progress}).to_string();
+                let mut map = state.chats.lock().unwrap();
+                if let Some(entry) = map.get_mut(&conversation_id) {
+                    entry.emit(payload);
+                }
+            }
+            Some(AgentEvent::ToolResult { call_id, name, result }) => {
+                {
+                    let mut map = state.chats.lock().unwrap();
+                    if let Some(entry) = map.get_mut(&conversation_id) {
+                        entry.queued_interrupts.clear();
+                    }
+                }
+                let payload = json!({"type": "tool_result", "id": call_id, "name": name, "result": result}).to_string();
+                let mut map = state.chats.lock().unwrap();
+                if let Some(entry) = map.get_mut(&conversation_id) {
+                    entry.emit(payload);
+                }
+            }
+            Some(AgentEvent::Error(err_msg)) => {
+                error!(conversation = %conversation_id, "stream error: {err_msg}");
+                let is_benign = err_msg.contains("Error in input stream") && !reply_buf.trim().is_empty();
+                if is_benign {
+                    warn!(conversation = %conversation_id, "treating benign tail error as done");
+                    break;
+                }
+                let payload = json!({"type": "error", "message": err_msg}).to_string();
+                let mut map = state.chats.lock().unwrap();
+                if let Some(entry) = map.get_mut(&conversation_id) {
+                    entry.emit(payload);
+                    entry.generating = false;
+                }
+                return None;
+            }
+            Some(AgentEvent::Usage(u)) => {
+                usage += u;
+            }
+            Some(_) => {}
         }
     }
 
-    let recovered = stream.into_agent();
+    if usage.total_tokens > 0 {
+        let pool = state.pool.clone();
+        tokio::spawn(async move {
+            let _ = sqlx::query(
+                r#"UPDATE conversations
+                   SET token_usage = token_usage || jsonb_build_object(
+                       'prompt_tokens',     (COALESCE((token_usage->>'prompt_tokens')::bigint, 0) + $1),
+                       'completion_tokens', (COALESCE((token_usage->>'completion_tokens')::bigint, 0) + $2),
+                       'total_tokens',      (COALESCE((token_usage->>'total_tokens')::bigint, 0) + $3)
+                   )
+                   WHERE id = $4"#,
+            )
+            .bind(usage.prompt_tokens as i64)
+            .bind(usage.completion_tokens as i64)
+            .bind(usage.total_tokens as i64)
+            .bind(conversation_id)
+            .execute(&pool)
+            .await;
+        });
 
-    if !reply_buf.is_empty() {
-        let msg = AgentMessage::new(Role::Assistant, &reply_buf);
-        state.persist_message(conversation_id, &msg);
+        let payload = json!({
+            "type": "usage",
+            "prompt_tokens": usage.prompt_tokens,
+            "completion_tokens": usage.completion_tokens,
+            "total_tokens": usage.total_tokens,
+        }).to_string();
+        let mut map = state.chats.lock().unwrap();
+        if let Some(entry) = map.get_mut(&conversation_id) {
+            entry.emit(payload);
+        }
     }
+
+    if !reply_buf.is_empty() || !tool_calls_buf.is_empty() {
+        state.persist_message(
+            conversation_id,
+            &Message::Assistant {
+                content: if reply_buf.is_empty() { None } else { Some(reply_buf) },
+                reasoning: if reasoning_buf.is_empty() { None } else { Some(reasoning_buf) },
+                tool_calls: tool_calls_buf,
+            },
+        );
+    }
+
+    
 
     {
         let mut map = state.chats.lock().unwrap();
@@ -1217,10 +839,6 @@ async fn run_generation(
             } else {
                 entry.emit(json!({"type": "done"}).to_string());
                 entry.generating = false;
-            }
-
-            if let Some(agent) = recovered {
-                entry.agent = Some(agent);
             }
             next_interrupt
         } else {

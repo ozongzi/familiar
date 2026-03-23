@@ -87,6 +87,10 @@ export const api = {
     return post<{ ok: boolean }>("/api/settings", body, token);
   },
 
+  getTokenUsage(token: string) {
+    return get<{ prompt_tokens: number; completion_tokens: number; total_tokens: number; conversation_count: number }>("/api/admin/token-usage", token);
+  },
+
   getAdminConfig(token: string) {
     return get<AdminConfig>("/api/admin/config", token);
   },

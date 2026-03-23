@@ -1,122 +1,28 @@
-import { useState, type FormEvent } from "react";
-import { api } from "../api/client";
-import { useAuth } from "../store/auth.shared";
 import styles from "./LoginPage.module.css";
 
-type Mode = "login" | "register";
-
 export function LoginPage() {
-  const { login } = useAuth();
-  const [mode, setMode] = useState<Mode>("login");
-  const [name, setName] = useState("");
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-
-  async function handleSubmit(e: FormEvent) {
-    e.preventDefault();
-    if (!name.trim() || !password.trim()) {
-      setError("请填写用户名和密码");
-      return;
-    }
-    setError(null);
-    setLoading(true);
-    try {
-      if (mode === "login") {
-        const res = await api.login({ name: name.trim(), password });
-        await login(res.token);
-      } else {
-        await api.register({ name: name.trim(), password });
-        // Auto-login after register
-        const res = await api.login({ name: name.trim(), password });
-        await login(res.token);
-      }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "请求失败");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  function toggleMode() {
-    setMode((m) => (m === "login" ? "register" : "login"));
-    setError(null);
-  }
-
   return (
     <div className={styles.page}>
       <div className={styles.card}>
-        {/* ── Logo ─────────────────────────────────────── */}
         <div className={styles.logoRow}>
           <img src="/favicon.svg" width={40} height={40} alt="" />
           <h1 className={styles.title}>Familiar</h1>
         </div>
-        <p className={styles.subtitle}>
-          {mode === "login" ? "欢迎回来" : "创建账号"}
-        </p>
+        <p className={styles.subtitle}>你的 AI 助手</p>
 
-        {/* ── Form ─────────────────────────────────────── */}
-        <form className={styles.form} onSubmit={handleSubmit} noValidate>
-          <div className={styles.field}>
-            <label htmlFor="name" className={styles.label}>
-              用户名
-            </label>
-            <input
-              id="name"
-              className={styles.input}
-              type="text"
-              autoComplete={mode === "login" ? "username" : "username"}
-              autoFocus
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="输入用户名"
-              maxLength={40}
-              disabled={loading}
-            />
-          </div>
-
-          <div className={styles.field}>
-            <label htmlFor="password" className={styles.label}>
-              密码
-            </label>
-            <input
-              id="password"
-              className={styles.input}
-              type="password"
-              autoComplete={
-                mode === "login" ? "current-password" : "new-password"
-              }
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="输入密码"
-              maxLength={100}
-              disabled={loading}
-            />
-          </div>
-
-          {error && (
-            <p className={styles.error} role="alert">
-              {error}
-            </p>
-          )}
-
-          <button className={styles.submitBtn} type="submit" disabled={loading}>
-            {loading ? "请稍候…" : mode === "login" ? "登录" : "注册"}
-          </button>
-        </form>
-
-        {/* ── Toggle ───────────────────────────────────── */}
-        <p className={styles.toggle}>
-          {mode === "login" ? "还没有账号？" : "已有账号？"}
-          <button
-            className={styles.toggleBtn}
-            type="button"
-            onClick={toggleMode}
-            disabled={loading}
-          >
-            {mode === "login" ? "注册" : "登录"}
-          </button>
-        </p>
+        <a className={styles.githubBtn} href="/api/auth/github">
+          <svg height="20" width="20" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38
+              0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13
+              -.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66
+              .07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15
+              -.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0
+              1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82
+              1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01
+              1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+          </svg>
+          使用 GitHub 登录
+        </a>
       </div>
     </div>
   );

@@ -52,8 +52,8 @@ impl Tool for UiSpells {
     /// 有 options 时前端渲染为快捷按钮。
     ///
     /// description: 本次操作意图（供 UI 渲染，可不填）
-    /// question: 向用户展示的问题文本
-    /// options: 供用户快速选择的选项（可选）
+    /// question: 向用户展示的问题文本，必须简洁明了
+    /// options: 供用户选择的选项（可选）
     async fn ask(
         &self,
         description: Option<String>,

@@ -112,8 +112,8 @@ pub async fn send_message_handler(
 
     // Persist the user message.
     {
-        use agentix::raw::request::message::{Message as AgentMessage, Role};
-        let msg = AgentMessage::new(Role::User, &content);
+        use agentix::{Message, UserContent};
+        let msg = Message::User(vec![UserContent::Text(content.clone())]);
         state.persist_message(conversation_id, &msg);
     }
 
@@ -275,8 +275,8 @@ pub async fn stream_interrupt_handler(
 
     // Persist the interrupt as a user message.
     {
-        use agentix::raw::request::message::{Message as AgentMessage, Role};
-        let msg = AgentMessage::new(Role::User, &content);
+        use agentix::{Message, UserContent};
+        let msg = Message::User(vec![UserContent::Text(content.clone())]);
         state.persist_message(conversation_id, &msg);
     }
 

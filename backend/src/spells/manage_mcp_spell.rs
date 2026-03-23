@@ -1,20 +1,20 @@
 use crate::config::McpCatalogEntry;
 use agentix::tool;
-use agentix::{McpTool, ToolCommand};
-use serde_json::{Value, json};
+use agentix::{Agent, McpTool, tool_trait::ToolBundle};
+use serde_json::{json};
 use sqlx::PgPool;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
-use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::OnceCell;
 use tokio::time::timeout;
 use uuid::Uuid;
 
 pub struct ManageMcpSpell {
     /// All currently running MCP tools for this user's session.
     pub mcp_tools: Arc<Mutex<Vec<(String, McpTool)>>>,
-    /// Channel to inject/remove tools in the running agent without rebuilding it.
-    pub tool_inject_tx: UnboundedSender<ToolCommand>,
+    /// Filled in after the agent Arc is created; ManageMcpSpell waits until set.
+    pub agent: Arc<OnceCell<Arc<Mutex<Agent>>>>,
     /// DB pool for persisting MCP config.
     pub pool: PgPool,
     /// The authenticated user's id.
@@ -24,6 +24,25 @@ pub struct ManageMcpSpell {
     /// Sandbox manager.
     pub sandbox: Arc<crate::sandbox::SandboxManager>,
     pub catalog: Vec<McpCatalogEntry>,
+}
+
+impl ManageMcpSpell {
+    /// Rebuild and push a fresh ToolBundle into the agent after the mcp_tools list changes.
+    async fn sync_tools_to_agent(&self, base_bundle: ToolBundle) {
+        let agent_arc = match self.agent.get() {
+            Some(a) => a,
+            None => { tracing::warn!("sync_tools_to_agent: agent not yet initialised"); return; }
+        };
+        let extra: Vec<McpTool> = {
+            let guard = self.mcp_tools.lock().await;
+            guard.iter().map(|(_, t)| t.clone()).collect()
+        };
+        let mut bundle = base_bundle;
+        for tool in extra {
+            bundle += tool;
+        }
+        agent_arc.lock().await.replace_tool_bundle(bundle).await;
+    }
 }
 
 #[tool]
@@ -51,7 +70,6 @@ impl Tool for ManageMcpSpell {
         let entries: Vec<Value> = tools
             .iter()
             .map(|(name, tool)| {
-                // 收集该 MCP 导出的每个工具的名称
                 let tool_names: Vec<String> = tool
                     .raw_tools()
                     .into_iter()
@@ -88,7 +106,6 @@ impl Tool for ManageMcpSpell {
         let tool_count = tool.raw_tools().len();
         let new_tools = tool.raw_tools().clone();
 
-        // Persist to DB so it survives restarts.
         let config = json!({ "url": url });
         if let Err(e) = sqlx::query(
             r#"INSERT INTO conversation_mcps (conversation_id, name, "type", config) VALUES ($1, $2, 'http', $3)
@@ -103,13 +120,11 @@ impl Tool for ManageMcpSpell {
             tracing::warn!("failed to persist MCP '{}': {e}", name);
         }
 
-        let _ = self
-            .tool_inject_tx
-            .send(ToolCommand::Add(Box::new(tool.clone())));
         {
             let mut tools = self.mcp_tools.lock().await;
             tools.push((name.clone(), tool));
         }
+        self.sync_tools_to_agent(ToolBundle::new()).await;
 
         json!({
             "status": "ok",
@@ -131,8 +146,6 @@ impl Tool for ManageMcpSpell {
         }
 
         let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-
-        // Wrap with Docker exec for sandboxing
         let (cmd, args_wrapped_vec) =
             self.sandbox
                 .wrap_mcp_command(self.user_id, self.conversation_id, &command, &args_ref);
@@ -167,13 +180,11 @@ impl Tool for ManageMcpSpell {
             tracing::warn!("failed to persist MCP '{}': {e}", name);
         }
 
-        let _ = self
-            .tool_inject_tx
-            .send(ToolCommand::Add(Box::new(tool.clone())));
         {
             let mut tools = self.mcp_tools.lock().await;
             tools.push((name.clone(), tool));
         }
+        self.sync_tools_to_agent(ToolBundle::new()).await;
 
         json!({
             "status": "ok",
@@ -185,25 +196,15 @@ impl Tool for ManageMcpSpell {
     /// 停止并卸载 MCP 服务器
     /// name: 要卸载的服务器标识符
     async fn uninstall_mcp(&self, name: String) -> Value {
-        let tool_names: Vec<String> = {
+        let found = {
             let tools = self.mcp_tools.lock().await;
-            tools
-                .iter()
-                .find(|(n, _)| n == &name)
-                .map(|(_, t)| {
-                    t.raw_tools()
-                        .iter()
-                        .map(|r| r.function.name.clone())
-                        .collect()
-                })
-                .unwrap_or_default()
+            tools.iter().any(|(n, _)| n == &name)
         };
 
-        if tool_names.is_empty() {
+        if !found {
             return json!({ "error": format!("MCP '{}' 未在运行列表中", name) });
         }
 
-        // Remove from DB.
         if let Err(e) = sqlx::query("DELETE FROM conversation_mcps WHERE conversation_id = $1 AND name = $2")
             .bind(self.conversation_id)
             .bind(&name)
@@ -213,14 +214,12 @@ impl Tool for ManageMcpSpell {
             tracing::warn!("failed to delete MCP '{}' from DB: {e}", name);
         }
 
-        let _ = self.tool_inject_tx.send(ToolCommand::Remove(tool_names));
         {
             let mut tools = self.mcp_tools.lock().await;
-            if let Some(idx) = tools.iter().position(|(n, _)| n == &name) {
-                tools.remove(idx);
-            }
+            tools.retain(|(n, _)| n != &name);
         }
+        self.sync_tools_to_agent(ToolBundle::new()).await;
 
-        json!({ "status": "ok", "message": format!("MCP '{}' 已卸载。", name) })
+        json!({ "status": "ok", "message": format!("MCP '{}' 已卸载", name) })
     }
 }

@@ -235,11 +235,15 @@ async fn handle_tunnel(socket: WebSocket, user_id: Uuid, state: AppState) {
 
     // 如果当前有活跃的 chat entry，立即注入工具
     let injected = {
-        let chats = state.chats.lock().unwrap();
-        if let Some(entry) = chats.get(&user_id) {
-            let _ = entry
-                .tool_inject_tx
-                .send(agentix::ToolCommand::Add(Box::new(mcp_tool.clone())));
+        let agent_arc = {
+            let chats = state.chats.lock().unwrap();
+            chats.get(&user_id).map(|e| std::sync::Arc::clone(&e.agent))
+        };
+        if let Some(agent_arc) = agent_arc {
+            let tool = mcp_tool.clone();
+            tokio::spawn(async move {
+                agent_arc.lock().await.add_tool(tool).await;
+            });
             true
         } else {
             false
@@ -261,20 +265,8 @@ async fn handle_tunnel(socket: WebSocket, user_id: Uuid, state: AppState) {
         registry.remove(&user_id);
     }
 
-    // 如果当前有活跃的 chat entry，通过 inject_tx 移除该用户的隧道工具
-    {
-        let tool_names: Vec<String> = mcp_tool
-            .raw_tools()
-            .iter()
-            .map(|t| t.function.name.clone())
-            .collect();
-        let chats = state.chats.lock().unwrap();
-        if let Some(entry) = chats.get(&user_id) {
-            let _ = entry
-                .tool_inject_tx
-                .send(agentix::ToolCommand::Remove(tool_names));
-        }
-    }
+    // 隧道断开后，下次 build_agent 时不会从注册表加载该工具，已足够
+    // （当前运行中的 agent turn 继续持有旧工具引用直到本轮结束）
 
     tracing::info!(%user_id, "客户端隧道已断开");
 }

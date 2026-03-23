@@ -2,6 +2,7 @@ pub mod admin;
 pub mod auth;
 pub mod conversations;
 pub mod files;
+pub mod github_oauth;
 pub mod history;
 pub mod mcps;
 pub mod sessions;
@@ -16,6 +17,7 @@ use admin::{
     create_app_skill, delete_app_skill, get_admin_config, list_app_skills, update_admin_config,
     update_app_skill, list_users, create_user, update_user, delete_user, reset_user_password,
     list_audit_logs,
+    get_token_usage,
     list_global_mcps, create_global_mcp, update_global_mcp, delete_global_mcp,
 };
 use axum::extract::DefaultBodyLimit;
@@ -77,6 +79,8 @@ pub fn create_router(state: AppState, allowed_origin: Option<&str>) -> Router {
         // ── Auth ──────────────────────────────────────────────────────────────
         .route("/api/sessions", post(login))
         .route("/api/sessions", delete(logout))
+        .route("/api/auth/github", get(github_oauth::github_login))
+        .route("/api/auth/github/callback", get(github_oauth::github_callback))
         // ── Users ─────────────────────────────────────────────────────────────
         .route("/api/users", post(register))
         .route("/api/users/me", get(get_me))
@@ -107,6 +111,7 @@ pub fn create_router(state: AppState, allowed_origin: Option<&str>) -> Router {
         .route("/api/admin/users/{id}/reset-password", post(reset_user_password))
         // ── Admin Audit Logs ─────────────────────────────────────────────────
         .route("/api/admin/audit-logs", get(list_audit_logs))
+        .route("/api/admin/token-usage", get(get_token_usage))
         // ── User Skills (per-user) ─────────────────────────────────────────────
         .route("/api/skills", get(list_skills))
         .route("/api/skills", post(create_skill))

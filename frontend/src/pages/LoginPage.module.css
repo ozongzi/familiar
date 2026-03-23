@@ -178,3 +178,34 @@
     opacity: 0.5;
     cursor: not-allowed;
 }
+
+/* ─── GitHub button ──────────────────────────────────────────────────────── */
+
+.githubBtn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    margin-top: 18px;
+    width: 100%;
+    padding: 11px;
+    border-radius: var(--radius-md);
+    background: #24292e;
+    color: #fff;
+    font-size: 0.97em;
+    font-weight: 600;
+    font-family: var(--font-sans);
+    text-decoration: none;
+    transition:
+        background var(--transition),
+        transform var(--transition);
+}
+
+.githubBtn:hover {
+    background: #1a1e22;
+}
+
+.githubBtn:active {
+    transform: scale(0.98);
+}
+

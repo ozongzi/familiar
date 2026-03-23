@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-use agentix::{McpTool, ToolCommand};
+use agentix::McpTool;
 use std::time::Duration;
 use tokio::time::timeout;
 
@@ -102,8 +102,9 @@ pub async fn create_mcp(
         }
     })?;
 
-    // For stdio tools, we need to construct them per-session to use the correct sandbox.
-    // For http tools, we can construct once.
+    // Eagerly connect the new tool and push it into all active sessions for this user.
+    // For http tools we connect once; for stdio we must connect per-session with the
+    // correct sandbox wrapping.
     let http_tool: Option<McpTool> = if req.r#type == "http" {
         if let Some(url) = req.config.get("url").and_then(|v| v.as_str()) {
             match timeout(Duration::from_secs(15), McpTool::http(url)).await {
@@ -117,17 +118,16 @@ pub async fn create_mcp(
         None
     };
 
-    // Collect per-session inject senders, per-session mcp vectors, and conversation_ids for this user
     let sessions: Vec<_> = {
         let map = state.chats.lock().unwrap();
         map.iter()
             .filter(|(_, e)| e.user_id == auth.user_id)
-            .map(|(&cid, e)| (cid, e.tool_inject_tx.clone(), e.user_mcp_tools.clone()))
+            .map(|(&cid, e)| (cid, e.user_mcp_tools.clone(), std::sync::Arc::clone(&e.agent)))
             .collect()
     };
 
-    for (cid, tx, mcp_vec) in sessions {
-        let tool = if let Some(ref t) = http_tool {
+    for (cid, mcp_vec, agent_arc) in sessions {
+        let tool: Option<McpTool> = if let Some(ref t) = http_tool {
             Some(t.clone())
         } else if req.r#type == "stdio" {
             let command = req.config.get("command").and_then(|v| v.as_str()).unwrap_or_default();
@@ -147,22 +147,24 @@ pub async fn create_mcp(
         };
 
         if let Some(tool) = tool {
-            let _ = tx.send(ToolCommand::Add(Box::new(tool.clone())));
             let name = req.name.clone();
-            if let Ok(mut guard) = mcp_vec.try_lock() {
+            {
+                let mut guard = mcp_vec.lock().await;
                 guard.retain(|(n, _)| n != &name);
-                guard.push((name, tool));
-            } else {
-                let mcp_vec_clone = mcp_vec.clone();
-                let name_clone = name.clone();
-                tokio::spawn(async move {
-                    let mut g = mcp_vec_clone.lock().await;
-                    g.retain(|(n, _)| n != &name_clone);
-                    g.push((name_clone, tool));
-                });
+                guard.push((name, tool.clone()));
             }
+            agent_arc.lock().await.add_tool(tool).await;
         }
     }
+
+    let _ = crate::audit::log_audit(
+        &state.pool,
+        Some(auth.user_id),
+        None,
+        "mcp.create",
+        Some(serde_json::json!({ "name": req.name, "type": req.r#type })),
+        None,
+    ).await;
 
     Ok(Json(McpResponse::from(row)))
 }
@@ -191,7 +193,6 @@ pub async fn update_mcp(
     .await?
     .ok_or_else(|| AppError::not_found("MCP 不存在"))?;
 
-    // Per-session injection logic similar to create_mcp
     let http_tool: Option<McpTool> = if req.r#type == "http" {
         if let Some(url) = req.config.get("url").and_then(|v| v.as_str()) {
             match timeout(Duration::from_secs(15), McpTool::http(url)).await {
@@ -209,12 +210,12 @@ pub async fn update_mcp(
         let map = state.chats.lock().unwrap();
         map.iter()
             .filter(|(_, e)| e.user_id == auth.user_id)
-            .map(|(&cid, e)| (cid, e.tool_inject_tx.clone(), e.user_mcp_tools.clone()))
+            .map(|(&cid, e)| (cid, e.user_mcp_tools.clone(), std::sync::Arc::clone(&e.agent)))
             .collect()
     };
 
-    for (cid, tx, mcp_vec) in sessions {
-        let tool = if let Some(ref t) = http_tool {
+    for (cid, mcp_vec, agent_arc) in sessions {
+        let tool: Option<McpTool> = if let Some(ref t) = http_tool {
             Some(t.clone())
         } else if req.r#type == "stdio" {
             let command = req.config.get("command").and_then(|v| v.as_str()).unwrap_or_default();
@@ -234,22 +235,24 @@ pub async fn update_mcp(
         };
 
         if let Some(tool) = tool {
-            let _ = tx.send(ToolCommand::Add(Box::new(tool.clone())));
             let name = req.name.clone();
-            if let Ok(mut guard) = mcp_vec.try_lock() {
+            {
+                let mut guard = mcp_vec.lock().await;
                 guard.retain(|(n, _)| n != &name);
-                guard.push((name, tool));
-            } else {
-                let mcp_vec_clone = mcp_vec.clone();
-                let name_clone = name.clone();
-                tokio::spawn(async move {
-                    let mut g = mcp_vec_clone.lock().await;
-                    g.retain(|(n, _)| n != &name_clone);
-                    g.push((name_clone, tool));
-                });
+                guard.push((name, tool.clone()));
             }
+            agent_arc.lock().await.add_tool(tool).await;
         }
     }
+
+    let _ = crate::audit::log_audit(
+        &state.pool,
+        Some(auth.user_id),
+        None,
+        "mcp.update",
+        Some(serde_json::json!({ "id": id, "name": req.name, "type": req.r#type })),
+        None,
+    ).await;
 
     Ok(Json(McpResponse::from(row)))
 }
@@ -269,43 +272,6 @@ pub async fn delete_mcp(
 
     let row = existing.ok_or_else(|| AppError::not_found("MCP 不存在"))?;
 
-    let sessions: Vec<_> = {
-        let map = state.chats.lock().unwrap();
-        map.iter()
-            .filter(|(_, e)| e.user_id == auth.user_id)
-            .map(|(&cid, e)| (cid, e.tool_inject_tx.clone(), e.user_mcp_tools.clone()))
-            .collect()
-    };
-
-    // To obtain tool names for removal, we only need to start the tool ONCE using any available session's sandbox.
-    let mut tool_names: Vec<String> = Vec::new();
-    if let Some(&(cid, _, _)) = sessions.first() {
-        tool_names = match row.mcp_type.as_str() {
-            "http" => {
-                let url = row.config.get("url").and_then(|v| v.as_str()).unwrap_or_default().to_string();
-                match timeout(Duration::from_secs(15), McpTool::http(&url)).await {
-                    Ok(Ok(t)) => t.raw_tools().iter().map(|r| r.function.name.clone()).collect(),
-                    _ => vec![],
-                }
-            }
-            "stdio" => {
-                let command = row.config.get("command").and_then(|v| v.as_str()).unwrap_or_default().to_string();
-                let args: Vec<String> = row.config.get("args").and_then(|v| v.as_array()).map(|a| {
-                    a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()
-                }).unwrap_or_default();
-                let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-                let (cmd, args_wrapped_vec) = state.sandbox.wrap_mcp_command(auth.user_id, cid, &command, &args_ref);
-                let args_wrapped: Vec<&str> = args_wrapped_vec.iter().map(|s| s.as_str()).collect();
-
-                match timeout(Duration::from_secs(300), McpTool::stdio(&cmd, &args_wrapped)).await {
-                    Ok(Ok(t)) => t.raw_tools().iter().map(|r| r.function.name.clone()).collect(),
-                    _ => vec![],
-                }
-            }
-            _ => vec![],
-        };
-    }
-
     let result = sqlx::query("DELETE FROM user_mcps WHERE id = $1 AND user_id = $2")
         .bind(id)
         .bind(auth.user_id)
@@ -316,21 +282,43 @@ pub async fn delete_mcp(
         return Err(AppError::not_found("MCP 不存在"));
     }
 
-    if !tool_names.is_empty() {
-        for (_, tx, mcp_vec) in sessions {
-            let _ = tx.send(ToolCommand::Remove(tool_names.clone()));
-            if let Ok(mut guard) = mcp_vec.try_lock() {
-                guard.retain(|(n, _)| !tool_names.iter().any(|tn| n == tn));
-            } else {
-                let mcp_vec_clone = mcp_vec.clone();
-                let names = tool_names.clone();
-                tokio::spawn(async move {
-                    let mut g = mcp_vec_clone.lock().await;
-                    g.retain(|(n, _)| !names.iter().any(|tn| n == tn));
-                });
-            }
+    // Remove from all active sessions for this user and hot-swap the agent's tool bundle
+    let sessions: Vec<_> = {
+        let map = state.chats.lock().unwrap();
+        map.iter()
+            .filter(|(_, e)| e.user_id == auth.user_id)
+            .map(|(_, e)| (e.user_mcp_tools.clone(), std::sync::Arc::clone(&e.agent)))
+            .collect()
+    };
+
+    let name = row.name.clone();
+    for (mcp_vec, agent_arc) in sessions {
+        // Remove from the session's MCP list
+        let tool_fn_names: Vec<String> = {
+            let mut guard = mcp_vec.lock().await;
+            let names = guard
+                .iter()
+                .filter(|(n, _)| n == &name)
+                .flat_map(|(_, t)| t.raw_tools().into_iter().map(|r| r.function.name.clone()))
+                .collect();
+            guard.retain(|(n, _)| n != &name);
+            names
+        };
+        // Hot-remove each tool function from the running agent by name
+        let mut agent = agent_arc.lock().await;
+        for fn_name in &tool_fn_names {
+            agent.delete_tool(fn_name).await;
         }
     }
+
+    let _ = crate::audit::log_audit(
+        &state.pool,
+        Some(auth.user_id),
+        None,
+        "mcp.delete",
+        Some(serde_json::json!({ "id": id, "name": name })),
+        None,
+    ).await;
 
     Ok(Json(json!({ "ok": true })))
 }

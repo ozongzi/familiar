@@ -2,23 +2,16 @@ use std::{sync::Arc, sync::atomic::AtomicBool};
 
 use crate::config::ModelConfig;
 
-#[allow(unused)]
-use super::a2a_spell::A2aSpell;
-use agentix::{AgentEvent, McpTool, tool, tool_trait::ToolBundle};
-use agentix::agent::agent_core::{AnthropicAgent, DeepSeekAgent, GeminiAgent, OpenAIAgent};
+use agentix::{Agent, AgentEvent, LlmClient, McpTool, tool, tool_trait::ToolBundle};
 use crate::config::Provider;
-use crate::state::AnyAgent;
 use serde_json::json;
 use tokio::sync::Mutex;
 
 pub struct SpawnSpell {
     pub cheap_model: ModelConfig,
     pub subagent_prompt: Option<String>,
-    /// 与主 Agent 共享的 MCP 工具列表，子 Agent 全部继承
     pub mcp_tools: Arc<Mutex<Vec<(String, McpTool)>>>,
-    /// 子 Agent 事件广播频道，供 UI 实时显示子 Agent 输出和工具调用
     pub broadcast_tx: tokio::sync::broadcast::Sender<String>,
-    /// 主 Agent 的中断标志，子 Agent 共享
     pub abort_flag: Arc<AtomicBool>,
 }
 
@@ -46,98 +39,63 @@ impl Tool for SpawnSpell {
             self.cheap_model.name.clone()
         };
 
-        let mut builder: AnyAgent = match self.cheap_model.provider {
-            Provider::DeepSeek => AnyAgent::DeepSeek(
-                DeepSeekAgent::custom(
-                    self.cheap_model.api_key.clone(),
-                    self.cheap_model.api_base.clone(),
-                    model_name,
-                )
-            ),
-            Provider::OpenAI => AnyAgent::OpenAI(
-                OpenAIAgent::new(
-                    self.cheap_model.api_key.clone(),
-                    self.cheap_model.api_base.clone(),
-                    model_name,
-                )
-            ),
-            Provider::Anthropic => AnyAgent::Anthropic(
-                AnthropicAgent::new(
-                    self.cheap_model.api_key.clone(),
-                    self.cheap_model.api_base.clone(),
-                    model_name,
-                )
-            ),
-            Provider::Gemini => AnyAgent::Gemini(
-                GeminiAgent::new(
-                    self.cheap_model.api_key.clone(),
-                    self.cheap_model.api_base.clone(),
-                    model_name,
-                )
-            ),
+        let client = match self.cheap_model.provider {
+            Provider::DeepSeek  => LlmClient::deepseek(self.cheap_model.api_key.clone()),
+            Provider::OpenAI    => LlmClient::openai(self.cheap_model.api_key.clone()),
+            Provider::Anthropic => LlmClient::anthropic(self.cheap_model.api_key.clone()),
+            Provider::Gemini    => LlmClient::gemini(self.cheap_model.api_key.clone()),
         };
-        builder = builder
-            .streaming()
-            .with_system_prompt(self.subagent_prompt.clone().unwrap_or_default())
-            .with_tool(ToolBundle::new());
+        client.base_url(self.cheap_model.api_base.clone());
+        client.model(model_name);
 
-        for (k, v) in &self.cheap_model.extra_body {
-            builder = builder.extra_field(k.clone(), v.clone());
+        let mut agent = Agent::new(client);
+        if let Some(prompt) = &self.subagent_prompt {
+            agent = agent.system_prompt(prompt.clone());
         }
 
-        for (_, tool) in mcp_snapshot {
-            builder = builder.with_tool(tool);
+        let mut bundle = ToolBundle::new();
+        for (_, tool) in &mcp_snapshot {
+            bundle += tool.clone();
         }
-
-        // 保留 interrupt channel，但通过 abort_flag 检查中断
-        let mut stream = builder.chat(&goal);
+        agent = agent.tool(bundle);
 
         let abort_flag = Arc::clone(&self.abort_flag);
+        let mut stream = match agent.chat(goal).await {
+            Ok(s) => s,
+            Err(e) => return json!({ "error": format!("子 Agent 启动失败: {e}") }),
+        };
+
         let mut result = String::new();
         while let Some(event) = stream.next().await {
-            // 检查主 Agent 是否被中断
             if abort_flag.load(std::sync::atomic::Ordering::Acquire) {
                 return json!({ "error": "任务被用户中断" });
             }
 
             match event {
-                Ok(AgentEvent::Token(t)) => {
+                AgentEvent::Token(t) => {
                     result.push_str(&t);
                     let _ = self.broadcast_tx.send(
-                        json!({
-                            "type": "token",
-                            "content": t,
-                            "source": "spawn",
-                        })
-                        .to_string(),
+                        json!({"type": "token", "content": t, "source": "spawn"}).to_string(),
                     );
                 }
-                Ok(AgentEvent::ToolCall(c)) => {
+                AgentEvent::ToolCallChunk(c) => {
                     let _ = self.broadcast_tx.send(
-                        json!({
-                            "type": "tool_call",
-                            "id": c.id,
-                            "name": c.name,
-                            "delta": c.delta,
-                            "source": "spawn",
-                        })
-                        .to_string(),
+                        json!({"type": "tool_call", "id": c.id, "name": c.name, "delta": c.delta, "source": "spawn"}).to_string(),
                     );
                 }
-                Ok(AgentEvent::ToolResult(res)) => {
+                AgentEvent::ToolCall(c) => {
                     let _ = self.broadcast_tx.send(
-                        json!({
-                            "type": "tool_result",
-                            "id": res.id,
-                            "name": res.name,
-                            "result": res.result,
-                            "source": "spawn",
-                        })
-                        .to_string(),
+                        json!({"type": "tool_call", "id": c.id, "name": c.name, "delta": c.arguments, "source": "spawn"}).to_string(),
                     );
                 }
-                Ok(AgentEvent::ReasoningToken(_)) => {}
-                Err(e) => return json!({ "error": format!("子 Agent 错误: {e}") }),
+                AgentEvent::ToolResult { call_id, name, result: res } => {
+                    let _ = self.broadcast_tx.send(
+                        json!({"type": "tool_result", "id": call_id, "name": name, "result": res, "source": "spawn"}).to_string(),
+                    );
+                }
+                AgentEvent::Reasoning(_) | AgentEvent::Done => {}
+                AgentEvent::Error(e) => return json!({ "error": format!("子 Agent 错误: {e}") }),
+                _ => {}
             }
         }
 

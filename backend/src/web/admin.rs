@@ -731,3 +731,37 @@ async fn try_init_mcp(cfg: &McpServerConfig) -> Option<McpTool> {
         }
     }
 }
+
+/// GET /api/admin/token-usage
+pub async fn get_token_usage(
+    State(state): State<AppState>,
+    _auth: AuthUser,
+) -> AppResult<Json<serde_json::Value>> {
+    let rows: Vec<(Option<serde_json::Value>,)> = sqlx::query_as(
+        "SELECT token_usage FROM conversations WHERE token_usage IS NOT NULL"
+    )
+    .fetch_all(&state.pool)
+    .await?;
+
+    let mut prompt = 0i64;
+    let mut completion = 0i64;
+    let mut total = 0i64;
+    let mut count = 0i64;
+
+    for (usage,) in rows {
+        if let Some(u) = usage {
+            prompt     += u.get("prompt_tokens").and_then(|v| v.as_i64()).unwrap_or(0);
+            completion += u.get("completion_tokens").and_then(|v| v.as_i64()).unwrap_or(0);
+            total      += u.get("total_tokens").and_then(|v| v.as_i64()).unwrap_or(0);
+            count += 1;
+        }
+    }
+
+    Ok(Json(serde_json::json!({
+        "prompt_tokens":      prompt,
+        "completion_tokens":  completion,
+        "total_tokens":       total,
+        "conversation_count": count,
+    })))
+}
+

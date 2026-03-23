@@ -12,7 +12,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     loading: true,
   });
 
-  // On mount (or token change), fetch /api/users/me to validate the token. 
+  // On mount: consume #token= injected by GitHub OAuth callback redirect.
+  useEffect(() => {
+    const hash = window.location.hash.replace(/^#/, "");
+    const match = hash.match(/(?:^|&)token=([^&]+)/);
+    const urlToken = match?.[1];
+    if (urlToken) {
+      localStorage.setItem(TOKEN_KEY, urlToken);
+      dispatch({ type: "SET_TOKEN", token: urlToken });
+      window.history.replaceState({}, "", window.location.pathname + window.location.search);
+    }
+  }, []);
+
+  // On mount (or token change), fetch /api/users/me to validate the token.
   useEffect(() => {
     if (!state.token) {
       dispatch({ type: "SET_LOADING", loading: false });
