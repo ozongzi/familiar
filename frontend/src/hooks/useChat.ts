@@ -303,8 +303,8 @@ export function useChat(
       if (m.role === "assistant" && m.tool_calls) {
         type RawToolCall = {
           id: string;
-          type?: string;
-          function?: { name: string; arguments: string };
+          name: string;
+          arguments: string;
         };
         let calls: RawToolCall[] = [];
         try {
@@ -323,21 +323,20 @@ export function useChat(
           });
         }
         for (const tc of calls) {
-          console.warn("tc = ", tc);
-          if (!tc.id || !tc.function) continue;
-          const result = toolResultMap.get(tc.id) ?? null;
-          const argsRaw = tc.function.arguments ?? "";
+          const { id, name, arguments: argsRaw = "" } = tc;
+          if (!id || !name) continue;
+          const result = toolResultMap.get(id) ?? null;
 
           // visualize → 恢复 widgetCode 到 ToolBubble
-          const widgetCode = tc.function.name === "visualize" && result !== null
+          const widgetCode = name === "visualize" && result !== null
             ? (extractWidgetCode(result) ?? extractWidgetCode(tryParseWidgetArgs(argsRaw)))
             : null;
 
           const toolBubble: ToolBubble = {
             kind: "tool",
-            key: `tool-${tc.id}`,
+            key: `tool-${id}`,
             role: "tool",
-            name: tc.function.name,
+            name,
             description: extractDescription(argsRaw) ?? "",
             argsRaw,
             result,

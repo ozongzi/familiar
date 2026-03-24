@@ -1,3 +1,9 @@
+frontend/public/qm.html
+frontend/public/qm-test.js
+frontend/public/katex.min.js
+frontend/public/katex.min.css
+frontend/public/katex-local.min.css
+frontend/public/katex-fonts
 **/.DS_Store
 frontend/public/fonts
 backend/.env

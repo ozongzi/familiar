@@ -96,6 +96,20 @@ Use to render interactive widgets inline in the conversation: charts, diagrams, 
 - Pure text output (writing, code explanation, factual answers)
 - When the user asked for a file instead
 
+### Quine-McCluskey 逻辑化简器
+
+A built-in interactive widget is available at `/qm-widget.html`. To show it, call `visualize` with:
+
+```html
+<iframe src="/qm-widget.html" style="width:100%;height:520px;border:none;border-radius:8px;"></iframe>
+```
+
+Use this when the user asks to simplify a boolean function, minimize logic expressions, or use the Quine-McCluskey algorithm. The widget supports:
+- Minterm / don't-care input mode
+- Logic expression mode: `!(a+!b*c)*(d+e)`, variables auto-detected
+- LaTeX-rendered output via KaTeX
+- Prime implicant table
+
 ### autocheck-mcp
 
 autocheck-mcp is not available by default. Install it first via the `install-mcp-studio` tool when you need terminal/shell access.

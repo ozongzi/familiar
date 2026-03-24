@@ -11,7 +11,6 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
 use agentix::{Agent, McpTool};
-pub use agentix::tool_trait::ToolBundle;
 use tokio::sync::OnceCell;
 use uuid::Uuid;
 
@@ -48,9 +47,8 @@ pub struct SpellDeps {
 }
 
 /// Build the complete built-in spell bundle from the given dependencies.
-pub fn build_all_spells(deps: SpellDeps) -> ToolBundle {
-    ToolBundle::new()
-        + SkillSpell {
+pub fn build_all_spells(deps: SpellDeps) -> impl agentix::Tool {
+    SkillSpell {
             pool: deps.pool.clone(),
             user_id: deps.user_id,
         }

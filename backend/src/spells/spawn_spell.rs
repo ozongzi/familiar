@@ -2,7 +2,7 @@ use std::{sync::Arc, sync::atomic::AtomicBool};
 
 use crate::config::ModelConfig;
 
-use agentix::{Agent, AgentEvent, LlmClient, McpTool, tool, tool_trait::ToolBundle};
+use agentix::{Agent, AgentEvent, LlmClient, McpTool, tool};
 use crate::config::Provider;
 use serde_json::json;
 use tokio::sync::Mutex;
@@ -53,10 +53,7 @@ impl Tool for SpawnSpell {
             agent = agent.system_prompt(prompt.clone());
         }
 
-        let mut bundle = ToolBundle::new();
-        for (_, tool) in &mcp_snapshot {
-            bundle += tool.clone();
-        }
+        let bundle: agentix::ToolBundle = mcp_snapshot.into_iter().map(|(_, t)| t).sum();
         agent = agent.tool(bundle);
 
         let abort_flag = Arc::clone(&self.abort_flag);

@@ -53,7 +53,7 @@ build-sandbox:
 # ── Deploy (local cross-compile → scp binary + client, then restart) ─────────
 # scp/rsync first, restart last — never stop before copying so the running
 # process is never killed mid-tool-call by its own deploy.
-deploy: all build-sandbox
+deploy: all
 	scp $(BIN) $(HOST):/usr/local/bin/familiar.new
 	ssh $(HOST) "mv /usr/local/bin/familiar.new /usr/local/bin/familiar"
 	ssh $(HOST) "mkdir -p /srv/familiar/frontend/dist"

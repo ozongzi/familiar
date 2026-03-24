@@ -1,6 +1,6 @@
 use crate::config::McpCatalogEntry;
 use agentix::tool;
-use agentix::{Agent, McpTool, tool_trait::ToolBundle};
+use agentix::{Agent, McpTool};
 use serde_json::{json};
 use sqlx::PgPool;
 use std::sync::Arc;
@@ -27,21 +27,17 @@ pub struct ManageMcpSpell {
 }
 
 impl ManageMcpSpell {
-    /// Rebuild and push a fresh ToolBundle into the agent after the mcp_tools list changes.
-    async fn sync_tools_to_agent(&self, base_bundle: ToolBundle) {
+    /// Rebuild and push a fresh tool set into the agent after the mcp_tools list changes.
+    async fn sync_tools_to_agent(&self) {
         let agent_arc = match self.agent.get() {
             Some(a) => a,
             None => { tracing::warn!("sync_tools_to_agent: agent not yet initialised"); return; }
         };
-        let extra: Vec<McpTool> = {
+        let bundle = {
             let guard = self.mcp_tools.lock().await;
-            guard.iter().map(|(_, t)| t.clone()).collect()
+            guard.iter().map(|(_, t)| t.clone()).sum()
         };
-        let mut bundle = base_bundle;
-        for tool in extra {
-            bundle += tool;
-        }
-        agent_arc.lock().await.replace_tool_bundle(bundle).await;
+        agent_arc.lock().await.replace_tool(bundle).await;
     }
 }
 
@@ -124,7 +120,7 @@ impl Tool for ManageMcpSpell {
             let mut tools = self.mcp_tools.lock().await;
             tools.push((name.clone(), tool));
         }
-        self.sync_tools_to_agent(ToolBundle::new()).await;
+        self.sync_tools_to_agent().await;
 
         json!({
             "status": "ok",
@@ -184,7 +180,7 @@ impl Tool for ManageMcpSpell {
             let mut tools = self.mcp_tools.lock().await;
             tools.push((name.clone(), tool));
         }
-        self.sync_tools_to_agent(ToolBundle::new()).await;
+        self.sync_tools_to_agent().await;
 
         json!({
             "status": "ok",
@@ -218,7 +214,7 @@ impl Tool for ManageMcpSpell {
             let mut tools = self.mcp_tools.lock().await;
             tools.retain(|(n, _)| n != &name);
         }
-        self.sync_tools_to_agent(ToolBundle::new()).await;
+        self.sync_tools_to_agent().await;
 
         json!({ "status": "ok", "message": format!("MCP '{}' 已卸载", name) })
     }
