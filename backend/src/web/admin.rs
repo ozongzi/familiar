@@ -765,3 +765,137 @@ pub async fn get_token_usage(
     })))
 }
 
+pub async fn get_token_usage_by_user(
+    State(state): State<AppState>,
+    _auth: AuthUser,
+) -> AppResult<Json<serde_json::Value>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT u.id::text AS user_id, u.name AS username,
+               COUNT(c.id)::bigint AS conversation_count,
+               COALESCE(SUM((c.token_usage->>'prompt_tokens')::bigint), 0)::bigint     AS prompt_tokens,
+               COALESCE(SUM((c.token_usage->>'completion_tokens')::bigint), 0)::bigint AS completion_tokens,
+               COALESCE(SUM((c.token_usage->>'total_tokens')::bigint), 0)::bigint      AS total_tokens
+        FROM users u
+        LEFT JOIN conversations c ON c.user_id = u.id
+        WHERE u.is_admin = false
+        GROUP BY u.id, u.name
+        ORDER BY total_tokens DESC
+        "#
+    )
+    .fetch_all(&state.pool)
+    .await?;
+
+    let users: Vec<serde_json::Value> = rows.iter().map(|r| {
+        use sqlx::Row;
+        serde_json::json!({
+            "user_id":            r.get::<String, _>("user_id"),
+            "username":           r.get::<String, _>("username"),
+            "conversation_count": r.get::<i64, _>("conversation_count"),
+            "prompt_tokens":      r.get::<i64, _>("prompt_tokens"),
+            "completion_tokens":  r.get::<i64, _>("completion_tokens"),
+            "total_tokens":       r.get::<i64, _>("total_tokens"),
+        })
+    }).collect();
+
+    Ok(Json(serde_json::json!({ "users": users })))
+}
+
+pub async fn get_token_usage_conversations(
+    State(state): State<AppState>,
+    _auth: AuthUser,
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> AppResult<Json<serde_json::Value>> {
+    let user_id = params.get("user_id").cloned().unwrap_or_default();
+
+    let rows = if user_id.is_empty() {
+        sqlx::query(
+            r#"
+            SELECT c.id::text AS conv_id, c.name AS conv_name,
+                   u.name AS username,
+                   c.created_at::text AS created_at,
+                   COALESCE((c.token_usage->>'prompt_tokens')::bigint, 0)     AS prompt_tokens,
+                   COALESCE((c.token_usage->>'completion_tokens')::bigint, 0) AS completion_tokens,
+                   COALESCE((c.token_usage->>'total_tokens')::bigint, 0)      AS total_tokens
+            FROM conversations c
+            JOIN users u ON u.id = c.user_id
+            WHERE COALESCE((c.token_usage->>'total_tokens')::bigint, 0) > 0
+            ORDER BY c.created_at DESC
+            LIMIT 200
+            "#
+        )
+        .fetch_all(&state.pool)
+        .await?
+    } else {
+        sqlx::query(
+            r#"
+            SELECT c.id::text AS conv_id, c.name AS conv_name,
+                   u.name AS username,
+                   c.created_at::text AS created_at,
+                   COALESCE((c.token_usage->>'prompt_tokens')::bigint, 0)     AS prompt_tokens,
+                   COALESCE((c.token_usage->>'completion_tokens')::bigint, 0) AS completion_tokens,
+                   COALESCE((c.token_usage->>'total_tokens')::bigint, 0)      AS total_tokens
+            FROM conversations c
+            JOIN users u ON u.id = c.user_id
+            WHERE c.user_id = $1::uuid
+              AND COALESCE((c.token_usage->>'total_tokens')::bigint, 0) > 0
+            ORDER BY c.created_at DESC
+            LIMIT 200
+            "#
+        )
+        .bind(&user_id)
+        .fetch_all(&state.pool)
+        .await?
+    };
+
+    let conversations: Vec<serde_json::Value> = rows.iter().map(|r| {
+        use sqlx::Row;
+        serde_json::json!({
+            "conv_id":           r.get::<String, _>("conv_id"),
+            "conv_name":         r.get::<String, _>("conv_name"),
+            "username":          r.get::<String, _>("username"),
+            "created_at":        r.get::<String, _>("created_at"),
+            "prompt_tokens":     r.get::<i64, _>("prompt_tokens"),
+            "completion_tokens": r.get::<i64, _>("completion_tokens"),
+            "total_tokens":      r.get::<i64, _>("total_tokens"),
+        })
+    }).collect();
+
+    Ok(Json(serde_json::json!({ "conversations": conversations })))
+}
+
+pub async fn get_token_usage_daily(
+    State(state): State<AppState>,
+    _auth: AuthUser,
+) -> AppResult<Json<serde_json::Value>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT DATE(c.created_at)::text AS day,
+               COALESCE(SUM((c.token_usage->>'total_tokens')::bigint), 0)::bigint      AS total_tokens,
+               COALESCE(SUM((c.token_usage->>'prompt_tokens')::bigint), 0)::bigint     AS prompt_tokens,
+               COALESCE(SUM((c.token_usage->>'completion_tokens')::bigint), 0)::bigint AS completion_tokens,
+               COUNT(c.id)::bigint AS conversation_count
+        FROM conversations c
+        WHERE c.created_at >= NOW() - INTERVAL '30 days'
+          AND COALESCE((c.token_usage->>'total_tokens')::bigint, 0) > 0
+        GROUP BY DATE(c.created_at)
+        ORDER BY day ASC
+        "#
+    )
+    .fetch_all(&state.pool)
+    .await?;
+
+    let days: Vec<serde_json::Value> = rows.iter().map(|r| {
+        use sqlx::Row;
+        serde_json::json!({
+            "day":                r.get::<String, _>("day"),
+            "total_tokens":       r.get::<i64, _>("total_tokens"),
+            "prompt_tokens":      r.get::<i64, _>("prompt_tokens"),
+            "completion_tokens":  r.get::<i64, _>("completion_tokens"),
+            "conversation_count": r.get::<i64, _>("conversation_count"),
+        })
+    }).collect();
+
+    Ok(Json(serde_json::json!({ "days": days })))
+}
+

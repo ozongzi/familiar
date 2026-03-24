@@ -91,6 +91,19 @@ export const api = {
     return get<{ prompt_tokens: number; completion_tokens: number; total_tokens: number; conversation_count: number }>("/api/admin/token-usage", token);
   },
 
+  getTokenUsageByUser(token: string) {
+    return get<{ users: { user_id: string; username: string; conversation_count: number; prompt_tokens: number; completion_tokens: number; total_tokens: number }[] }>("/api/admin/token-usage/by-user", token);
+  },
+
+  getTokenUsageConversations(token: string, userId?: string) {
+    const q = userId ? `?user_id=${userId}` : "";
+    return get<{ conversations: { conv_id: string; conv_name: string; username: string; created_at: string; prompt_tokens: number; completion_tokens: number; total_tokens: number }[] }>(`/api/admin/token-usage/conversations${q}`, token);
+  },
+
+  getTokenUsageDaily(token: string) {
+    return get<{ days: { day: string; total_tokens: number; prompt_tokens: number; completion_tokens: number; conversation_count: number }[] }>("/api/admin/token-usage/daily", token);
+  },
+
   getAdminConfig(token: string) {
     return get<AdminConfig>("/api/admin/config", token);
   },

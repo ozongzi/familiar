@@ -511,6 +511,14 @@ export function useChat(
           };
           return [...prev, toolBubble];
         });
+      } else if (event.type === "tool_progress") {
+        setBubbles((prev) =>
+          prev.map((b) =>
+            b.key === `tool-${event.id}` && b.kind === "tool"
+              ? { ...b, progressLines: [...(b.progressLines ?? []), event.progress] }
+              : b,
+          ),
+        );
       } else if (event.type === "tool_result") {
         if (event.source === "spawn") {
           const acc = spawnToolArgsRef.current.get(event.id);
@@ -636,68 +644,90 @@ export function useChat(
 
   const reattach = useCallback((convId: string, tok: string) => {
     // Reattach using in-memory stream id first; fall back to persisted id (for refresh recovery).
-    const streamId = streamIdRef.current ?? readPersistedStreamId(convId);
-    if (!streamId) return;
-    streamIdRef.current = streamId;
-    if (attachedConvRef.current === convId) return;
+    const existingStreamId = streamIdRef.current ?? readPersistedStreamId(convId);
 
+    if (attachedConvRef.current === convId) return;
     attachedConvRef.current = convId;
     reattachingRef.current = true;
 
     const ac = new AbortController();
     abortControllerRef.current = ac;
 
-    openSseStream(
-      streamId,
-      tok,
-      (data) => {
-        let event: WsServerEvent;
-        try {
-          event = JSON.parse(data) as WsServerEvent;
-        } catch {
-          return;
-        }
+    const startStream = (streamId: string) => {
+      streamIdRef.current = streamId;
+      openSseStream(
+        streamId,
+        tok,
+        (data) => {
+          let event: WsServerEvent;
+          try {
+            event = JSON.parse(data) as WsServerEvent;
+          } catch {
+            return;
+          }
 
-        if (
-          statusRef.current === "idle" &&
-          event.type !== "done" &&
-          event.type !== "aborted" &&
-          event.type !== "error"
-        ) {
-          reattachingRef.current = false;
-          updateStatus("streaming");
-        }
+          if (
+            statusRef.current === "idle" &&
+            event.type !== "done" &&
+            event.type !== "aborted" &&
+            event.type !== "error"
+          ) {
+            reattachingRef.current = false;
+            updateStatus("streaming");
+          }
 
-        const finished = processEventRef.current(event);
-        if (finished) {
+          const finished = processEventRef.current(event);
+          if (finished) {
+            reattachingRef.current = false;
+            streamIdRef.current = null;
+            clearPersistedStreamId(convId);
+            abortControllerRef.current = null;
+          }
+        },
+        (err) => {
+          console.error("[SSE] reattach error:", err);
           reattachingRef.current = false;
-          streamIdRef.current = null;
-          clearPersistedStreamId(convId);
-          abortControllerRef.current = null;
-        }
-      },
-      (err) => {
-        console.error("[SSE] reattach error:", err);
+          if (
+            statusRef.current === "streaming" ||
+            statusRef.current === "connecting"
+          ) {
+            setTimeout(() => {
+              if (
+                statusRef.current !== "streaming" &&
+                statusRef.current !== "connecting"
+              )
+                return;
+              attachedConvRef.current = null;
+              reattach(convId, tok);
+            }, SSE_REATTACH_DELAY_MS);
+            return;
+          }
+        },
+        ac.signal,
+      );
+    };
+
+    if (existingStreamId) {
+      startStream(existingStreamId);
+      return;
+    }
+
+    // No stream_id — ask the backend for a fresh one that points to the
+    // conversation's broadcast channel (works even if generation is ongoing).
+    fetch(`${BASE()}/api/conversations/${convId}/reattach`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${tok}` },
+      signal: ac.signal,
+    })
+      .then((r) => r.json())
+      .then((data: { stream_id?: string }) => {
+        if (!data.stream_id) { reattachingRef.current = false; return; }
+        startStream(data.stream_id);
+      })
+      .catch((e) => {
+        if ((e as { name?: string }).name === "AbortError") return;
         reattachingRef.current = false;
-        if (
-          statusRef.current === "streaming" ||
-          statusRef.current === "connecting"
-        ) {
-          // Keep trying while a generation is still expected to be active.
-          setTimeout(() => {
-            if (
-              statusRef.current !== "streaming" &&
-              statusRef.current !== "connecting"
-            )
-              return;
-            attachedConvRef.current = null;
-            reattach(convId, tok);
-          }, SSE_REATTACH_DELAY_MS);
-          return;
-        }
-      },
-      ac.signal,
-    );
+      });
   }, []);
 
   // ─── Send ─────────────────────────────────────────────────────────────────

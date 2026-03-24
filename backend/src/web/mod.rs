@@ -17,7 +17,7 @@ use admin::{
     create_app_skill, delete_app_skill, get_admin_config, list_app_skills, update_admin_config,
     update_app_skill, list_users, create_user, update_user, delete_user, reset_user_password,
     list_audit_logs,
-    get_token_usage,
+    get_token_usage, get_token_usage_by_user, get_token_usage_conversations, get_token_usage_daily,
     list_global_mcps, create_global_mcp, update_global_mcp, delete_global_mcp,
 };
 use axum::extract::DefaultBodyLimit;
@@ -38,7 +38,7 @@ use conversations::*;
 use files::{download_file, preview_file, upload_file, upload_avatar, get_avatar};
 use history::*;
 use sessions::*;
-use sse::*;
+use sse::{send_message_handler, sse_handler, stream_abort_handler, stream_interrupt_handler, stream_answer_handler, reattach_handler};
 use users::*;
 
 /// Web-layer application state — cheaply cloneable.
@@ -112,6 +112,9 @@ pub fn create_router(state: AppState, allowed_origin: Option<&str>) -> Router {
         // ── Admin Audit Logs ─────────────────────────────────────────────────
         .route("/api/admin/audit-logs", get(list_audit_logs))
         .route("/api/admin/token-usage", get(get_token_usage))
+        .route("/api/admin/token-usage/by-user", get(get_token_usage_by_user))
+        .route("/api/admin/token-usage/conversations", get(get_token_usage_conversations))
+        .route("/api/admin/token-usage/daily", get(get_token_usage_daily))
         // ── User Skills (per-user) ─────────────────────────────────────────────
         .route("/api/skills", get(list_skills))
         .route("/api/skills", post(create_skill))
@@ -141,6 +144,7 @@ pub fn create_router(state: AppState, allowed_origin: Option<&str>) -> Router {
             "/api/conversations/{id}/messages",
             post(send_message_handler),
         )
+        .route("/api/conversations/{id}/reattach", post(reattach_handler))
         .route("/api/stream/{stream_id}", get(sse_handler))
         .route("/api/stream/{stream_id}/abort", post(stream_abort_handler))
         .route(

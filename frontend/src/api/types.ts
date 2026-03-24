@@ -82,6 +82,7 @@ export type WsServerEvent =
       result: unknown;
       source?: "spawn";
     }
+  | { type: "tool_progress"; id: string; name: string; progress: string }
   | { type: "user_interrupt"; content: string }
   | { type: "aborted" }
   | { type: "done" }
@@ -114,6 +115,7 @@ export interface ToolBubble {
   spawnEvents?: SpawnEvent[];
   widgetCode?: string;
   _rawArgs?: string;
+  progressLines?: string[];
 }
 
 export interface UploadBubble {

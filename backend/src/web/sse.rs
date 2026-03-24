@@ -244,6 +244,25 @@ pub async fn sse_handler(
     Ok(Sse::new(s).keep_alive(KeepAlive::default()))
 }
 
+// ── POST /api/conversations/{id}/reattach ────────────────────────────────────
+
+/// Creates a fresh stream_id pointing to a conversation's broadcast channel.
+/// Used by the frontend after a page refresh when the original stream_id was lost
+/// but the backend may still be generating.
+pub async fn reattach_handler(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(conversation_id): Path<Uuid>,
+) -> Result<impl IntoResponse, AppError> {
+    verify_conversation_owner(&state, conversation_id, auth.user_id).await?;
+
+    // Ensure a ChatEntry exists (idempotent).
+    state.attach(conversation_id).await;
+
+    let stream_id = state.create_stream(conversation_id, auth.user_id);
+    Ok((StatusCode::OK, Json(json!({ "stream_id": stream_id }))))
+}
+
 // ── POST /api/stream/{stream_id}/abort ───────────────────────────────────────
 
 pub async fn stream_abort_handler(

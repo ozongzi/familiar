@@ -78,6 +78,10 @@ export function BashTool({ bubble }: { bubble: ToolBubble }) {
                 <span className={sharedStyles.outputEmpty}>(no output)</span>
               )}
             </div>
+          ) : bubble.pending && (bubble.progressLines?.length ?? 0) > 0 ? (
+            <div className={sharedStyles.output}>
+              {bubble.progressLines!.join("\n")}
+            </div>
           ) : (
             bubble.pending && (
               <div className={sharedStyles.output}>

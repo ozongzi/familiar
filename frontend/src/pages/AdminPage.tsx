@@ -1,26 +1,16 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import styles from "./AdminPage.module.css";
 import { UserManagement } from "../components/UserManagement";
 import { AuditLogView } from "../components/AuditLogView";
 import { AdminConfig } from "../components/AdminConfig";
+import { TokenUsageView } from "../components/TokenUsageView";
 import { useNavigate } from "react-router-dom";
-import { useAuth } from "../store/auth.shared";
-import { api } from "../api/client";
 
 type AdminView = "users" | "audit" | "config" | "usage";
 
-type TokenUsage = { prompt_tokens: number; completion_tokens: number; total_tokens: number; conversation_count: number };
-
 export function AdminPage() {
   const [currentView, setCurrentView] = useState<AdminView>("users");
-  const [usage, setUsage] = useState<TokenUsage | null>(null);
-  const { token } = useAuth();
   const navigate = useNavigate();
-
-  useEffect(() => {
-    if (currentView !== "usage" || !token) return;
-    api.getTokenUsage(token).then(setUsage).catch(() => {});
-  }, [currentView, token]);
 
   const navigateToChat = () => {
     navigate("/");
@@ -84,20 +74,7 @@ export function AdminPage() {
           {currentView === "users" && <UserManagement />}
           {currentView === "audit" && <AuditLogView />}
           {currentView === "config" && <AdminConfig />}
-          {currentView === "usage" && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 16, maxWidth: 480 }}>
-              {usage ? (
-                ["conversation_count", "total_tokens", "prompt_tokens", "completion_tokens"].map(k => (
-                  <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "12px 16px", background: "var(--bg-surface)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)" }}>
-                    <span style={{ color: "var(--text-secondary)", fontSize: "0.9em" }}>{{ conversation_count: "对话数", total_tokens: "总 Token", prompt_tokens: "Prompt Token", completion_tokens: "Completion Token" }[k]}</span>
-                    <strong>{(usage as Record<string,number>)[k].toLocaleString()}</strong>
-                  </div>
-                ))
-              ) : (
-                <p style={{ color: "var(--text-muted)" }}>加载中…</p>
-              )}
-            </div>
-          )}
+          {currentView === "usage" && <TokenUsageView />}
         </div>
       </main>
     </div>

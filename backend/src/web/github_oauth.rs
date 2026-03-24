@@ -131,7 +131,8 @@ pub async fn github_callback(
         None,
     ).await;
 
-    Ok(Redirect::to(&format!("/#token={}", token)))
+    let is_new = existing.is_none();
+    Ok(Redirect::to(&format!("/#token={}&is_new={}", token, if is_new { "1" } else { "0" })))
 }
 
 fn generate_token() -> String {

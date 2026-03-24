@@ -18,6 +18,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const match = hash.match(/(?:^|&)token=([^&]+)/);
     const urlToken = match?.[1];
     if (urlToken) {
+      const isNew = /(?:^|&)is_new=1/.test(hash);
+      if (isNew) sessionStorage.setItem("familiar_show_privacy", "1");
       localStorage.setItem(TOKEN_KEY, urlToken);
       dispatch({ type: "SET_TOKEN", token: urlToken });
       window.history.replaceState({}, "", window.location.pathname + window.location.search);

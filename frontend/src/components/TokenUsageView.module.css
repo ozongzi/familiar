@@ -1,0 +1,124 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  padding-bottom: 32px;
+}
+
+.summaryRow {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 16px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.cardLabel {
+  font-size: 0.8em;
+  color: var(--text-secondary);
+}
+
+.cardValue {
+  font-size: 1.4em;
+  color: var(--text-primary);
+}
+
+.chartWrap {
+  height: 260px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 16px;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sectionTitle {
+  font-size: 1em;
+  font-weight: 600;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.filterTag {
+  font-size: 0.8em;
+  font-weight: 400;
+  background: var(--accent);
+  color: #fff;
+  padding: 2px 8px;
+  border-radius: 99px;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875em;
+}
+
+.table th {
+  text-align: left;
+  padding: 8px 10px;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border);
+  font-weight: 500;
+}
+
+.table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-subtle, var(--border));
+  color: var(--text-primary);
+}
+
+.table tbody tr:hover {
+  background: var(--bg-hover, rgba(0,0,0,0.03));
+}
+
+.rowSelected td {
+  background: var(--accent-subtle, rgba(99,102,241,0.08));
+}
+
+.filterBtn {
+  font-size: 0.8em;
+  padding: 3px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.filterBtn:hover {
+  background: var(--bg-hover, rgba(0,0,0,0.05));
+}
+
+.convName {
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.date {
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.empty {
+  text-align: center;
+  color: var(--text-muted);
+  padding: 24px;
+}
