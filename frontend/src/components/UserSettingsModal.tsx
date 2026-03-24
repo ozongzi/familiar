@@ -5,6 +5,7 @@ import { getProfile, updateProfile, updatePassword, uploadAvatar } from "../api/
 import type { UserSettings, Provider } from "../api/types";
 import styles from "./UserSettingsModal.module.css";
 import "highlight.js/styles/github.css";
+import { UserSkillsPanel } from "./SkillsPanel";
 
 const PROVIDER_LABELS: Record<Provider, string> = {
   deepseek: "DeepSeek",
@@ -26,7 +27,7 @@ interface Props {
 }
 
 export function UserSettingsModal({ token, onClose }: Props) {
-  const [activeTab, setActiveTab] = useState<"general" | "profile">("profile");
+  const [activeTab, setActiveTab] = useState<"general" | "profile" | "skills">("profile");
   
   // General Settings State
   const [settings, setSettings] = useState<UserSettings | null>(null);
@@ -197,6 +198,12 @@ export function UserSettingsModal({ token, onClose }: Props) {
               onClick={() => setActiveTab("profile")}
             >
               个人资料
+            </button>
+            <button
+              className={`${styles.tabBtn} ${activeTab === "skills" ? styles.active : ""}`}
+              onClick={() => setActiveTab("skills")}
+            >
+              我的 Skills
             </button>
           </div>
 
@@ -416,6 +423,11 @@ export function UserSettingsModal({ token, onClose }: Props) {
                   {saving ? "保存中..." : "修改密码"}
                 </button>
               </div>
+            </div>
+          )}
+          {activeTab === "skills" && (
+            <div className={styles.section}>
+              <UserSkillsPanel token={token} />
             </div>
           )}
           </div>

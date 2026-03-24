@@ -525,7 +525,7 @@ impl AppState {
         (rx, log, generating)
     }
 
-    pub async fn start_generation(&self, conversation_id: Uuid, user_text: String) -> bool {
+    pub async fn start_generation(&self, conversation_id: Uuid, user_parts: Vec<agentix::UserContent>) -> bool {
         let (agent_arc, abort_flag) = {
             let mut map = self.chats.lock().unwrap();
             let entry = match map.get_mut(&conversation_id) {
@@ -545,7 +545,7 @@ impl AppState {
 
         let state = self.clone();
         tokio::spawn(async move {
-            generation_loop(state, conversation_id, agent_arc, abort_flag, user_text).await;
+            generation_loop(state, conversation_id, agent_arc, abort_flag, user_parts).await;
         });
 
         true
@@ -629,19 +629,28 @@ async fn generation_loop(
     conversation_id: Uuid,
     agent_arc: Arc<tokio::sync::Mutex<Agent>>,
     abort_flag: Arc<AtomicBool>,
-    mut user_text: String,
+    user_parts: Vec<agentix::UserContent>,
 ) {
+    let mut first = Some(user_parts);
+    let mut interrupt_text: Option<String> = None;
     loop {
+        let parts = if let Some(p) = first.take() {
+            p
+        } else if let Some(t) = interrupt_text.take() {
+            vec![agentix::UserContent::Text(t)]
+        } else {
+            break;
+        };
         let next = run_generation(
             state.clone(),
             conversation_id,
             Arc::clone(&agent_arc),
             Arc::clone(&abort_flag),
-            user_text,
+            parts,
         )
         .await;
         match next {
-            Some(interrupt) => user_text = interrupt,
+            Some(interrupt) => interrupt_text = Some(interrupt),
             None => break,
         }
     }
@@ -654,13 +663,13 @@ async fn run_generation(
     conversation_id: Uuid,
     agent_arc: Arc<tokio::sync::Mutex<Agent>>,
     abort_flag: Arc<AtomicBool>,
-    user_text: String,
+    user_parts: Vec<agentix::UserContent>,
 ) -> Option<String> {
     debug!(conversation = %conversation_id, "[TIMING] run_generation started");
 
     let mut stream = {
         let mut agent = agent_arc.lock().await;
-        match agent.chat(user_text.clone()).await {
+        match agent.chat_multimodal(user_parts).await {
             Ok(s) => s,
             Err(e) => {
                 error!(conversation = %conversation_id, "chat() failed: {e}");

@@ -112,6 +112,7 @@ export function ChatPage() {
     setHistory,
     clearBubbles,
     addUploadBubble,
+    branch,
   } = useChat(
     activeId === DRAFT_ID ? null : activeId,
     token,
@@ -420,6 +421,7 @@ export function ChatPage() {
                   bubble={group.bubble}
                   onAnswer={answerQuestion}
                   conversationId={activeId === DRAFT_ID ? null : activeId}
+                  onBranch={branch}
                 />
               );
             }

@@ -38,7 +38,7 @@ use conversations::*;
 use files::{download_file, preview_file, upload_file, upload_avatar, get_avatar};
 use history::*;
 use sessions::*;
-use sse::{send_message_handler, sse_handler, stream_abort_handler, stream_interrupt_handler, stream_answer_handler, reattach_handler};
+use sse::{send_message_handler, sse_handler, stream_abort_handler, stream_interrupt_handler, stream_answer_handler, reattach_handler, branch_handler};
 use users::*;
 
 /// Web-layer application state — cheaply cloneable.
@@ -145,6 +145,7 @@ pub fn create_router(state: AppState, allowed_origin: Option<&str>) -> Router {
             post(send_message_handler),
         )
         .route("/api/conversations/{id}/reattach", post(reattach_handler))
+        .route("/api/conversations/{id}/branch", post(branch_handler))
         .route("/api/stream/{stream_id}", get(sse_handler))
         .route("/api/stream/{stream_id}/abort", post(stream_abort_handler))
         .route(

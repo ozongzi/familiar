@@ -385,6 +385,7 @@ export function useChat(
           content: m.content,
           reasoning: m.reasoning ?? "",
           streaming: false,
+          msgId: m.id,
         });
       }
     }
@@ -569,6 +570,33 @@ export function useChat(
         sealActiveText();
         updateStatus("idle");
         clearPersistedStreamId(attachedConvRef.current);
+        // Backfill msgId for any user bubble that was created optimistically.
+        const convId = attachedConvRef.current;
+        const tok = token;
+        if (convId && tok) {
+          fetch(`${BASE()}/api/conversations/${convId}/messages`, {
+            headers: { Authorization: `Bearer ${tok}` },
+          })
+            .then((r) => r.ok ? r.json() : null)
+            .then((data: { messages?: { id: number; role: string }[] } | null) => {
+              if (!data?.messages) return;
+              const serverMsgs = data.messages;
+              setBubbles((prev) => {
+                let serverIdx = serverMsgs.length - 1;
+                const next = [...prev];
+                for (let i = next.length - 1; i >= 0; i--) {
+                  const b = next[i];
+                  if (b.kind !== "text" || b.role !== "user" || b.msgId != null) continue;
+                  while (serverIdx >= 0 && serverMsgs[serverIdx].role !== "user") serverIdx--;
+                  if (serverIdx < 0) break;
+                  next[i] = { ...b, msgId: serverMsgs[serverIdx].id };
+                  serverIdx--;
+                }
+                return next;
+              });
+            })
+            .catch(() => {/* ignore */});
+        }
         return true;
       } else if (event.type === "error") {
         clearPersistedStreamId(attachedConvRef.current);
@@ -733,7 +761,7 @@ export function useChat(
   // ─── Send ─────────────────────────────────────────────────────────────────
 
   const send = useCallback(
-    async (text: string) => {
+    async (text: string, images: string[] = []) => {
       if (!token) return;
       if (statusRef.current === "connecting") return;
 
@@ -771,6 +799,7 @@ export function useChat(
         content: text,
         reasoning: "",
         streaming: false,
+        images: images.length > 0 ? images : undefined,
       };
       setBubbles((prev) => [...prev, userBubble]);
       updateStatus("connecting");
@@ -778,13 +807,15 @@ export function useChat(
       // Step 1: POST message → get stream_id
       let streamId: string;
       try {
+        const body: Record<string, unknown> = { content: text };
+        if (images.length > 0) body.images = images;
         const res = await fetch(`${BASE()}/api/conversations/${convId}/messages`, {
           method: "POST",
           headers: {
             Authorization: `Bearer ${token}`,
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({ content: text }),
+          body: JSON.stringify(body),
         });
         if (!res.ok) {
           const err = await res
@@ -852,6 +883,28 @@ export function useChat(
     [conversationId, token, interrupt, createConversation, reattach],
   );
 
+  const branch = useCallback(
+    async (msgId: number, bubbleKey: string, newText: string) => {
+      if (!token || !conversationId) return;
+      const res = await fetch(`${BASE()}/api/conversations/${conversationId}/branch`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ message_id: msgId }),
+      });
+      if (!res.ok) return;
+
+      // Keep everything before the edited user bubble; drop it and everything after.
+      setBubbles((prev) => {
+        const idx = prev.findIndex((b) => b.key === bubbleKey);
+        return idx >= 0 ? prev.slice(0, idx) : prev;
+      });
+
+      updateStatus("idle");
+      await send(newText);
+    },
+    [token, conversationId, send],
+  );
+
   return {
     bubbles,
     status,
@@ -864,5 +917,6 @@ export function useChat(
     setHistory,
     clearBubbles,
     addUploadBubble,
+    branch,
   };
 }

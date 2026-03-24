@@ -97,6 +97,8 @@ export interface TextBubble {
   content: string;
   reasoning: string;
   streaming: boolean;
+  images?: string[];
+  msgId?: number;
 }
 
 export type SpawnEvent =

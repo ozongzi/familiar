@@ -26,6 +26,7 @@ interface Props {
   /** 连续工具调用时，后续的工具 bubble 合并到第一个里渲染 */
   extraTools?: Extract<ChatBubble, { kind: "tool" }>[];
   conversationId?: string | null;
+  onBranch?: (msgId: number, bubbleKey: string, newText: string) => void;
 }
 
 export const MessageBubble = memo(function MessageBubble({
@@ -33,6 +34,7 @@ export const MessageBubble = memo(function MessageBubble({
   onAnswer,
   extraTools,
   conversationId,
+  onBranch,
 }: Props) {
   if (bubble.kind === "tool") {
     if (extraTools && extraTools.length > 0) {
@@ -56,7 +58,7 @@ export const MessageBubble = memo(function MessageBubble({
   if (bubble.kind === "upload") {
     return <UploadChatBubble bubble={bubble} />;
   }
-  return <TextChatBubble bubble={bubble} />;
+  return <TextChatBubble bubble={bubble} onBranch={onBranch} />;
 });
 
 // ─── Widget bubble ────────────────────────────────────────────────────────────
@@ -202,11 +204,41 @@ function WidgetChatBubble({ bubble }: { bubble: ToolBubble }) {
 
 function TextChatBubble({
   bubble,
+  onBranch,
 }: {
   bubble: Extract<ChatBubble, { kind: "text" }>;
+  onBranch?: (msgId: number, bubbleKey: string, newText: string) => void;
 }) {
   const isUser = bubble.role === "user";
   const hasReasoning = bubble.reasoning && bubble.reasoning.length > 0;
+  const [hovered, setHovered] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editText, setEditText] = useState("");
+  const editRef = useRef<HTMLTextAreaElement>(null);
+  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const canEdit = isUser && !bubble.streaming && bubble.msgId != null && onBranch != null;
+
+  const handleTouchStart = () => {
+    if (!canEdit) return;
+    longPressTimer.current = setTimeout(() => { startEdit(); }, 600);
+  };
+  const handleTouchEnd = () => {
+    if (longPressTimer.current) { clearTimeout(longPressTimer.current); longPressTimer.current = null; }
+  };
+
+  const startEdit = () => {
+    setEditText(bubble.content);
+    setEditing(true);
+    setTimeout(() => { editRef.current?.focus(); editRef.current?.select(); }, 0);
+  };
+  const cancelEdit = () => setEditing(false);
+  const confirmEdit = () => {
+    const text = editText.trim();
+    if (!text || !bubble.msgId) { cancelEdit(); return; }
+    setEditing(false);
+    onBranch!(bubble.msgId, bubble.key, text);
+  };
 
   // Auto-expand while reasoning is streaming in; collapse once content arrives.
   const [reasoningOpen, setReasoningOpen] = useState(false);
@@ -217,8 +249,6 @@ function TextChatBubble({
     const len = bubble.reasoning.length;
     let t: number | undefined;
     if (len > prevReasoningLen.current) {
-      // New reasoning tokens arrived — ensure open.
-      // Defer the state update to avoid calling setState synchronously inside the effect.
       t = window.setTimeout(() => setReasoningOpen(true), 0);
     }
     prevReasoningLen.current = len;
@@ -227,11 +257,9 @@ function TextChatBubble({
     };
   }, [bubble.reasoning, hasReasoning]);
 
-  // Collapse reasoning once the main content starts streaming in.
   useLayoutEffect(() => {
     let t: number | undefined;
     if (bubble.content.length > 0 && bubble.streaming) {
-      // Defer the collapse to avoid calling setState synchronously inside the effect.
       t = window.setTimeout(() => setReasoningOpen(false), 0);
     }
     return () => {
@@ -242,12 +270,48 @@ function TextChatBubble({
   return (
     <div
       className={`${styles.row} ${isUser ? styles.rowUser : styles.rowAssistant}`}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
     >
       <div
         className={`${styles.bubble} ${isUser ? styles.bubbleUser : styles.bubbleAssistant}`}
+        onTouchStart={handleTouchStart}
+        onTouchEnd={handleTouchEnd}
+        onTouchMove={handleTouchEnd}
       >
         {isUser ? (
-          <p className={styles.userText}>{bubble.content}</p>
+          <>
+            {bubble.images && bubble.images.length > 0 && (
+              <div className={styles.bubbleImages}>
+                {bubble.images.map((src, i) => (
+                  <img key={i} src={src} className={styles.bubbleImage} alt="" />
+                ))}
+              </div>
+            )}
+            {editing ? (
+              <div className={styles.editArea}>
+                <textarea
+                  ref={editRef}
+                  className={styles.editTextarea}
+                  value={editText}
+                  onChange={(e) => setEditText(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); confirmEdit(); }
+                    if (e.key === "Escape") cancelEdit();
+                  }}
+                  rows={3}
+                />
+                <div className={styles.editActions}>
+                  <button className={styles.editConfirmBtn} onClick={confirmEdit}>发送</button>
+                  <button className={styles.editCancelBtn} onClick={cancelEdit}>取消</button>
+                </div>
+              </div>
+            ) : (
+              <>
+                {bubble.content && <p className={styles.userText}>{bubble.content}</p>}
+              </>
+            )}
+          </>
         ) : (
           <>
             {hasReasoning && (
@@ -293,6 +357,16 @@ function TextChatBubble({
           </>
         )}
       </div>
+      {/* In row-reverse, elements after the bubble appear to its visual left */}
+      {canEdit && !editing && (
+        <button
+          className={`${styles.editBtn} ${hovered ? styles.editBtnVisible : ""}`}
+          onClick={startEdit}
+          title="编辑消息"
+        >
+          <EditIcon />
+        </button>
+      )}
     </div>
   );
 }
@@ -1181,6 +1255,15 @@ function formatBytes(bytes: number): string {
 }
 
 // ─── Icons ────────────────────────────────────────────────────────────────────
+
+function EditIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+      <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+    </svg>
+  );
+}
 
 function FileIcon() {
   return (

@@ -43,7 +43,7 @@ build-sandbox:
 		echo "✨ sandbox image up-to-date, skipping build"; \
 	else \
 		echo "⌛ Building autocheck-mcp for linux/amd64 locally..."; \
-		docker buildx build --platform linux/amd64 -t autocheck-mcp:latest --load ../autocheck-mcp; \
+		docker buildx build --platform linux/amd64 -f ../autocheck-mcp/Dockerfile -t autocheck-mcp:latest --load ..; \
 		echo "⌛ Pushing to remote..."; \
 		docker save autocheck-mcp:latest | gzip | ssh $(HOST) "gunzip | docker load"; \
 		ssh $(HOST) "echo $$LOCAL_HASH > /root/autocheck-mcp/.deployed-hash"; \
@@ -53,7 +53,7 @@ build-sandbox:
 # ── Deploy (local cross-compile → scp binary + client, then restart) ─────────
 # scp/rsync first, restart last — never stop before copying so the running
 # process is never killed mid-tool-call by its own deploy.
-deploy: all
+deploy: all build-sandbox
 	scp $(BIN) $(HOST):/usr/local/bin/familiar.new
 	ssh $(HOST) "mv /usr/local/bin/familiar.new /usr/local/bin/familiar"
 	ssh $(HOST) "mkdir -p /srv/familiar/frontend/dist"

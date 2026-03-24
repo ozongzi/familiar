@@ -25,6 +25,8 @@ use crate::web::{AppState, auth::AuthUser};
 #[derive(Deserialize)]
 pub struct SendMessageRequest {
     pub content: String,
+    #[serde(default)]
+    pub images: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -100,27 +102,53 @@ pub async fn send_message_handler(
     Json(body): Json<SendMessageRequest>,
 ) -> Result<impl IntoResponse, AppError> {
     let content = body.content.trim().to_string();
-    if content.is_empty() {
+    let images = body.images;
+
+    if content.is_empty() && images.is_empty() {
         return Err(AppError::bad_request("消息内容不能为空"));
     }
 
     // Verify the conversation exists and belongs to this user.
     verify_conversation_owner(&state, conversation_id, auth.user_id).await?;
 
+    // Build multimodal parts.
+    let user_parts: Vec<agentix::UserContent> = {
+        use agentix::{ImageContent, ImageData, UserContent};
+        let mut parts: Vec<UserContent> = images
+            .iter()
+            .map(|data_url| {
+                let (mime, b64) = if let Some(rest) = data_url.strip_prefix("data:") {
+                    if let Some(idx) = rest.find(";base64,") {
+                        (&rest[..idx], &rest[idx + 8..])
+                    } else {
+                        ("image/jpeg", data_url.as_str())
+                    }
+                } else {
+                    ("image/jpeg", data_url.as_str())
+                };
+                UserContent::Image(ImageContent {
+                    data: ImageData::Base64(b64.to_string()),
+                    mime_type: mime.to_string(),
+                })
+            })
+            .collect();
+        if !content.is_empty() {
+            parts.push(UserContent::Text(content.clone()));
+        }
+        parts
+    };
+
     // Ensure ChatEntry exists and check if generation is in progress.
     let (_rx, _log, already_generating) = state.attach(conversation_id).await;
 
     // Persist the user message.
     {
-        use agentix::{Message, UserContent};
-        let msg = Message::User(vec![UserContent::Text(content.clone())]);
+        use agentix::Message;
+        let msg = Message::User(user_parts.clone());
         state.persist_message(conversation_id, &msg);
     }
 
     if already_generating {
-        // Agent busy — inject via interrupt channel so it is processed
-        // by the running turn. The client subscribes to the stream as usual
-        // and will see the continuation events.
         tracing::info!(
             conversation = %conversation_id,
             "agent busy, injecting message via interrupt"
@@ -135,7 +163,7 @@ pub async fn send_message_handler(
     }
 
     // Start a new background generation task.
-    let started = state.start_generation(conversation_id, content).await;
+    let started = state.start_generation(conversation_id, user_parts).await;
     if !started {
         return Err(AppError::internal("无法启动生成任务"));
     }
@@ -261,6 +289,41 @@ pub async fn reattach_handler(
 
     let stream_id = state.create_stream(conversation_id, auth.user_id);
     Ok((StatusCode::OK, Json(json!({ "stream_id": stream_id }))))
+}
+
+// ── POST /api/conversations/{id}/branch ──────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct BranchRequest {
+    pub message_id: i64,
+}
+
+pub async fn branch_handler(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(conversation_id): Path<Uuid>,
+    Json(body): Json<BranchRequest>,
+) -> Result<impl IntoResponse, AppError> {
+    verify_conversation_owner(&state, conversation_id, auth.user_id).await?;
+
+    // Set active_message_id to the *parent* of the given message so that the
+    // edited message itself is excluded from the new branch.
+    let parent_id: Option<i64> = sqlx::query_scalar(
+        "SELECT parent_id FROM messages WHERE id = $1"
+    )
+    .bind(body.message_id)
+    .fetch_optional(&state.pool)
+    .await
+    .map_err(|e| AppError::internal(&e.to_string()))?
+    .flatten();
+
+    let branch_tip = parent_id.unwrap_or(body.message_id);
+    state.db.branch(conversation_id, branch_tip).await
+        .map_err(|e| AppError::internal(&e.to_string()))?;
+
+    // Drop the in-memory agent so the next attach rebuilds from the new branch tip.
+    state.chats.lock().unwrap().remove(&conversation_id);
+    Ok(StatusCode::OK)
 }
 
 // ── POST /api/stream/{stream_id}/abort ───────────────────────────────────────

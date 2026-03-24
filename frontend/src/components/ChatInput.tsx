@@ -14,7 +14,7 @@ interface UploadResult {
 }
 
 interface Props {
-  onSend: (text: string) => void;
+  onSend: (text: string, images?: string[]) => void;
   onInterrupt?: (text: string) => void;
   onAbort?: () => void;
   streaming?: boolean;
@@ -47,6 +47,7 @@ export function ChatInput({
   const [hasText, setHasText] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [pendingImages, setPendingImages] = useState<string[]>([]);
   const MAX_FILE_SIZE = 50 * 1024 * 1024;
 
   const resize = useCallback(() => {
@@ -59,6 +60,27 @@ export function ChatInput({
   useEffect(() => {
     resize();
   }, [resize]);
+
+  const handlePaste = useCallback((e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const items = Array.from(e.clipboardData.items);
+    const imageItems = items.filter((item) => item.type.startsWith("image/"));
+    if (imageItems.length === 0) return;
+    e.preventDefault();
+    imageItems.forEach((item) => {
+      const file = item.getAsFile();
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        const dataUrl = ev.target?.result as string;
+        if (dataUrl) setPendingImages((prev) => [...prev, dataUrl]);
+      };
+      reader.readAsDataURL(file);
+    });
+  }, []);
+
+  const removeImage = useCallback((idx: number) => {
+    setPendingImages((prev) => prev.filter((_, i) => i !== idx));
+  }, []);
 
   const submit = useCallback(() => {
     const el = textareaRef.current;
@@ -75,12 +97,13 @@ export function ChatInput({
       }
       return;
     }
-    if (!text) return;
-    onSend(text);
+    if (!text && pendingImages.length === 0) return;
+    onSend(text, pendingImages.length > 0 ? pendingImages : undefined);
     el.value = "";
     el.style.height = "auto";
     setHasText(false);
-  }, [onSend, onInterrupt, onAbort, streaming, disabled]);
+    setPendingImages([]);
+  }, [onSend, onInterrupt, onAbort, streaming, disabled, pendingImages]);
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -149,7 +172,7 @@ export function ChatInput({
   const isAbortMode = streaming && !hasText;
   const isInterruptMode = streaming && hasText;
   const isSendMode = !streaming;
-  const btnDisabled = disabled || (isSendMode && !hasText);
+  const btnDisabled = disabled || (isSendMode && !hasText && pendingImages.length === 0);
 
   return (
     <div className={styles.wrapper}>
@@ -162,6 +185,18 @@ export function ChatInput({
           aria-label="上传文件"
         />
 
+        {/* 图片预览 */}
+        {pendingImages.length > 0 && (
+          <div className={styles.imagePreviews}>
+            {pendingImages.map((src, i) => (
+              <div key={i} className={styles.imagePreviewItem}>
+                <img src={src} className={styles.imagePreviewThumb} alt="" />
+                <button className={styles.imageRemoveBtn} onClick={() => removeImage(i)} title="移除">×</button>
+              </div>
+            ))}
+          </div>
+        )}
+
         {/* 上方：textarea */}
         <textarea
           ref={textareaRef}
@@ -170,6 +205,7 @@ export function ChatInput({
           rows={1}
           onInput={handleInput}
           onKeyDown={handleKeyDown}
+          onPaste={handlePaste}
           disabled={disabled}
           aria-label="消息输入框"
         />

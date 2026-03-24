@@ -1,0 +1,216 @@
+.panel {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.title {
+    margin: 0;
+    font-size: 1em;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.hint {
+    margin: 0;
+    font-size: 0.83em;
+    color: var(--text-muted);
+}
+
+.muted {
+    color: var(--text-muted);
+    font-size: 0.88em;
+    margin: 0;
+}
+
+.error {
+    color: #e05252;
+    font-size: 0.88em;
+    margin: 0;
+}
+
+.addBtn {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    padding: 5px 14px;
+    font-size: 0.85em;
+    cursor: pointer;
+    font-family: inherit;
+}
+.addBtn:hover { opacity: 0.85; }
+
+.list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 10px 14px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-surface);
+}
+
+.itemInfo {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.itemName {
+    font-weight: 500;
+    font-size: 0.92em;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.itemDesc {
+    font-size: 0.8em;
+    color: var(--text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.itemActions {
+    display: flex;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+.editBtn {
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 3px 10px;
+    font-size: 0.82em;
+    cursor: pointer;
+    color: var(--text-secondary);
+    font-family: inherit;
+}
+.editBtn:hover { background: var(--bg-base); }
+
+.deleteBtn {
+    background: none;
+    border: 1px solid #e05252;
+    border-radius: 5px;
+    padding: 3px 10px;
+    font-size: 0.82em;
+    cursor: pointer;
+    color: #e05252;
+    font-family: inherit;
+}
+.deleteBtn:hover { background: rgba(224,82,82,0.06); }
+
+/* ─── Form overlay ─────────────────────────────────────────────────────────── */
+
+.formOverlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.4);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 200;
+}
+
+.form {
+    background: var(--bg-base);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px;
+    width: min(480px, 90vw);
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.formTitle {
+    margin: 0;
+    font-size: 1em;
+    font-weight: 600;
+}
+
+.label {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    font-size: 0.85em;
+    color: var(--text-secondary);
+    font-family: inherit;
+}
+
+.input {
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    padding: 7px 10px;
+    font-size: 0.92em;
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    outline: none;
+    font-family: inherit;
+}
+.input:focus { border-color: var(--accent); }
+
+.textarea {
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    padding: 8px 10px;
+    font-size: 0.88em;
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    outline: none;
+    resize: vertical;
+    font-family: inherit;
+    line-height: 1.5;
+}
+.textarea:focus { border-color: var(--accent); }
+
+.formActions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+}
+
+.saveBtn {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    padding: 6px 18px;
+    font-size: 0.88em;
+    cursor: pointer;
+    font-family: inherit;
+}
+.saveBtn:disabled { opacity: 0.5; cursor: not-allowed; }
+.saveBtn:not(:disabled):hover { opacity: 0.85; }
+
+.cancelBtn {
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px 18px;
+    font-size: 0.88em;
+    cursor: pointer;
+    color: var(--text-secondary);
+    font-family: inherit;
+}
