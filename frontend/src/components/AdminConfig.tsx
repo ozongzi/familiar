@@ -20,7 +20,7 @@ const PROVIDER_LABELS: Record<Provider, string> = {
 };
 
 const PROVIDER_DEFAULTS: Record<Provider, { api_base: string }> = {
-  deepseek:  { api_base: "https://api.deepseek.com/v1" },
+  deepseek:  { api_base: "https://api.deepseek.com" },
   openai:    { api_base: "https://api.openai.com/v1" },
   anthropic: { api_base: "https://api.anthropic.com" },
   gemini:    { api_base: "https://generativelanguage.googleapis.com/v1beta" },
@@ -41,7 +41,6 @@ function ModelConfigBlock({
     onChange({
       ...value,
       provider: p,
-      api_base: PROVIDER_DEFAULTS[p].api_base,
     });
   }
 
@@ -76,6 +75,7 @@ function ModelConfigBlock({
           type="text"
           value={value.api_base}
           onChange={(e) => onChange({ ...value, api_base: e.target.value })}
+          placeholder={PROVIDER_DEFAULTS[provider].api_base}
         />
       </div>
       <div className={styles.field}>

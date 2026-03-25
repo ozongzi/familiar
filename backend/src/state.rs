@@ -7,7 +7,7 @@ use crate::config::{Config, McpServerConfig, ModelConfig};
 use crate::db::{Db, to_vector};
 use crate::embedding::EmbeddingClient;
 use crate::spells::{SpellDeps, build_all_spells};
-use agentix::{Agent, AgentEvent, InMemory, McpTool, Message};
+use agentix::{Agent, AgentEvent, LlmSummarizer, McpTool, Message};
 use agentix::types::UsageStats;
 use futures::StreamExt;
 use serde_json::{json};
@@ -188,7 +188,7 @@ impl AppState {
         let history = match self.db.restore(conversation_id).await {
             Ok(h) => {
                 info!(conversation = %conversation_id, messages = h.len(), "restored history");
-                h
+                sanitize_history(h)
             }
             Err(e) => {
                 error!(conversation = %conversation_id, "failed to restore history: {e}");
@@ -321,6 +321,8 @@ impl AppState {
         let agent_once: Arc<tokio::sync::OnceCell<Arc<tokio::sync::Mutex<Agent>>>> =
             Arc::new(tokio::sync::OnceCell::new());
 
+        let summarizer_client = cheap_cfg.to_client();
+
         let spell_deps = SpellDeps {
             ask_pending: Arc::clone(&ask_user_pending),
             subagent_prompt: global_cfg.subagent_prompt(),
@@ -355,7 +357,9 @@ impl AppState {
         for (_, tool) in &mcp_snapshot {
             agent = agent.tool(tool.clone());
         }
-        agent = agent.memory(InMemory::new().with_history(history));
+        let summarizer = LlmSummarizer::new(summarizer_client, 40_000)
+            .with_history(history);
+        agent = agent.memory(summarizer);
 
         let agent_arc = Arc::new(tokio::sync::Mutex::new(agent));
         // Set the OnceLock so ManageMcpSpell can use the agent for hot-swapping.
@@ -766,6 +770,25 @@ async fn run_generation(
                         entry.queued_interrupts.clear();
                     }
                 }
+                // Persist the assistant message (with tool_calls) and the tool result in order.
+                // Must be sequential (await) so tool_result's parent_id points to the assistant message.
+                if !tool_calls_buf.is_empty() {
+                    state.persist_message_async(
+                        conversation_id,
+                        Message::Assistant {
+                            content: if reply_buf.is_empty() { None } else { Some(reply_buf.clone()) },
+                            reasoning: if reasoning_buf.is_empty() { None } else { Some(reasoning_buf.clone()) },
+                            tool_calls: tool_calls_buf.clone(),
+                        },
+                    ).await;
+                    reply_buf.clear();
+                    reasoning_buf.clear();
+                    tool_calls_buf.clear();
+                }
+                state.persist_message_async(
+                    conversation_id,
+                    Message::ToolResult { call_id: call_id.clone(), content: result.to_string() },
+                ).await;
                 let payload = json!({"type": "tool_result", "id": call_id, "name": name, "result": result}).to_string();
                 let mut map = state.chats.lock().unwrap();
                 if let Some(entry) = map.get_mut(&conversation_id) {
@@ -788,32 +811,34 @@ async fn run_generation(
                 return None;
             }
             Some(AgentEvent::Usage(u)) => {
-                usage += u;
+                usage += u.clone();
+                {
+                    let pool = state.pool.clone();
+                    let u = u;
+                    tokio::spawn(async move {
+                        let _ = sqlx::query(
+                            r#"UPDATE conversations
+                               SET token_usage = token_usage || jsonb_build_object(
+                                   'prompt_tokens',     (COALESCE((token_usage->>'prompt_tokens')::bigint, 0) + $1),
+                                   'completion_tokens', (COALESCE((token_usage->>'completion_tokens')::bigint, 0) + $2),
+                                   'total_tokens',      (COALESCE((token_usage->>'total_tokens')::bigint, 0) + $3)
+                               )
+                               WHERE id = $4"#,
+                        )
+                        .bind(u.prompt_tokens as i64)
+                        .bind(u.completion_tokens as i64)
+                        .bind(u.total_tokens as i64)
+                        .bind(conversation_id)
+                        .execute(&pool)
+                        .await;
+                    });
+                }
             }
             Some(_) => {}
         }
     }
 
     if usage.total_tokens > 0 {
-        let pool = state.pool.clone();
-        tokio::spawn(async move {
-            let _ = sqlx::query(
-                r#"UPDATE conversations
-                   SET token_usage = token_usage || jsonb_build_object(
-                       'prompt_tokens',     (COALESCE((token_usage->>'prompt_tokens')::bigint, 0) + $1),
-                       'completion_tokens', (COALESCE((token_usage->>'completion_tokens')::bigint, 0) + $2),
-                       'total_tokens',      (COALESCE((token_usage->>'total_tokens')::bigint, 0) + $3)
-                   )
-                   WHERE id = $4"#,
-            )
-            .bind(usage.prompt_tokens as i64)
-            .bind(usage.completion_tokens as i64)
-            .bind(usage.total_tokens as i64)
-            .bind(conversation_id)
-            .execute(&pool)
-            .await;
-        });
-
         let payload = json!({
             "type": "usage",
             "prompt_tokens": usage.prompt_tokens,
@@ -854,4 +879,171 @@ async fn run_generation(
             None
         }
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agentix::request::ToolCall;
+
+    fn assistant_with_calls(ids: &[&str]) -> Message {
+        Message::Assistant {
+            content: None,
+            reasoning: None,
+            tool_calls: ids.iter().map(|id| ToolCall {
+                id: id.to_string(),
+                name: "bash".to_string(),
+                arguments: "{}".to_string(),
+            }).collect(),
+        }
+    }
+
+    fn tool_result(call_id: &str) -> Message {
+        Message::ToolResult { call_id: call_id.to_string(), content: "ok".to_string() }
+    }
+
+    fn user(s: &str) -> Message {
+        use agentix::UserContent;
+        Message::User(vec![UserContent::Text(s.to_string())])
+    }
+
+    #[test]
+    fn orphan_tool_call_stripped() {
+        // assistant with bash:1 but no tool result → stripped
+        let msgs = vec![
+            user("hi"),
+            assistant_with_calls(&["bash:1"]),
+            user("next"),
+        ];
+        let out = sanitize_history(msgs);
+        // the assistant message with orphan tool_call should be dropped
+        for m in &out {
+            if let Message::Assistant { tool_calls, .. } = m {
+                assert!(tool_calls.is_empty(), "orphan tool_call should be stripped");
+            }
+        }
+    }
+
+    #[test]
+    fn answered_tool_call_kept() {
+        let msgs = vec![
+            user("hi"),
+            assistant_with_calls(&["bash:1"]),
+            tool_result("bash:1"),
+            user("next"),
+        ];
+        let out = sanitize_history(msgs);
+        let has_tool_call = out.iter().any(|m| matches!(m, Message::Assistant { tool_calls, .. } if !tool_calls.is_empty()));
+        assert!(has_tool_call, "answered tool_call should be kept");
+    }
+
+    #[test]
+    fn partial_tool_calls_kept() {
+        // assistant with bash:1 and bash:2, only bash:1 has a result
+        let msgs = vec![
+            user("hi"),
+            assistant_with_calls(&["bash:1", "bash:2"]),
+            tool_result("bash:1"),
+            // bash:2 has no result
+            user("next"),
+        ];
+        let out = sanitize_history(msgs);
+        for m in &out {
+            if let Message::Assistant { tool_calls, .. } = m {
+                assert_eq!(tool_calls.len(), 1, "only answered tool_call should remain");
+                assert_eq!(tool_calls[0].id, "bash:1");
+            }
+        }
+    }
+
+    /// Multiple tool_calls in one assistant, results as a linear chain.
+    #[test]
+    fn multi_tool_calls_linear_chain() {
+        use agentix::memory::sanitize_messages;
+        // assistant(bash:1, bash:2) → result(bash:1) → result(bash:2)
+        let msgs = vec![
+            user("hi"),
+            assistant_with_calls(&["bash:1", "bash:2"]),
+            tool_result("bash:1"),
+            tool_result("bash:2"),
+            user("next"),
+        ];
+        let out = sanitize_messages(msgs);
+        // assistant should keep BOTH tool_calls
+        let tc_count: usize = out.iter().filter_map(|m| {
+            if let Message::Assistant { tool_calls, .. } = m { Some(tool_calls.len()) } else { None }
+        }).sum();
+        assert_eq!(tc_count, 2, "both tool_calls should be kept");
+        // both results should be kept
+        let result_count = out.iter().filter(|m| matches!(m, Message::ToolResult { .. })).count();
+        assert_eq!(result_count, 2, "both tool results should be kept");
+    }
+
+    /// The actual production bug: bash:1 is used in turn 1 (has result),
+    /// then reused in turn 2 (no result in turn 2 — different ToolResult follows turn 1).
+    /// sanitize_history must NOT keep bash:1 in turn 2 just because bash:1 has a
+    /// global ToolResult somewhere in history.
+    #[test]
+    fn reused_id_not_falsely_kept() {
+        use agentix::memory::sanitize_messages;
+        // turn 1: assistant(bash:1) → tool_result(bash:1)  ✓ answered
+        // turn 2: assistant(bash:1) — reused id, NO tool result in turn 2
+        let msgs = vec![
+            user("turn1"),
+            assistant_with_calls(&["bash:1"]),
+            tool_result("bash:1"),
+            user("turn2"),
+            assistant_with_calls(&["bash:1"]),  // reused id, no result follows
+            user("turn3"),
+        ];
+        let out = sanitize_messages(msgs);
+        // turn 1 assistant should be kept with bash:1
+        // turn 2 assistant should have bash:1 STRIPPED (no local result)
+        let assistants_with_calls: Vec<_> = out.iter().filter(|m| {
+            matches!(m, Message::Assistant { tool_calls, .. } if !tool_calls.is_empty())
+        }).collect();
+        assert_eq!(assistants_with_calls.len(), 1, "only turn1 assistant should keep tool_calls");
+    }
+}
+
+/// Remove tool_calls from assistant messages that are not immediately followed by
+/// the corresponding tool results. This fixes histories corrupted by out-of-order
+/// persistence where an assistant message with tool_calls has no matching tool response.
+fn sanitize_history(messages: Vec<Message>) -> Vec<Message> {
+    use std::collections::HashSet;
+
+    // Build a set of all tool_call_ids that have a corresponding ToolResult.
+    let answered: HashSet<&str> = messages.iter().filter_map(|m| {
+        if let Message::ToolResult { call_id, .. } = m { Some(call_id.as_str()) } else { None }
+    }).collect();
+
+    let mut result: Vec<Message> = Vec::with_capacity(messages.len());
+    for msg in &messages {
+        match msg {
+            Message::Assistant { content, reasoning, tool_calls } if !tool_calls.is_empty() => {
+                // Keep only the tool_calls that have a matching result.
+                let kept: Vec<_> = tool_calls.iter()
+                    .filter(|tc| answered.contains(tc.id.as_str()))
+                    .cloned()
+                    .collect();
+                if !kept.is_empty() {
+                    result.push(Message::Assistant {
+                        content: content.clone(),
+                        reasoning: reasoning.clone(),
+                        tool_calls: kept,
+                    });
+                } else if content.as_deref().map(|s| !s.is_empty()).unwrap_or(false) {
+                    // Keep the text content but drop the orphan tool_calls.
+                    result.push(Message::Assistant {
+                        content: content.clone(),
+                        reasoning: reasoning.clone(),
+                        tool_calls: vec![],
+                    });
+                }
+                // else drop entirely
+            }
+            other => result.push(other.clone()),
+        }
+    }
+    result
 }

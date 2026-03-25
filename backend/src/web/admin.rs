@@ -56,6 +56,8 @@ pub async fn update_admin_config(
     Config::upsert(&state.pool, &cfg)
         .await
         .map_err(|e| AppError::internal(&e.to_string()))?;
+    // Evict all cached agents so next request rebuilds with the new config.
+    state.chats.lock().unwrap().clear();
     Ok(Json(serde_json::json!({"ok": true})))
 }
 

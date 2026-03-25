@@ -115,11 +115,12 @@ function extractObjectsFromArray(arrayStr: string): PlanStep[] {
 function parseTodosFromArgs(argsRaw: string): PlanStep[] {
   if (!argsRaw) return [];
 
-  // Try full JSON parse first — args shape: {title, steps: [...]}
+  // Try full JSON parse first — args shape: {todos: [...]} or {steps: [...]}
   try {
     const parsed = JSON.parse(argsRaw) as Record<string, unknown>;
-    if (Array.isArray(parsed.steps)) {
-      return (parsed.steps as Array<Record<string, unknown>>)
+    const arr = Array.isArray(parsed.todos) ? parsed.todos : Array.isArray(parsed.steps) ? parsed.steps : null;
+    if (arr) {
+      return (arr as Array<Record<string, unknown>>)
         .map(parseStepFromArgs)
         .filter((s): s is PlanStep => s !== null);
     }
@@ -127,13 +128,15 @@ function parseTodosFromArgs(argsRaw: string): PlanStep[] {
     // argsRaw not yet complete JSON, fall through to streaming parse
   }
 
-  // Streaming parse: extract complete objects from the inline "steps" array
-  const keyIdx = argsRaw.indexOf('"steps"');
-  if (keyIdx === -1) return [];
-  const bracketPos = argsRaw.indexOf("[", keyIdx);
-  if (bracketPos === -1) return [];
-
-  return extractObjectsFromArray(argsRaw.slice(bracketPos));
+  // Streaming parse: try "todos" first, then "steps"
+  for (const key of ["todos", "steps"]) {
+    const keyIdx = argsRaw.indexOf(`"${key}"`);
+    if (keyIdx === -1) continue;
+    const bracketPos = argsRaw.indexOf("[", keyIdx);
+    if (bracketPos === -1) continue;
+    return extractObjectsFromArray(argsRaw.slice(bracketPos));
+  }
+  return [];
 }
 
 function countByStatus(steps: PlanStep[]) {

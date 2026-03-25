@@ -15,7 +15,7 @@ const PROVIDER_LABELS: Record<Provider, string> = {
 };
 
 const PROVIDER_DEFAULTS: Record<Provider, string> = {
-  deepseek:  "https://api.deepseek.com/v1",
+  deepseek:  "https://api.deepseek.com",
   openai:    "https://api.openai.com/v1",
   anthropic: "https://api.anthropic.com",
   gemini:    "https://generativelanguage.googleapis.com/v1beta",
@@ -244,7 +244,6 @@ export function UserSettingsModal({ token, onClose }: Props) {
                             setSettings({
                               ...settings,
                               provider: p,
-                              api_base: PROVIDER_DEFAULTS[p],
                             })
                           }
                         >
@@ -262,7 +261,7 @@ export function UserSettingsModal({ token, onClose }: Props) {
                       onChange={(e) =>
                         setSettings({ ...settings, api_base: e.target.value })
                       }
-                      placeholder="https://api.deepseek.com/v1"
+                      placeholder={PROVIDER_DEFAULTS[settings.provider ?? "deepseek"]}
                     />
                   </div>
                   
