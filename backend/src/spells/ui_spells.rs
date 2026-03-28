@@ -1,12 +1,9 @@
 use std::sync::Arc;
-use std::time::Duration;
 
 use agentix::tool;
 use serde_json::json;
-use tokio::sync::Mutex;
 
 pub struct UiSpells {
-    pub ask_pending: Arc<Mutex<Option<tokio::sync::oneshot::Sender<String>>>>,
     pub sandbox: Arc<crate::sandbox::SandboxManager>,
     pub user_id: uuid::Uuid,
     pub conversation_id: uuid::Uuid,
@@ -50,6 +47,7 @@ impl Tool for UiSpells {
     /// 向用户提问并等待回答后再继续。
     /// 适合需要确认、选择或补充信息的场景。
     /// 有 options 时前端渲染为快捷按钮。
+    /// 调用后当前生成会自动结束，用户回答将作为新消息继续对话。
     ///
     /// description: 本次操作意图（供 UI 渲染，可不填）
     /// question: 向用户展示的问题文本，必须简洁明了
@@ -60,14 +58,14 @@ impl Tool for UiSpells {
         question: String,
         options: Option<Vec<String>>,
     ) -> serde_json::Value {
-        let _ = (description, options, question);
-        let (tx, rx) = tokio::sync::oneshot::channel::<String>();
-        *self.ask_pending.lock().await = Some(tx);
-        match tokio::time::timeout(Duration::from_secs(300), rx).await {
-            Ok(Ok(answer)) => json!({ "answer": answer }),
-            Ok(Err(_)) => json!({ "error": "连接已关闭，用户未作答" }),
-            Err(_) => json!({ "error": "等待超时（5 分钟）" }),
-        }
+        // Return a marker that the Worker will detect to pause generation.
+        // The user's answer will arrive as a normal new message.
+        json!({
+            "__ask__": true,
+            "description": description,
+            "question": question,
+            "options": options,
+        })
     }
 
     /// 在对话中内嵌渲染一个交互式 widget（图表、可视化、计算器等）。

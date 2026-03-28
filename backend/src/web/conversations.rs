@@ -145,40 +145,23 @@ pub async fn auto_title(
         return Err(AppError::not_found("对话不存在"));
     }
 
-    use agentix::{Agent, AgentEvent, LlmClient};
-    use crate::config::Provider;
-    use futures::StreamExt;
-
     let global_cfg = state.get_global_config().await?;
     let cm = &global_cfg.cheap_model;
-
-    let client = match cm.provider {
-        Provider::DeepSeek  => LlmClient::deepseek(cm.api_key.clone()),
-        Provider::OpenAI    => LlmClient::openai(cm.api_key.clone()),
-        Provider::Anthropic => LlmClient::anthropic(cm.api_key.clone()),
-        Provider::Gemini    => LlmClient::gemini(cm.api_key.clone()),
-    };
-    client.base_url(cm.api_base.clone());
-    client.model(cm.name.clone());
-    client.max_tokens(64);
 
     let prompt = format!(
         "根据用户发送的第一条消息 {}，生成一个简短的对话标题（5到10个字）。只返回标题文字本身，不加引号、标点或任何解释。",
         &req.prompt
     );
 
-    let mut agent = Agent::new(client);
-    let mut stream = agent.chat(prompt).await
-        .map_err(|e| AppError::internal(&e.to_string()))?;
+    let http = reqwest::Client::new();
+    let resp = cm.to_request()
+        .max_tokens(64)
+        .user(prompt)
+        .complete(&http)
+        .await
+        .map_err(|e: agentix::ApiError| AppError::internal(&e.to_string()))?;
 
-    let mut title_buf = String::new();
-    while let Some(ev) = stream.next().await {
-        if let AgentEvent::Token(t) = ev {
-            title_buf.push_str(&t);
-        }
-    }
-
-    let title = title_buf.trim().to_string();
+    let title = resp.content.unwrap_or_default().trim().to_string();
 
     Ok(Json(AutoTitleResponse { title }))
 }

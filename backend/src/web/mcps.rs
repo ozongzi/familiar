@@ -6,10 +6,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-use agentix::McpTool;
-use std::time::Duration;
-use tokio::time::timeout;
-
 use crate::errors::{AppError, AppResult};
 use crate::web::AppState;
 use crate::web::auth::AuthUser;
@@ -102,60 +98,7 @@ pub async fn create_mcp(
         }
     })?;
 
-    // Eagerly connect the new tool and push it into all active sessions for this user.
-    // For http tools we connect once; for stdio we must connect per-session with the
-    // correct sandbox wrapping.
-    let http_tool: Option<McpTool> = if req.r#type == "http" {
-        if let Some(url) = req.config.get("url").and_then(|v| v.as_str()) {
-            match timeout(Duration::from_secs(15), McpTool::http(url)).await {
-                Ok(Ok(t)) => Some(t),
-                _ => None,
-            }
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-
-    let sessions: Vec<_> = {
-        let map = state.chats.lock().unwrap();
-        map.iter()
-            .filter(|(_, e)| e.user_id == auth.user_id)
-            .map(|(&cid, e)| (cid, e.user_mcp_tools.clone(), std::sync::Arc::clone(&e.agent)))
-            .collect()
-    };
-
-    for (cid, mcp_vec, agent_arc) in sessions {
-        let tool: Option<McpTool> = if let Some(ref t) = http_tool {
-            Some(t.clone())
-        } else if req.r#type == "stdio" {
-            let command = req.config.get("command").and_then(|v| v.as_str()).unwrap_or_default();
-            let args: Vec<String> = req.config.get("args").and_then(|v| v.as_array()).map(|a| {
-                a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()
-            }).unwrap_or_default();
-            let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-            let (cmd, args_wrapped_vec) = state.sandbox.wrap_mcp_command(auth.user_id, cid, command, &args_ref);
-            let args_wrapped: Vec<&str> = args_wrapped_vec.iter().map(|s| s.as_str()).collect();
-
-            match timeout(Duration::from_secs(300), McpTool::stdio(&cmd, &args_wrapped)).await {
-                Ok(Ok(t)) => Some(t),
-                _ => None,
-            }
-        } else {
-            None
-        };
-
-        if let Some(tool) = tool {
-            let name = req.name.clone();
-            {
-                let mut guard = mcp_vec.lock().await;
-                guard.retain(|(n, _)| n != &name);
-                guard.push((name, tool.clone()));
-            }
-            agent_arc.lock().await.add_tool(tool).await;
-        }
-    }
+    // No in-memory hot-reload — workers load MCPs from DB each time.
 
     let _ = crate::audit::log_audit(
         &state.pool,
@@ -193,57 +136,7 @@ pub async fn update_mcp(
     .await?
     .ok_or_else(|| AppError::not_found("MCP 不存在"))?;
 
-    let http_tool: Option<McpTool> = if req.r#type == "http" {
-        if let Some(url) = req.config.get("url").and_then(|v| v.as_str()) {
-            match timeout(Duration::from_secs(15), McpTool::http(url)).await {
-                Ok(Ok(t)) => Some(t),
-                _ => None,
-            }
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-
-    let sessions: Vec<_> = {
-        let map = state.chats.lock().unwrap();
-        map.iter()
-            .filter(|(_, e)| e.user_id == auth.user_id)
-            .map(|(&cid, e)| (cid, e.user_mcp_tools.clone(), std::sync::Arc::clone(&e.agent)))
-            .collect()
-    };
-
-    for (cid, mcp_vec, agent_arc) in sessions {
-        let tool: Option<McpTool> = if let Some(ref t) = http_tool {
-            Some(t.clone())
-        } else if req.r#type == "stdio" {
-            let command = req.config.get("command").and_then(|v| v.as_str()).unwrap_or_default();
-            let args: Vec<String> = req.config.get("args").and_then(|v| v.as_array()).map(|a| {
-                a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()
-            }).unwrap_or_default();
-            let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-            let (cmd, args_wrapped_vec) = state.sandbox.wrap_mcp_command(auth.user_id, cid, command, &args_ref);
-            let args_wrapped: Vec<&str> = args_wrapped_vec.iter().map(|s| s.as_str()).collect();
-
-            match timeout(Duration::from_secs(300), McpTool::stdio(&cmd, &args_wrapped)).await {
-                Ok(Ok(t)) => Some(t),
-                _ => None,
-            }
-        } else {
-            None
-        };
-
-        if let Some(tool) = tool {
-            let name = req.name.clone();
-            {
-                let mut guard = mcp_vec.lock().await;
-                guard.retain(|(n, _)| n != &name);
-                guard.push((name, tool.clone()));
-            }
-            agent_arc.lock().await.add_tool(tool).await;
-        }
-    }
+    // No in-memory hot-reload — workers load MCPs from DB each time.
 
     let _ = crate::audit::log_audit(
         &state.pool,
@@ -282,41 +175,14 @@ pub async fn delete_mcp(
         return Err(AppError::not_found("MCP 不存在"));
     }
 
-    // Remove from all active sessions for this user and hot-swap the agent's tool bundle
-    let sessions: Vec<_> = {
-        let map = state.chats.lock().unwrap();
-        map.iter()
-            .filter(|(_, e)| e.user_id == auth.user_id)
-            .map(|(_, e)| (e.user_mcp_tools.clone(), std::sync::Arc::clone(&e.agent)))
-            .collect()
-    };
-
-    let name = row.name.clone();
-    for (mcp_vec, agent_arc) in sessions {
-        // Remove from the session's MCP list
-        let tool_fn_names: Vec<String> = {
-            let mut guard = mcp_vec.lock().await;
-            let names = guard
-                .iter()
-                .filter(|(n, _)| n == &name)
-                .flat_map(|(_, t)| t.raw_tools().into_iter().map(|r| r.function.name.clone()))
-                .collect();
-            guard.retain(|(n, _)| n != &name);
-            names
-        };
-        // Hot-remove each tool function from the running agent by name
-        let mut agent = agent_arc.lock().await;
-        for fn_name in &tool_fn_names {
-            agent.delete_tool(fn_name).await;
-        }
-    }
+    // No in-memory hot-reload — workers load MCPs from DB each time.
 
     let _ = crate::audit::log_audit(
         &state.pool,
         Some(auth.user_id),
         None,
         "mcp.delete",
-        Some(serde_json::json!({ "id": id, "name": name })),
+        Some(serde_json::json!({ "id": id, "name": row.name })),
         None,
     ).await;
 

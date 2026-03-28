@@ -26,7 +26,7 @@ pub struct McpCatalogEntry {
     pub args: Vec<String>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq)]
 #[derive(Default)]
 pub enum Provider {
     #[serde(rename = "deepseek")]
@@ -40,14 +40,14 @@ pub enum Provider {
     Gemini,
 }
 
-
 impl Provider {
-    pub fn as_str(&self) -> &'static str {
+    /// Convert to the agentix `Provider` enum.
+    pub fn to_agentix(self) -> agentix::Provider {
         match self {
-            Provider::DeepSeek  => "deepseek",
-            Provider::OpenAI    => "openai",
-            Provider::Anthropic => "anthropic",
-            Provider::Gemini    => "gemini",
+            Provider::DeepSeek  => agentix::Provider::DeepSeek,
+            Provider::OpenAI    => agentix::Provider::OpenAI,
+            Provider::Anthropic => agentix::Provider::Anthropic,
+            Provider::Gemini    => agentix::Provider::Gemini,
         }
     }
 }
@@ -64,15 +64,11 @@ pub struct ModelConfig {
 }
 
 impl ModelConfig {
-    /// Build an [`agentix::LlmClient`] from this config — one call replaces the
-    /// four-arm `match provider { ... }` block that used to appear in `build_agent`.
-    pub fn to_client(&self) -> agentix::LlmClient {
-        agentix::LlmClient::from_parts(
-            self.provider.as_str(),
-            self.api_key.clone(),
-            self.api_base.clone(),
-            self.name.clone(),
-        )
+    /// Build an [`agentix::Request`] pre-filled with provider, key, base URL, and model.
+    pub fn to_request(&self) -> agentix::Request {
+        agentix::Request::new(self.provider.to_agentix(), &self.api_key)
+            .base_url(&self.api_base)
+            .model(&self.name)
     }
 }
 

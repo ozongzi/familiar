@@ -168,7 +168,7 @@ pub async fn update_settings(
             frontier.api_key = api_key.clone();
             frontier.api_base = api_base.clone();
             frontier.name = model_name.clone();
-            frontier.provider = provider.clone();
+            frontier.provider = provider;
 
             let mut cheap = global_cfg.cheap_model;
             cheap.api_key = api_key;

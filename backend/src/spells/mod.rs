@@ -10,8 +10,6 @@ use shared_backend::spells::sourcegraph_spell::search_code;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use agentix::{Agent, McpTool};
-use tokio::sync::OnceCell;
 use uuid::Uuid;
 
 use crate::config::{McpCatalogEntry, ModelConfig};
@@ -25,19 +23,15 @@ use ui_spells::UiSpells;
 
 /// All runtime dependencies required to build the full built-in spell bundle.
 pub struct SpellDeps {
-    // UiSpells
-    pub ask_pending: Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<String>>>>,
     pub subagent_prompt: Option<String>,
     // SpawnSpell
     pub cheap_model: ModelConfig,
-    pub mcp_tools: Arc<tokio::sync::Mutex<Vec<(String, McpTool)>>>,
     pub spawn_tx: tokio::sync::broadcast::Sender<String>,
     // HistorySpell
     pub db: Db,
     pub embed: EmbeddingClient,
     pub conversation_id: Uuid,
-    // ManageMcpSpell — filled in after the Agent Arc is created
-    pub agent: Arc<OnceCell<Arc<tokio::sync::Mutex<Agent>>>>,
+    // ManageMcpSpell
     pub pool: sqlx::PgPool,
     pub user_id: Uuid,
     pub sandbox: Arc<crate::sandbox::SandboxManager>,
@@ -53,7 +47,6 @@ pub fn build_all_spells(deps: SpellDeps) -> impl agentix::Tool {
             user_id: deps.user_id,
         }
         + UiSpells {
-            ask_pending: deps.ask_pending,
             user_id: deps.user_id,
             conversation_id: deps.conversation_id,
             sandbox: deps.sandbox.clone(),
@@ -62,7 +55,6 @@ pub fn build_all_spells(deps: SpellDeps) -> impl agentix::Tool {
         + SpawnSpell {
             cheap_model: deps.cheap_model,
             subagent_prompt: deps.subagent_prompt,
-            mcp_tools: Arc::clone(&deps.mcp_tools),
             broadcast_tx: deps.spawn_tx,
             abort_flag: Arc::clone(&deps.abort_flag),
         }
@@ -72,11 +64,9 @@ pub fn build_all_spells(deps: SpellDeps) -> impl agentix::Tool {
             conversation_id: deps.conversation_id,
         }
         + ManageMcpSpell {
-            mcp_tools: deps.mcp_tools,
-            agent: deps.agent,
             pool: deps.pool.clone(),
-            user_id: deps.user_id,
             conversation_id: deps.conversation_id,
+            user_id: deps.user_id,
             sandbox: deps.sandbox,
             catalog: deps.mcp_catalog,
         }

@@ -225,35 +225,11 @@ async fn handle_tunnel(socket: WebSocket, user_id: Uuid, state: AppState) {
 
     tracing::info!(%user_id, tools = mcp_tool.raw_tools().len(), "客户端隧道已连接");
 
-    // 把隧道工具存进注册表，供 build_agent 时查询
-    // 同时如果当前有活跃的 chat entry，也通过 inject_tx 实时注入
+    // 把隧道工具存进注册表，Worker 启动时会从注册表获取
     {
         let mut registry = state.tunnel_registry.lock().await;
         registry.insert(user_id, mcp_tool.clone());
         tracing::info!(%user_id, "隧道工具已存入注册表");
-    }
-
-    // 如果当前有活跃的 chat entry，立即注入工具
-    let injected = {
-        let agent_arc = {
-            let chats = state.chats.lock().unwrap();
-            chats.get(&user_id).map(|e| std::sync::Arc::clone(&e.agent))
-        };
-        if let Some(agent_arc) = agent_arc {
-            let tool = mcp_tool.clone();
-            tokio::spawn(async move {
-                agent_arc.lock().await.add_tool(tool).await;
-            });
-            true
-        } else {
-            false
-        }
-    };
-
-    if injected {
-        tracing::info!(%user_id, "已将隧道工具实时注入当前 agent");
-    } else {
-        tracing::info!(%user_id, "无活跃 agent，隧道工具将在下次对话时从注册表加载");
     }
 
     // 等待 writer tasks 结束（连接断开时自动结束）
@@ -264,9 +240,6 @@ async fn handle_tunnel(socket: WebSocket, user_id: Uuid, state: AppState) {
         let mut registry = state.tunnel_registry.lock().await;
         registry.remove(&user_id);
     }
-
-    // 隧道断开后，下次 build_agent 时不会从注册表加载该工具，已足够
-    // （当前运行中的 agent turn 继续持有旧工具引用直到本轮结束）
 
     tracing::info!(%user_id, "客户端隧道已断开");
 }

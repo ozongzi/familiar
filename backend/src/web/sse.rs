@@ -1,5 +1,5 @@
-use std::cmp;
 use std::convert::Infallible;
+use std::time::Duration;
 
 use async_stream::stream;
 use axum::{
@@ -14,7 +14,6 @@ use axum::{
 use serde::Deserialize;
 use serde_json::json;
 use sqlx::Row;
-use tokio::sync::broadcast;
 use uuid::Uuid;
 
 use crate::errors::AppError;
@@ -34,15 +33,9 @@ pub struct InterruptRequest {
     pub content: String,
 }
 
-#[derive(Deserialize)]
-pub struct AnswerRequest {
-    pub content: String,
-}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/// Returns true if an SSE event payload represents a terminal event
-/// (generation is done and the stream can be closed).
 fn is_terminal(payload: &str) -> bool {
     serde_json::from_str::<serde_json::Value>(payload)
         .ok()
@@ -51,7 +44,6 @@ fn is_terminal(payload: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Verify that the authenticated user owns the given conversation.
 async fn verify_conversation_owner(
     state: &AppState,
     conversation_id: Uuid,
@@ -76,16 +68,25 @@ async fn verify_conversation_owner(
     Ok(())
 }
 
-/// Resolve a stream token and verify ownership in one step.
+/// Resolve a job_id (used as stream_id) and verify ownership.
 /// Returns `(conversation_id, user_id)`.
-fn resolve_and_check(
+async fn resolve_job(
     state: &AppState,
-    stream_id: Uuid,
+    job_id: Uuid,
     caller_user_id: Uuid,
 ) -> Result<(Uuid, Uuid), AppError> {
-    let (conv_id, owner_id) = state
-        .resolve_stream(stream_id)
+    let row = sqlx::query("SELECT conversation_id, user_id FROM generation_jobs WHERE id = $1")
+        .bind(job_id)
+        .fetch_optional(&state.pool)
+        .await
+        .map_err(|e| {
+            tracing::error!("job lookup: {e}");
+            AppError::internal("数据库错误")
+        })?
         .ok_or_else(|| AppError::not_found("流不存在"))?;
+
+    let conv_id: Uuid = row.try_get("conversation_id").map_err(|_| AppError::internal("数据库错误"))?;
+    let owner_id: Uuid = row.try_get("user_id").map_err(|_| AppError::internal("数据库错误"))?;
 
     if owner_id != caller_user_id {
         return Err(AppError::forbidden("无权访问该流"));
@@ -108,7 +109,6 @@ pub async fn send_message_handler(
         return Err(AppError::bad_request("消息内容不能为空"));
     }
 
-    // Verify the conversation exists and belongs to this user.
     verify_conversation_owner(&state, conversation_id, auth.user_id).await?;
 
     // Build multimodal parts.
@@ -138,40 +138,24 @@ pub async fn send_message_handler(
         parts
     };
 
-    // Ensure ChatEntry exists and check if generation is in progress.
-    let (_rx, _log, already_generating) = state.attach(conversation_id).await;
-
     // Persist the user message.
     {
         use agentix::Message;
-        let msg = Message::User(user_parts.clone());
+        let msg = Message::User(user_parts);
         state.persist_message(conversation_id, &msg);
     }
 
-    if already_generating {
-        tracing::info!(
-            conversation = %conversation_id,
-            "agent busy, injecting message via interrupt"
-        );
-        state.send_interrupt(conversation_id, content);
+    // If there's already a running job, abort it first (interrupt semantics).
+    // Then start a new generation job.
+    let job_id = state
+        .start_generation(conversation_id, auth.user_id)
+        .await
+        .map_err(|e| AppError::internal(&e.to_string()))?;
 
-        let stream_id = state.create_stream(conversation_id, auth.user_id);
-        return Ok((
-            StatusCode::ACCEPTED,
-            Json(json!({ "stream_id": stream_id })),
-        ));
-    }
-
-    // Start a new background generation task.
-    let started = state.start_generation(conversation_id, user_parts).await;
-    if !started {
-        return Err(AppError::internal("无法启动生成任务"));
-    }
-
-    let stream_id = state.create_stream(conversation_id, auth.user_id);
+    // job_id doubles as stream_id
     Ok((
         StatusCode::ACCEPTED,
-        Json(json!({ "stream_id": stream_id })),
+        Json(json!({ "stream_id": job_id })),
     ))
 }
 
@@ -182,88 +166,148 @@ pub async fn sse_handler(
     State(state): State<AppState>,
     Path(stream_id): Path<Uuid>,
 ) -> Result<impl IntoResponse, AppError> {
-    let (conversation_id, _owner_id) = resolve_and_check(&state, stream_id, auth.user_id)?;
+    let job_id = stream_id;
+    let (_conv_id, _owner_id) = resolve_job(&state, job_id, auth.user_id).await?;
 
-    // Get a broadcast receiver + current event log snapshot.
-    let (mut live_rx, event_log, _generating) = state.attach(conversation_id).await;
-
-    // Check if generation already finished before this SSE connection arrived.
-    let already_done = event_log
-        .last()
-        .map(|ev| is_terminal(&ev.payload))
-        .unwrap_or(false);
+    let pool = state.pool.clone();
 
     let s = stream! {
-        // Use sequence numbers for deduplication: every WsEvent has a globally
-        // unique monotonically-increasing seq assigned at emit() time.
-        // We track the highest seq we have already yielded; anything ≤ that
-        // seq arriving from live_rx is a duplicate and gets dropped.
-        // This replaces the old Arc-pointer trick which failed for spawn events
-        // (each relay creates a fresh Arc from a String, so pointers diverge).
-        let mut last_sent_seq: Option<u64> = None;
+        // ── 1. Replay existing events from DB ─────────────────────────────────
+        let existing: Vec<(i64, String)> = sqlx::query_as(
+            "SELECT id, payload FROM generation_events WHERE job_id = $1 ORDER BY id ASC"
+        )
+        .bind(job_id)
+        .fetch_all(&pool)
+        .await
+        .unwrap_or_default();
 
-        // ── Replay the event log ─────────────────────────────────────────────
-        for ev in &event_log {
-            last_sent_seq = Some(match last_sent_seq {
-                Some(s) => cmp::max(s, ev.seq),
-                None => ev.seq,
-            });
-            yield Ok::<Event, Infallible>(Event::default().data(ev.payload.clone()));
+        let mut last_id: i64 = 0;
+        let mut done = false;
+
+        for (id, payload) in &existing {
+            last_id = *id;
+            if is_terminal(payload) {
+                done = true;
+            }
+            yield Ok::<Event, Infallible>(Event::default().data(payload.clone()));
         }
 
-        if already_done {
-            // Generation already finished — nothing more to stream.
+        if done {
             return;
         }
 
-        // ── Relay live broadcast events ───────────────────────────────────────
+        // ── 2. Subscribe to LISTEN/NOTIFY for live events ─────────────────────
+        // We use a dedicated connection for LISTEN.
+        let mut listener = match sqlx::postgres::PgListener::connect_with(&pool).await {
+            Ok(l) => l,
+            Err(e) => {
+                tracing::error!("PgListener connect failed: {e}");
+                yield Ok(Event::default().data(json!({"type": "error", "message": "SSE listener failed"}).to_string()));
+                return;
+            }
+        };
+        if let Err(e) = listener.listen("generation_events").await {
+            tracing::error!("LISTEN failed: {e}");
+            yield Ok(Event::default().data(json!({"type": "error", "message": "SSE listener failed"}).to_string()));
+            return;
+        }
+
+        // Also check for any events we missed between the initial SELECT and LISTEN.
+        let gap: Vec<(i64, String)> = sqlx::query_as(
+            "SELECT id, payload FROM generation_events WHERE job_id = $1 AND id > $2 ORDER BY id ASC"
+        )
+        .bind(job_id)
+        .bind(last_id)
+        .fetch_all(&pool)
+        .await
+        .unwrap_or_default();
+
+        for (id, payload) in &gap {
+            last_id = *id;
+            if is_terminal(payload) {
+                done = true;
+            }
+            yield Ok(Event::default().data(payload.clone()));
+        }
+
+        if done {
+            return;
+        }
+
+        // ── 3. Stream live events via NOTIFY ──────────────────────────────────
         loop {
-            match live_rx.recv().await {
-                Ok(ev) => {
-                    // Skip events we already sent during replay.
-                    if let Some(last) = last_sent_seq
-                        && ev.seq <= last {
+            // Wait for notification with timeout (heartbeat / stale detection).
+            match tokio::time::timeout(Duration::from_secs(30), listener.recv()).await {
+                Ok(Ok(notification)) => {
+                    // Notification payload is "job_id:event_id".
+                    let payload_str = notification.payload();
+                    let parts: Vec<&str> = payload_str.splitn(2, ':').collect();
+                    if parts.len() != 2 {
+                        continue;
+                    }
+                    let notified_job: Option<Uuid> = parts[0].parse().ok();
+                    let notified_event_id: Option<i64> = parts[1].parse().ok();
+
+                    // Skip notifications for other jobs.
+                    if notified_job != Some(job_id) {
+                        continue;
+                    }
+                    // Skip events we already sent.
+                    if let Some(eid) = notified_event_id
+                        && eid <= last_id {
                             continue;
+                    }
+
+                    // Fetch new events from DB (batch — in case we missed some).
+                    let new_events: Vec<(i64, String)> = sqlx::query_as(
+                        "SELECT id, payload FROM generation_events WHERE job_id = $1 AND id > $2 ORDER BY id ASC"
+                    )
+                    .bind(job_id)
+                    .bind(last_id)
+                    .fetch_all(&pool)
+                    .await
+                    .unwrap_or_default();
+
+                    for (id, payload) in &new_events {
+                        last_id = *id;
+                        let terminal = is_terminal(payload);
+                        yield Ok(Event::default().data(payload.clone()));
+                        if terminal {
+                            return;
                         }
-                    last_sent_seq = Some(ev.seq);
-                    let terminal = is_terminal(&ev.payload);
-                    yield Ok(Event::default().data(ev.payload.clone()));
-                    if terminal {
-                        break;
                     }
                 }
-                Err(broadcast::error::RecvError::Lagged(n)) => {
-                    tracing::warn!(
-                        conversation = %conversation_id,
-                        "SSE broadcast lagged by {n}, replaying event log from seq {:?}",
-                        last_sent_seq,
-                    );
-                    // Re-attach to get the full log and a fresh receiver.
-                    let (new_rx, new_log, _) = state.attach(conversation_id).await;
-                    live_rx = new_rx;
-
-                    // Replay only events we haven't sent yet (seq > last_sent_seq).
-                    let new_done = new_log
-                        .last()
-                        .map(|ev| is_terminal(&ev.payload))
-                        .unwrap_or(false);
-
-                    for ev in &new_log {
-                        if let Some(last) = last_sent_seq
-                            && ev.seq <= last {
-                                continue;
-                            }
-                        last_sent_seq = Some(ev.seq);
-                        yield Ok(Event::default().data(ev.payload.clone()));
-                    }
-
-                    if new_done {
-                        break;
-                    }
-                }
-                Err(broadcast::error::RecvError::Closed) => {
-                    // The sender was dropped — generation task ended.
+                Ok(Err(e)) => {
+                    tracing::error!("PgListener error: {e}");
                     break;
+                }
+                Err(_) => {
+                    // Timeout — check if the job finished while we were waiting.
+                    let status: Option<String> = sqlx::query_scalar(
+                        "SELECT status FROM generation_jobs WHERE id = $1"
+                    )
+                    .bind(job_id)
+                    .fetch_optional(&pool)
+                    .await
+                    .unwrap_or(None);
+
+                    if matches!(status.as_deref(), Some("done" | "error" | "aborted")) {
+                        // Drain any remaining events.
+                        let remaining: Vec<(i64, String)> = sqlx::query_as(
+                            "SELECT id, payload FROM generation_events WHERE job_id = $1 AND id > $2 ORDER BY id ASC"
+                        )
+                        .bind(job_id)
+                        .bind(last_id)
+                        .fetch_all(&pool)
+                        .await
+                        .unwrap_or_default();
+
+                        for (_id, payload) in &remaining {
+                            yield Ok(Event::default().data(payload.clone()));
+                        }
+                        break;
+                    }
+                    // Otherwise, keep waiting.
                 }
             }
         }
@@ -274,9 +318,8 @@ pub async fn sse_handler(
 
 // ── POST /api/conversations/{id}/reattach ────────────────────────────────────
 
-/// Creates a fresh stream_id pointing to a conversation's broadcast channel.
-/// Used by the frontend after a page refresh when the original stream_id was lost
-/// but the backend may still be generating.
+/// Find the latest job for a conversation and return its ID as stream_id.
+/// If no active job, return null stream_id (frontend can handle this).
 pub async fn reattach_handler(
     auth: AuthUser,
     State(state): State<AppState>,
@@ -284,11 +327,16 @@ pub async fn reattach_handler(
 ) -> Result<impl IntoResponse, AppError> {
     verify_conversation_owner(&state, conversation_id, auth.user_id).await?;
 
-    // Ensure a ChatEntry exists (idempotent).
-    state.attach(conversation_id).await;
+    // Find latest job (running or recently finished).
+    let job_id: Option<Uuid> = sqlx::query_scalar(
+        "SELECT id FROM generation_jobs WHERE conversation_id = $1 ORDER BY created_at DESC LIMIT 1"
+    )
+    .bind(conversation_id)
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None);
 
-    let stream_id = state.create_stream(conversation_id, auth.user_id);
-    Ok((StatusCode::OK, Json(json!({ "stream_id": stream_id }))))
+    Ok((StatusCode::OK, Json(json!({ "stream_id": job_id }))))
 }
 
 // ── POST /api/conversations/{id}/branch ──────────────────────────────────────
@@ -306,8 +354,6 @@ pub async fn branch_handler(
 ) -> Result<impl IntoResponse, AppError> {
     verify_conversation_owner(&state, conversation_id, auth.user_id).await?;
 
-    // Set active_message_id to the *parent* of the given message so that the
-    // edited message itself is excluded from the new branch.
     let parent_id: Option<i64> = sqlx::query_scalar(
         "SELECT parent_id FROM messages WHERE id = $1"
     )
@@ -321,8 +367,7 @@ pub async fn branch_handler(
     state.db.branch(conversation_id, branch_tip).await
         .map_err(|e| AppError::internal(&e.to_string()))?;
 
-    // Drop the in-memory agent so the next attach rebuilds from the new branch tip.
-    state.chats.lock().unwrap().remove(&conversation_id);
+    // No in-memory state to clear — next worker will load fresh history from DB.
     Ok(StatusCode::OK)
 }
 
@@ -333,8 +378,8 @@ pub async fn stream_abort_handler(
     State(state): State<AppState>,
     Path(stream_id): Path<Uuid>,
 ) -> Result<impl IntoResponse, AppError> {
-    let (conversation_id, _) = resolve_and_check(&state, stream_id, auth.user_id)?;
-    state.abort_generation(conversation_id);
+    let (_conv_id, _) = resolve_job(&state, stream_id, auth.user_id).await?;
+    state.abort_job(stream_id).await;
     Ok(StatusCode::OK)
 }
 
@@ -351,36 +396,24 @@ pub async fn stream_interrupt_handler(
         return Err(AppError::bad_request("中断内容不能为空"));
     }
 
-    let (conversation_id, _) = resolve_and_check(&state, stream_id, auth.user_id)?;
+    let (conversation_id, _) = resolve_job(&state, stream_id, auth.user_id).await?;
 
-    state.send_interrupt(conversation_id, content.clone());
+    // Abort current job.
+    state.abort_job(stream_id).await;
 
     // Persist the interrupt as a user message.
     {
         use agentix::{Message, UserContent};
-        let msg = Message::User(vec![UserContent::Text(content.clone())]);
+        let msg = Message::User(vec![UserContent::Text(content)]);
         state.persist_message(conversation_id, &msg);
     }
 
-    Ok(StatusCode::OK)
+    // Start a new generation job.
+    let new_job_id = state
+        .start_generation(conversation_id, auth.user_id)
+        .await
+        .map_err(|e| AppError::internal(&e.to_string()))?;
+
+    Ok((StatusCode::OK, Json(json!({ "stream_id": new_job_id }))))
 }
 
-// ── POST /api/stream/{stream_id}/answer ──────────────────────────────────────
-
-pub async fn stream_answer_handler(
-    auth: AuthUser,
-    State(state): State<AppState>,
-    Path(stream_id): Path<Uuid>,
-    Json(body): Json<AnswerRequest>,
-) -> Result<impl IntoResponse, AppError> {
-    let content = body.content.trim().to_string();
-    if content.is_empty() {
-        return Err(AppError::bad_request("回答内容不能为空"));
-    }
-
-    let (conversation_id, _) = resolve_and_check(&state, stream_id, auth.user_id)?;
-
-    state.deliver_answer(conversation_id, content).await;
-
-    Ok(StatusCode::OK)
-}

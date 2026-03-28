@@ -7,6 +7,7 @@ mod sandbox;
 mod spells;
 mod state;
 mod web;
+mod worker;
 
 use std::sync::Arc;
 
@@ -16,13 +17,6 @@ use tracing_subscriber::{EnvFilter, fmt};
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 4)]
 async fn main() {
-    // env::set_current_dir(
-    //     env::var("HOME")
-    //         .or_else(|_| env::var("USERPROFILE"))
-    //         .unwrap_or_else(|_| String::from("/root")),
-    // )
-    // .unwrap();
-
     fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
@@ -52,11 +46,9 @@ async fn main() {
         .await
         .unwrap_or_else(|e| panic!("failed to load app configuration from DB: {e}"));
 
-    // ── App state ─────────────────────────────────────────────────────────────
+    // ── App state (stateless — no in-memory caches) ──────────────────────────
 
-    let mcp_tools = state::AppState::init_mcp(&cfg.mcp).await;
-
-    let state = Arc::new(state::AppState::new(&cfg, pool, mcp_tools));
+    let state = Arc::new(state::AppState::new(&cfg, pool));
     let web_state = web::AppState(Arc::clone(&state));
 
     // ── Web server ────────────────────────────────────────────────────────────

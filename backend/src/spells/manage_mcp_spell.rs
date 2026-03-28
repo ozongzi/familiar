@@ -1,44 +1,22 @@
 use crate::config::McpCatalogEntry;
 use agentix::tool;
-use agentix::{Agent, McpTool};
-use serde_json::{json};
+use agentix::McpTool;
+use serde_json::json;
 use sqlx::PgPool;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::Mutex;
-use tokio::sync::OnceCell;
 use tokio::time::timeout;
 use uuid::Uuid;
 
+/// ManageMcpSpell — pure DB writes.
+/// Install/uninstall writes to `conversation_mcps`.
+/// The worker loads MCPs from DB at startup of each generation job.
 pub struct ManageMcpSpell {
-    /// All currently running MCP tools for this user's session.
-    pub mcp_tools: Arc<Mutex<Vec<(String, McpTool)>>>,
-    /// Filled in after the agent Arc is created; ManageMcpSpell waits until set.
-    pub agent: Arc<OnceCell<Arc<Mutex<Agent>>>>,
-    /// DB pool for persisting MCP config.
     pub pool: PgPool,
-    /// The authenticated user's id.
-    pub user_id: Uuid,
-    /// The current conversation's id.
     pub conversation_id: Uuid,
-    /// Sandbox manager.
+    pub user_id: Uuid,
     pub sandbox: Arc<crate::sandbox::SandboxManager>,
     pub catalog: Vec<McpCatalogEntry>,
-}
-
-impl ManageMcpSpell {
-    /// Rebuild and push a fresh tool set into the agent after the mcp_tools list changes.
-    async fn sync_tools_to_agent(&self) {
-        let agent_arc = match self.agent.get() {
-            Some(a) => a,
-            None => { tracing::warn!("sync_tools_to_agent: agent not yet initialised"); return; }
-        };
-        let bundle = {
-            let guard = self.mcp_tools.lock().await;
-            guard.iter().map(|(_, t)| t.clone()).sum()
-        };
-        agent_arc.lock().await.replace_tool(bundle).await;
-    }
 }
 
 #[tool]
@@ -60,21 +38,23 @@ impl Tool for ManageMcpSpell {
         json!({ "catalog": entries })
     }
 
-    /// 列出当前已安装并运行的 MCP 服务器名称及其导出的工具名
+    /// 列出当前会话已安装的 MCP 服务器配置
     async fn list_installed_mcp(&self) -> Value {
-        let tools = self.mcp_tools.lock().await;
-        let entries: Vec<Value> = tools
+        let rows: Vec<(String, String, serde_json::Value)> = sqlx::query_as(
+            r#"SELECT name, "type", config FROM conversation_mcps WHERE conversation_id = $1 ORDER BY name ASC"#,
+        )
+        .bind(self.conversation_id)
+        .fetch_all(&self.pool)
+        .await
+        .unwrap_or_default();
+
+        let entries: Vec<Value> = rows
             .iter()
-            .map(|(name, tool)| {
-                let tool_names: Vec<String> = tool
-                    .raw_tools()
-                    .into_iter()
-                    .map(|r| r.function.name.clone())
-                    .collect();
+            .map(|(name, mcp_type, config)| {
                 json!({
                     "name": name,
-                    "tool_count": tool_names.len(),
-                    "tools": tool_names
+                    "type": mcp_type,
+                    "config": config,
                 })
             })
             .collect();
@@ -85,13 +65,7 @@ impl Tool for ManageMcpSpell {
     /// name: 服务器唯一标识符（用于后续卸载）
     /// url: MCP Streamable HTTP 端点 URL
     async fn install_mcp_http(&self, name: String, url: String) -> Value {
-        {
-            let tools = self.mcp_tools.lock().await;
-            if tools.iter().any(|(n, _)| n == &name) {
-                return json!({ "error": format!("MCP '{}' 已在运行，请先卸载", name) });
-            }
-        }
-
+        // Validate connectivity before persisting.
         let tool = match timeout(Duration::from_secs(15), McpTool::http(&url)).await {
             Ok(Ok(t)) => t,
             Ok(Err(e)) => return json!({ "error": format!("启动失败: {e}") }),
@@ -113,14 +87,8 @@ impl Tool for ManageMcpSpell {
         .execute(&self.pool)
         .await
         {
-            tracing::warn!("failed to persist MCP '{}': {e}", name);
+            return json!({ "error": format!("保存失败: {e}") });
         }
-
-        {
-            let mut tools = self.mcp_tools.lock().await;
-            tools.push((name.clone(), tool));
-        }
-        self.sync_tools_to_agent().await;
 
         json!({
             "status": "ok",
@@ -134,19 +102,13 @@ impl Tool for ManageMcpSpell {
     /// command: 启动命令（如 npx、uvx）
     /// args: 命令参数列表
     async fn install_mcp_stdio(&self, name: String, command: String, args: Vec<String>) -> Value {
-        {
-            let tools = self.mcp_tools.lock().await;
-            if tools.iter().any(|(n, _)| n == &name) {
-                return json!({ "error": format!("MCP '{}' 已在运行，请先卸载", name) });
-            }
-        }
-
         let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         let (cmd, args_wrapped_vec) =
             self.sandbox
                 .wrap_mcp_command(self.user_id, self.conversation_id, &command, &args_ref);
         let args_wrapped: Vec<&str> = args_wrapped_vec.iter().map(|s| s.as_str()).collect();
 
+        // Validate that the command actually starts before persisting.
         let tool = match timeout(
             Duration::from_secs(300),
             McpTool::stdio(&cmd, &args_wrapped),
@@ -173,14 +135,8 @@ impl Tool for ManageMcpSpell {
         .execute(&self.pool)
         .await
         {
-            tracing::warn!("failed to persist MCP '{}': {e}", name);
+            return json!({ "error": format!("保存失败: {e}") });
         }
-
-        {
-            let mut tools = self.mcp_tools.lock().await;
-            tools.push((name.clone(), tool));
-        }
-        self.sync_tools_to_agent().await;
 
         json!({
             "status": "ok",
@@ -192,30 +148,18 @@ impl Tool for ManageMcpSpell {
     /// 停止并卸载 MCP 服务器
     /// name: 要卸载的服务器标识符
     async fn uninstall_mcp(&self, name: String) -> Value {
-        let found = {
-            let tools = self.mcp_tools.lock().await;
-            tools.iter().any(|(n, _)| n == &name)
-        };
-
-        if !found {
-            return json!({ "error": format!("MCP '{}' 未在运行列表中", name) });
-        }
-
-        if let Err(e) = sqlx::query("DELETE FROM conversation_mcps WHERE conversation_id = $1 AND name = $2")
+        let res = sqlx::query("DELETE FROM conversation_mcps WHERE conversation_id = $1 AND name = $2")
             .bind(self.conversation_id)
             .bind(&name)
             .execute(&self.pool)
-            .await
-        {
-            tracing::warn!("failed to delete MCP '{}' from DB: {e}", name);
-        }
+            .await;
 
-        {
-            let mut tools = self.mcp_tools.lock().await;
-            tools.retain(|(n, _)| n != &name);
+        match res {
+            Ok(r) if r.rows_affected() > 0 => {
+                json!({ "status": "ok", "message": format!("MCP '{}' 已卸载", name) })
+            }
+            Ok(_) => json!({ "error": format!("MCP '{}' 未在当前会话中安装", name) }),
+            Err(e) => json!({ "error": format!("卸载失败: {e}") }),
         }
-        self.sync_tools_to_agent().await;
-
-        json!({ "status": "ok", "message": format!("MCP '{}' 已卸载", name) })
     }
 }
