@@ -137,11 +137,15 @@ pub async fn send_message_handler(
         parts
     };
 
-    // Persist the user message.
+    // Persist the user message synchronously before starting generation.
+    // Must be awaited: if we fire-and-forget, the worker's append_streaming()
+    // can advance active_message_id first, causing the user message to be
+    // inserted as a child of the streaming row (corrupted tree) and excluded
+    // from the new worker's restore() call.
     {
         use agentix::Message;
         let msg = Message::User(user_parts);
-        state.persist_message(conversation_id, &msg);
+        state.persist_message_async(conversation_id, msg).await;
     }
 
     // If there's already a running job, abort it first (interrupt semantics).

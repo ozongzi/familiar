@@ -210,6 +210,7 @@ export function useChat(
   function ensureActiveText(): string {
     if (activeTextKeyRef.current) return activeTextKeyRef.current;
     const key = uid();
+    activeTextKeyRef.current = key;
     const bubble: TextBubble = {
       kind: "text",
       key,

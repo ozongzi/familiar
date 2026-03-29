@@ -174,7 +174,7 @@ export function buildToolArgsView(bubble: ToolBubble): ToolArgsView {
         "newText",
       ])
     : isWriteTool
-      ? getStringValue(normalized, raw, ["new_content", "content", "file_text", "text"])
+      ? getStringValue(normalized, raw, ["new_content", "content", "file_text", "text", "new_string"])
       : null;
 
   const question =
