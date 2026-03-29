@@ -469,3 +469,45 @@ pub async fn stream_interrupt_handler(
     Ok((StatusCode::OK, Json(json!({ "stream_id": new_job_id }))))
 }
 
+// ── POST /api/stream/{stream_id}/answer ───────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct AnswerRequest {
+    pub content: String,
+}
+
+/// Submit a user's answer to an `ask` tool call.
+/// The old job is already done; we just persist the answer and start a new job.
+pub async fn stream_answer_handler(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(stream_id): Path<Uuid>,
+    Json(body): Json<AnswerRequest>,
+) -> Result<impl IntoResponse, AppError> {
+    let content = body.content.trim().to_string();
+    if content.is_empty() {
+        return Err(AppError::bad_request("回答内容不能为空"));
+    }
+
+    let (conversation_id, _) = resolve_job(&state, stream_id, auth.user_id).await?;
+
+    // Persist the user's answer as a new message.
+    {
+        use agentix::{Message, UserContent};
+        state
+            .persist_message_async(
+                conversation_id,
+                Message::User(vec![UserContent::Text(content)]),
+            )
+            .await;
+    }
+
+    // Start a new generation job.
+    let new_job_id = state
+        .start_generation(conversation_id, auth.user_id)
+        .await
+        .map_err(|e| AppError::internal(&e.to_string()))?;
+
+    Ok((StatusCode::OK, Json(json!({ "stream_id": new_job_id }))))
+}
+

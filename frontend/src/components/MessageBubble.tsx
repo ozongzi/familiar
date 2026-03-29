@@ -868,35 +868,26 @@ function AskUserCard({
   answered?: string;
 }) {
   const [custom, setCustom] = useState("");
-  const [submitted, setSubmitted] = useState(false);
+  const [submittedText, setSubmittedText] = useState<string | null>(null);
 
   const handleAnswer = useCallback(
     (text: string) => {
       if (!onAnswer) return;
-      setSubmitted(true);
+      setSubmittedText(text);
       onAnswer(text);
     },
     [onAnswer],
   );
 
-  if (answered !== undefined) {
+  const displayAnswered = answered ?? submittedText ?? undefined;
+
+  if (displayAnswered !== undefined) {
     return (
       <div className={styles.askUserCard}>
         <p className={styles.askUserQuestion}>{question}</p>
         <div className={styles.askUserAnswered}>
           <span className={styles.askUserAnsweredLabel}>已回答：</span>
-          <span className={styles.askUserAnsweredText}>{answered}</span>
-        </div>
-      </div>
-    );
-  }
-
-  if (submitted) {
-    return (
-      <div className={styles.askUserCard}>
-        <p className={styles.askUserQuestion}>{question}</p>
-        <div className={styles.askUserAnswered}>
-          <span className={styles.askUserAnsweredLabel}>已发送，等待回应…</span>
+          <span className={styles.askUserAnsweredText}>{displayAnswered}</span>
         </div>
       </div>
     );

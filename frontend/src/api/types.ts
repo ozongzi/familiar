@@ -86,6 +86,7 @@ export type WsServerEvent =
   | { type: "tool_progress"; id: string; name: string; progress: string }
   | { type: "partial_sync"; content: string; reasoning: string }
   | { type: "user_interrupt"; content: string }
+  | { type: "ask"; question: string; description?: string; options?: string[] }
   | { type: "aborted" }
   | { type: "done" }
   | { type: "error"; message: string };

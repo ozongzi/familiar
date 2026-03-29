@@ -61,3 +61,5 @@ glob = "0.3.3"
 bytes = "1.11.1"
 config = "0.15.21"
 chrono = { version = "0.4.44", features = ["serde"] }
+zip = "2"
+walkdir = "2"

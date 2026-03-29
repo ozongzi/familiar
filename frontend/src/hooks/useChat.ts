@@ -167,6 +167,10 @@ export function useChat(
   const streamIdRef = useRef<string | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
 
+  // Saved stream_id when an "ask" event arrives, so answerQuestion can use it
+  // even after "done" clears streamIdRef.
+  const askStreamIdRef = useRef<string | null>(null);
+
   // Coordination refs (kept from original)
   const attachedConvRef = useRef<string | null>(null);
   const reattachingRef = useRef(false);
@@ -581,6 +585,9 @@ export function useChat(
               : b,
           ),
         );
+      } else if (event.type === "ask") {
+        // Save stream_id now — "done" will arrive next and clear streamIdRef.
+        askStreamIdRef.current = streamIdRef.current;
       } else if (event.type === "done") {
         sealActiveText();
         updateStatus("idle");
@@ -666,22 +673,6 @@ export function useChat(
       headers: { Authorization: `Bearer ${token}` },
     }).catch(console.error);
   }, [token]);
-
-  const answerQuestion = useCallback(
-    (text: string) => {
-      const streamId = streamIdRef.current;
-      if (!streamId || !token) return;
-      fetch(`${BASE()}/api/stream/${streamId}/answer`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ content: text }),
-      }).catch(console.error);
-    },
-    [token],
-  );
 
   // ─── Reattach ─────────────────────────────────────────────────────────────
 
@@ -773,6 +764,71 @@ export function useChat(
         reattachingRef.current = false;
       });
   }, []);
+
+  // ─── Answer (ask tool response) ───────────────────────────────────────────
+
+  const answerQuestion = useCallback(
+    (text: string) => {
+      const streamId = askStreamIdRef.current;
+      const convId = attachedConvRef.current;
+      if (!streamId || !convId || !token) return;
+      askStreamIdRef.current = null;
+
+      fetch(`${BASE()}/api/stream/${streamId}/answer`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ content: text }),
+      })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data: { stream_id?: string } | null) => {
+          if (!data?.stream_id) return;
+          const newStreamId = data.stream_id;
+          streamIdRef.current = newStreamId;
+          persistStreamId(convId, newStreamId);
+          activeTextKeyRef.current = null;
+          updateStatus("streaming");
+
+          const ac = new AbortController();
+          abortControllerRef.current = ac;
+
+          openSseStream(
+            newStreamId,
+            token,
+            (evData) => {
+              let event: WsServerEvent;
+              try {
+                event = JSON.parse(evData) as WsServerEvent;
+              } catch {
+                return;
+              }
+              const finished = processEventRef.current(event);
+              if (finished) {
+                streamIdRef.current = null;
+                clearPersistedStreamId(convId);
+                abortControllerRef.current = null;
+                ac.abort();
+              }
+            },
+            (err) => {
+              if (statusRef.current !== "streaming" && statusRef.current !== "connecting") return;
+              console.warn("[SSE] answer stream disconnected, trying reattach:", err);
+              updateStatus("connecting");
+              abortControllerRef.current = null;
+              setTimeout(() => {
+                attachedConvRef.current = null;
+                reattach(convId, token);
+              }, SSE_REATTACH_DELAY_MS);
+            },
+            ac.signal,
+          );
+        })
+        .catch(console.error);
+    },
+    [token, reattach],
+  );
 
   // ─── Send ─────────────────────────────────────────────────────────────────
 

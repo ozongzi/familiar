@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::sync::Arc;
 
 use agentix::tool;
@@ -32,10 +33,30 @@ impl Tool for UiSpells {
             .and_then(|n| n.to_str())
             .unwrap_or("file")
             .to_string();
-        let size = tokio::fs::metadata(&host_path)
-            .await
-            .map(|m| m.len())
-            .unwrap_or(0);
+        let meta = tokio::fs::metadata(&host_path).await;
+        let (host_path, filename, path) = if meta.as_ref().map(|m| m.is_dir()).unwrap_or(false) {
+            // Auto-zip the directory.
+            let zip_host_path = host_path.with_extension("zip");
+            let zip_filename = zip_host_path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("archive.zip")
+                .to_string();
+            if let Err(e) = zip_dir(&host_path, &zip_host_path) {
+                return json!({ "error": format!("打包失败: {e}") });
+            }
+            let zip_path = if let Ok(rel) = zip_host_path.strip_prefix(
+                self.sandbox.get_conversation_dir(self.user_id, self.conversation_id)
+            ) {
+                format!("/workspace/{}", rel.display())
+            } else {
+                zip_host_path.to_string_lossy().to_string()
+            };
+            (zip_host_path, zip_filename, zip_path)
+        } else {
+            (host_path, filename, path)
+        };
+        let size = tokio::fs::metadata(&host_path).await.map(|m| m.len()).unwrap_or(0);
         json!({
             "display": "file",
             "filename": filename,
@@ -77,4 +98,32 @@ impl Tool for UiSpells {
     async fn visualize(&self, widget_code: String) -> serde_json::Value {
         json!({ "status": "success" })
     }
+}
+
+fn zip_dir(src: &Path, dst: &Path) -> anyhow::Result<()> {
+    use std::fs::File;
+    use zip::ZipWriter;
+    use zip::write::SimpleFileOptions;
+
+    let file = File::create(dst)?;
+    let mut zip = ZipWriter::new(file);
+    let options = SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+
+    for entry in walkdir::WalkDir::new(src).into_iter().filter_map(|e| e.ok()) {
+        let entry_path = entry.path();
+        let relative = entry_path.strip_prefix(src)?;
+        if entry_path.is_dir() {
+            if relative.as_os_str().is_empty() {
+                continue;
+            }
+            zip.add_directory(relative.to_string_lossy(), options)?;
+        } else {
+            zip.start_file(relative.to_string_lossy(), options)?;
+            let mut f = std::fs::File::open(entry_path)?;
+            std::io::copy(&mut f, &mut zip)?;
+        }
+    }
+    zip.finish()?;
+    Ok(())
 }

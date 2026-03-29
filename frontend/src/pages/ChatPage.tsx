@@ -96,31 +96,57 @@ export function ChatPage() {
 
   const messagesRef = useRef<HTMLDivElement>(null);
   const lockedRef = useRef(true);
+  // Track the last scrollTop the user was at, so we can distinguish
+  // programmatic scrolls from user-initiated ones.
+  const lastScrollTopRef = useRef(0);
+  const isProgrammaticScrollRef = useRef(false);
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior = "auto") => {
     const el = messagesRef.current;
     if (!el) return;
+    isProgrammaticScrollRef.current = true;
     el.scrollTo({ top: el.scrollHeight, behavior });
   }, []);
 
-  // Unlock auto-scroll when the user scrolls up; re-lock when back at bottom.
+  // Detect user-initiated scroll up → unlock. Scroll back to bottom → re-lock.
   useEffect(() => {
     const el = messagesRef.current;
     if (!el) return;
     const onScroll = () => {
-      lockedRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+      if (isProgrammaticScrollRef.current) {
+        isProgrammaticScrollRef.current = false;
+        lastScrollTopRef.current = el.scrollTop;
+        return;
+      }
+      const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+      const scrolledUp = el.scrollTop < lastScrollTopRef.current - 5;
+      lastScrollTopRef.current = el.scrollTop;
+      if (scrolledUp) {
+        lockedRef.current = false;
+      } else if (atBottom) {
+        lockedRef.current = true;
+      }
     };
     el.addEventListener("scroll", onScroll, { passive: true });
     return () => el.removeEventListener("scroll", onScroll);
   }, []);
 
-  // ── Auto-scroll ────────────────────────────────────────────────────────
+  // ── Auto-scroll: driven by ResizeObserver on content growth ────────────
   useEffect(() => {
-    if (!lockedRef.current) return;
-    // Keep the viewport pinned while stream/tool output is growing,
-    // preventing large chunks from knocking us out of auto-scroll mode.
-    scrollToBottom("auto");
-  }, [bubbles, status, scrollToBottom]);
+    const el = messagesRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => {
+      if (lockedRef.current) scrollToBottom("auto");
+    });
+    // Observe the scroll container itself (scrollHeight changes)
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [scrollToBottom]);
+
+  // Also scroll on status change (e.g. new message sent)
+  useEffect(() => {
+    if (lockedRef.current) scrollToBottom("auto");
+  }, [status, scrollToBottom]);
 
   // ── Load history when switching to a real conversation ─────────────────
   useEffect(() => {

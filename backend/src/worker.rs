@@ -532,7 +532,7 @@ async fn connect_mcps_from_db(ctx: &WorkerContext) -> Vec<(String, McpTool)> {
     // Load user + conversation MCPs
     let mcp_rows: Vec<(String, String, Value)> = sqlx::query_as(
         r#"SELECT name, "type", config FROM user_mcps WHERE user_id = $1
-           UNION ALL
+           UNION
            SELECT name, "type", config FROM conversation_mcps WHERE conversation_id = $2
            ORDER BY name ASC"#,
     )

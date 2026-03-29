@@ -38,7 +38,7 @@ use conversations::*;
 use files::{download_file, preview_file, upload_file, upload_avatar, get_avatar};
 use history::*;
 use sessions::*;
-use sse::{send_message_handler, sse_handler, stream_abort_handler, stream_interrupt_handler, reattach_handler, branch_handler};
+use sse::{send_message_handler, sse_handler, stream_abort_handler, stream_interrupt_handler, stream_answer_handler, reattach_handler, branch_handler};
 use users::*;
 
 /// Web-layer application state — cheaply cloneable.
@@ -150,6 +150,10 @@ pub fn create_router(state: AppState, allowed_origin: Option<&str>) -> Router {
         .route(
             "/api/stream/{stream_id}/interrupt",
             post(stream_interrupt_handler),
+        )
+        .route(
+            "/api/stream/{stream_id}/answer",
+            post(stream_answer_handler),
         )
         // model artifacts
         .nest_service("/artifacts", ServeDir::new(artifacts_path))
