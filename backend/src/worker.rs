@@ -253,12 +253,20 @@ async fn generation_loop(
     let tool_defs: Vec<ToolDefinition> = tools.raw_tools();
 
     loop {
-        // ── Check abort ───────────────────────────────────────────────────
-        if is_aborted(&ctx.pool, ctx.job_id).await {
+        // ── Check abort / interrupt ───────────────────────────────────────
+        if check_stop_reason(&ctx.pool, ctx.job_id).await.is_some() {
             emit(ctx, json!({"type": "aborted"})).await;
             set_job_status(&ctx.pool, ctx.job_id, "aborted", None).await;
             return Ok(());
         }
+
+        // ── Open streaming message row in DB ──────────────────────────────
+        // This is the single source of truth for partial content.
+        // The interrupt handler can seal it; the worker seals it on completion.
+        let streaming_msg_id = ctx.db
+            .append_streaming(ctx.conversation_id, ctx.job_id)
+            .await
+            .map_err(|e| anyhow::anyhow!("append_streaming failed: {e}"))?;
 
         // ── Call LLM ──────────────────────────────────────────────────────
         let req = base_request.clone()
@@ -267,6 +275,7 @@ async fn generation_loop(
         let mut stream = match req.stream(http).await {
             Ok(s) => s,
             Err(e) => {
+                let _ = ctx.db.seal_streaming_message(streaming_msg_id, None, None, None).await;
                 return Err(anyhow::anyhow!("LLM stream failed: {e}"));
             }
         };
@@ -275,19 +284,19 @@ async fn generation_loop(
         let mut reasoning_buf = String::new();
         let mut tool_calls_buf: Vec<agentix::ToolCall> = Vec::new();
         let mut usage = UsageStats::default();
+        let mut token_count: u32 = 0;
 
         // ── Consume stream ────────────────────────────────────────────────
         loop {
-            if is_aborted(&ctx.pool, ctx.job_id).await {
-                // Persist partial reply if any
-                if !reply_buf.is_empty() {
-                    persist_msg(ctx, &Message::Assistant {
-                        content: Some(reply_buf),
-                        reasoning: None,
-                        tool_calls: vec![],
-                    })
-                    .await;
-                }
+            if let Some(_reason) = check_stop_reason(&ctx.pool, ctx.job_id).await {
+                // Seal the streaming row with whatever we have — the interrupt
+                // handler may also call seal (idempotent).
+                let _ = ctx.db.seal_streaming_message(
+                    streaming_msg_id,
+                    if reply_buf.is_empty() { None } else { Some(&reply_buf) },
+                    if reasoning_buf.is_empty() { None } else { Some(&reasoning_buf) },
+                    None,
+                ).await;
                 emit(ctx, json!({"type": "aborted"})).await;
                 set_job_status(&ctx.pool, ctx.job_id, "aborted", None).await;
                 return Ok(());
@@ -300,6 +309,13 @@ async fn generation_loop(
                 Some(LlmEvent::Token(token)) => {
                     reply_buf.push_str(&token);
                     emit(ctx, json!({"type": "token", "content": token})).await;
+                    // Batch DB update every 10 tokens to reduce MVCC overhead.
+                    token_count += 1;
+                    if token_count % 10 == 0 {
+                        let _ = ctx.db.update_streaming_content(
+                            streaming_msg_id, &reply_buf, &reasoning_buf,
+                        ).await;
+                    }
                 }
 
                 Some(LlmEvent::Reasoning(token)) => {
@@ -318,7 +334,6 @@ async fn generation_loop(
 
                 Some(LlmEvent::Usage(u)) => {
                     usage += u.clone();
-                    // Update conversation token usage
                     let pool = ctx.pool.clone();
                     let conv_id = ctx.conversation_id;
                     tokio::spawn(async move {
@@ -348,9 +363,9 @@ async fn generation_loop(
                         warn!(conversation = %ctx.conversation_id, "treating benign tail error as done");
                         break;
                     }
+                    let _ = ctx.db.seal_streaming_message(streaming_msg_id, None, None, None).await;
                     return Err(anyhow::anyhow!("{err_msg}"));
                 }
-
             }
         }
 
@@ -368,22 +383,30 @@ async fn generation_loop(
             .await;
         }
 
-        // ── Persist assistant message ─────────────────────────────────────
+        // ── Seal the streaming message with final content ─────────────────
+        let tc_json = if tool_calls_buf.is_empty() {
+            None
+        } else {
+            serde_json::to_string(&tool_calls_buf).ok()
+        };
+        let _ = ctx.db.seal_streaming_message(
+            streaming_msg_id,
+            if reply_buf.is_empty() { None } else { Some(&reply_buf) },
+            if reasoning_buf.is_empty() { None } else { Some(&reasoning_buf) },
+            tc_json.as_deref(),
+        ).await;
+
+        // Kick off embedding for the sealed text (fire-and-forget).
+        if !reply_buf.is_empty() {
+            embed_message_async(ctx, streaming_msg_id, reply_buf.clone());
+        }
+
         let assistant_msg = Message::Assistant {
-            content: if reply_buf.is_empty() {
-                None
-            } else {
-                Some(reply_buf.clone())
-            },
-            reasoning: if reasoning_buf.is_empty() {
-                None
-            } else {
-                Some(reasoning_buf)
-            },
+            content: if reply_buf.is_empty() { None } else { Some(reply_buf.clone()) },
+            reasoning: if reasoning_buf.is_empty() { None } else { Some(reasoning_buf) },
             tool_calls: tool_calls_buf.clone(),
         };
         if !reply_buf.is_empty() || !tool_calls_buf.is_empty() {
-            persist_msg(ctx, &assistant_msg).await;
             messages.push(assistant_msg);
         }
 
@@ -587,6 +610,29 @@ async fn connect_mcps_from_db(ctx: &WorkerContext) -> Vec<(String, McpTool)> {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+/// Kick off embedding computation for an already-persisted message row (fire-and-forget).
+fn embed_message_async(ctx: &WorkerContext, row_id: i64, content: String) {
+    let pool = ctx.pool.clone();
+    let db = ctx.db.clone();
+    tokio::spawn(async move {
+        let global_cfg = Config::load_from_db(&pool).await.unwrap_or_default();
+        let embed_client = EmbeddingClient::new(
+            global_cfg.embedding.api_key,
+            global_cfg.embedding.api_base,
+            global_cfg.embedding.name,
+        );
+        match embed_client.embed(&content).await {
+            Ok(vec) => {
+                let vector = to_vector(vec);
+                if let Err(e) = db.set_embedding(row_id, vector).await {
+                    error!("set_embedding failed: {e}");
+                }
+            }
+            Err(e) => error!("embed failed: {e}"),
+        }
+    });
+}
+
 /// Write an SSE event to the generation_events table (trigger fires pg_notify).
 async fn emit(ctx: &WorkerContext, payload: Value) {
     let payload_str = payload.to_string();
@@ -602,15 +648,28 @@ async fn emit(ctx: &WorkerContext, payload: Value) {
     }
 }
 
-/// Check if the job has been aborted (by user or system).
-async fn is_aborted(pool: &PgPool, job_id: Uuid) -> bool {
+/// Reason the worker should stop early.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum StopReason {
+    /// Normal abort: worker must persist any partial reply itself.
+    Aborted,
+    /// Interrupt handler already saved the partial — worker just exits cleanly.
+    Interrupted,
+}
+
+/// Returns `Some(reason)` if the job should stop, `None` to keep going.
+async fn check_stop_reason(pool: &PgPool, job_id: Uuid) -> Option<StopReason> {
     let status: Option<String> =
         sqlx::query_scalar("SELECT status FROM generation_jobs WHERE id = $1")
             .bind(job_id)
             .fetch_optional(pool)
             .await
             .unwrap_or(None);
-    matches!(status.as_deref(), Some("aborted"))
+    match status.as_deref() {
+        Some("aborted")     => Some(StopReason::Aborted),
+        Some("interrupted") => Some(StopReason::Interrupted),
+        _                   => None,
+    }
 }
 
 async fn set_job_status(pool: &PgPool, job_id: Uuid, status: &str, error: Option<&str>) {

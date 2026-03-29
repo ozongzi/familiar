@@ -210,7 +210,6 @@ export function useChat(
   function ensureActiveText(): string {
     if (activeTextKeyRef.current) return activeTextKeyRef.current;
     const key = uid();
-    activeTextKeyRef.current = key;
     const bubble: TextBubble = {
       kind: "text",
       key,
@@ -313,14 +312,16 @@ export function useChat(
           /* skip */
         }
         if (m.content && m.content.trim().length > 0) {
+          const key = uid();
           history.push({
             kind: "text",
-            key: uid(),
+            key,
             role: "assistant",
             content: m.content,
             reasoning: m.reasoning ?? "",
-            streaming: false,
+            streaming: m.streaming,
           });
+          if (m.streaming) activeTextKeyRef.current = key;
         }
         for (const tc of calls) {
           const { id, name, arguments: argsRaw = "" } = tc;
@@ -378,15 +379,17 @@ export function useChat(
           }
         }
 
+        const key = uid();
         history.push({
           kind: "text",
-          key: uid(),
+          key,
           role: m.role as "user" | "assistant",
           content: m.content,
           reasoning: m.reasoning ?? "",
-          streaming: false,
+          streaming: m.streaming,
           msgId: m.id,
         });
+        if (m.role === "assistant" && m.streaming) activeTextKeyRef.current = key;
       }
     }
 
@@ -395,6 +398,9 @@ export function useChat(
   }, []);
 
   const clearBubbles = useCallback(() => {
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
+    streamIdRef.current = null;
     setBubbles([]);
     activeTextKeyRef.current = null;
     spawnToolArgsRef.current.clear();
@@ -435,6 +441,17 @@ export function useChat(
         updateStatus("idle");
         clearPersistedStreamId(attachedConvRef.current);
         return true;
+      } else if (event.type === "partial_sync") {
+        // Server sends accumulated partial content on reconnect.
+        // Replace the streaming bubble content entirely instead of appending.
+        const key = ensureActiveText();
+        setBubbles((prev) =>
+          prev.map((b) =>
+            b.key === key && b.kind === "text"
+              ? { ...b, content: event.content, reasoning: event.reasoning ?? "" }
+              : b,
+          ),
+        );
       } else if (event.type === "reasoning_token") {
         const key = ensureActiveText();
         setBubbles((prev) =>
@@ -459,10 +476,7 @@ export function useChat(
         );
       } else if (event.type === "tool_call") {
         if (event.source === "spawn") {
-          const acc = spawnToolArgsRef.current.get(event.id) ?? {
-            name: event.name,
-            argsRaw: "",
-          };
+          const acc = spawnToolArgsRef.current.get(event.id) ?? { name: event.name, argsRaw: "" };
           acc.argsRaw += event.delta;
           spawnToolArgsRef.current.set(event.id, acc);
           upsertSpawnChild({
@@ -671,8 +685,9 @@ export function useChat(
   // ─── Reattach ─────────────────────────────────────────────────────────────
 
   const reattach = useCallback((convId: string, tok: string) => {
-    // Reattach using in-memory stream id first; fall back to persisted id (for refresh recovery).
-    const existingStreamId = streamIdRef.current ?? readPersistedStreamId(convId);
+    // Use per-conversation persisted stream id only (for page-refresh recovery).
+    // Never use streamIdRef.current here — it belongs to whatever conv was last active.
+    const existingStreamId = readPersistedStreamId(convId);
 
     if (attachedConvRef.current === convId) return;
     attachedConvRef.current = convId;
@@ -766,7 +781,79 @@ export function useChat(
       if (statusRef.current === "connecting") return;
 
       if (statusRef.current === "streaming") {
-        interrupt(text);
+        const oldStreamId = streamIdRef.current;
+        const convId = attachedConvRef.current;
+        if (!oldStreamId || !convId) return;
+
+        const userBubble: TextBubble = {
+          kind: "text",
+          key: uid(),
+          role: "user",
+          content: text,
+          reasoning: "",
+          streaming: false,
+        };
+        setBubbles((prev) => [...prev, userBubble]);
+
+        let newStreamId: string;
+        try {
+          const res = await fetch(`${BASE()}/api/stream/${oldStreamId}/interrupt`, {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${token}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ content: text }),
+          });
+          if (!res.ok) return;
+          const data = (await res.json()) as { stream_id: string };
+          newStreamId = data.stream_id;
+        } catch {
+          return;
+        }
+
+        // Tear down old SSE connection.
+        abortControllerRef.current?.abort();
+        abortControllerRef.current = null;
+
+        streamIdRef.current = newStreamId;
+        persistStreamId(convId, newStreamId);
+        activeTextKeyRef.current = null;
+        updateStatus("streaming");
+
+        const ac = new AbortController();
+        abortControllerRef.current = ac;
+
+        openSseStream(
+          newStreamId,
+          token,
+          (data) => {
+            let event: WsServerEvent;
+            try {
+              event = JSON.parse(data) as WsServerEvent;
+            } catch {
+              return;
+            }
+            const finished = processEventRef.current(event);
+            if (finished) {
+              streamIdRef.current = null;
+              clearPersistedStreamId(convId);
+              abortControllerRef.current = null;
+              ac.abort();
+            }
+          },
+          (err) => {
+            if (statusRef.current !== "streaming" && statusRef.current !== "connecting") return;
+            console.warn("[SSE] interrupt stream disconnected, trying reattach:", err);
+            updateStatus("connecting");
+            abortControllerRef.current = null;
+            setTimeout(() => {
+              attachedConvRef.current = null;
+              reattach(convId, token);
+            }, SSE_REATTACH_DELAY_MS);
+          },
+          ac.signal,
+        );
         return;
       }
 
@@ -880,7 +967,7 @@ export function useChat(
         ac.signal,
       );
     },
-    [conversationId, token, interrupt, createConversation, reattach],
+    [conversationId, token, createConversation, reattach],
   );
 
   const branch = useCallback(

@@ -19,6 +19,8 @@ pub struct MessageResponse {
     pub tool_call_id: Option<String>,
     pub is_summary: bool,
     pub created_at: i64,
+    pub streaming: bool,
+    pub reasoning: Option<String>,
 }
 
 pub async fn list_messages(
@@ -53,6 +55,8 @@ pub async fn list_messages(
                 tool_call_id: r.spell_cast_id,
                 is_summary: r.is_summary,
                 created_at: r.created_at,
+                streaming: r.streaming,
+                reasoning: r.reasoning,
             })
             .collect(),
     ))

@@ -57,17 +57,37 @@ impl AppState {
         conversation_id: Uuid,
         user_id: Uuid,
     ) -> anyhow::Result<Uuid> {
-        // Check if there's already a running job for this conversation.
+        // Use a transaction-scoped advisory lock keyed on the conversation UUID.
+        // This prevents two concurrent requests from both passing the "no running
+        // job" check and creating duplicate workers (TOCTOU race).
+        let lock_key = i64::from_ne_bytes(
+            conversation_id.as_bytes()[..8].try_into().unwrap(),
+        );
+
+        let mut tx = self.pool.begin().await?;
+
+        sqlx::query("SELECT pg_advisory_xact_lock($1)")
+            .bind(lock_key)
+            .execute(&mut *tx)
+            .await?;
+
+        // Abort any active job inside the lock.
         let running: Option<Uuid> = sqlx::query_scalar(
-            "SELECT id FROM generation_jobs WHERE conversation_id = $1 AND status IN ('pending', 'running') LIMIT 1",
+            "SELECT id FROM generation_jobs \
+             WHERE conversation_id = $1 AND status IN ('pending', 'running') LIMIT 1",
         )
         .bind(conversation_id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&mut *tx)
         .await?;
 
         if let Some(existing) = running {
-            // Abort the existing job, then start a new one.
-            self.abort_job(existing).await;
+            sqlx::query(
+                "UPDATE generation_jobs SET status = 'aborted', updated_at = now() \
+                 WHERE id = $1 AND status IN ('pending', 'running')",
+            )
+            .bind(existing)
+            .execute(&mut *tx)
+            .await?;
         }
 
         let job_id: Uuid = sqlx::query_scalar(
@@ -75,8 +95,10 @@ impl AppState {
         )
         .bind(conversation_id)
         .bind(user_id)
-        .fetch_one(&self.pool)
+        .fetch_one(&mut *tx)
         .await?;
+
+        tx.commit().await?;
 
         let ctx = crate::worker::WorkerContext {
             job_id,
@@ -96,6 +118,17 @@ impl AppState {
     pub async fn abort_job(&self, job_id: Uuid) {
         let _ = sqlx::query(
             "UPDATE generation_jobs SET status = 'aborted', updated_at = now() WHERE id = $1 AND status IN ('pending', 'running')",
+        )
+        .bind(job_id)
+        .execute(&self.pool)
+        .await;
+    }
+
+    /// Mark a job as 'interrupted': the interrupt handler has already persisted
+    /// the partial reply, so the worker should exit cleanly without double-saving.
+    pub async fn interrupt_job(&self, job_id: Uuid) {
+        let _ = sqlx::query(
+            "UPDATE generation_jobs SET status = 'interrupted', updated_at = now() WHERE id = $1 AND status IN ('pending', 'running')",
         )
         .bind(job_id)
         .execute(&self.pool)

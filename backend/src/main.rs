@@ -48,8 +48,31 @@ async fn main() {
 
     // ── App state (stateless — no in-memory caches) ──────────────────────────
 
-    let state = Arc::new(state::AppState::new(&cfg, pool));
+    let state = Arc::new(state::AppState::new(&cfg, pool.clone()));
     let web_state = web::AppState(Arc::clone(&state));
+
+    // ── Background: seal orphaned streaming messages ──────────────────────────
+    // If a worker panics, its streaming=true message row is never sealed.
+    // This task finds such rows every 60 s and seals them.
+    {
+        let cleanup_pool = pool.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+            loop {
+                interval.tick().await;
+                let _ = sqlx::query(
+                    "UPDATE messages SET streaming = false \
+                     WHERE streaming = true \
+                       AND job_id IN (\
+                           SELECT id FROM generation_jobs \
+                           WHERE status NOT IN ('pending', 'running')\
+                       )",
+                )
+                .execute(&cleanup_pool)
+                .await;
+            }
+        });
+    }
 
     // ── Web server ────────────────────────────────────────────────────────────
 

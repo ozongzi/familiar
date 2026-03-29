@@ -33,7 +33,6 @@ pub struct InterruptRequest {
     pub content: String,
 }
 
-
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 fn is_terminal(payload: &str) -> bool {
@@ -172,7 +171,30 @@ pub async fn sse_handler(
     let pool = state.pool.clone();
 
     let s = stream! {
-        // ── 1. Replay existing events from DB ─────────────────────────────────
+        // ── 1. Partial sync: send current streaming content if the job is active ─
+        // This replaces replaying all token events on reconnect.  The client
+        // replaces its streaming bubble content with the synced value.
+        let partial_row = sqlx::query(
+            "SELECT content, reasoning FROM messages WHERE job_id = $1 AND streaming = true LIMIT 1"
+        )
+        .bind(job_id)
+        .fetch_optional(&pool)
+        .await
+        .unwrap_or(None);
+
+        if let Some(row) = partial_row {
+            let content: String = row.try_get("content").unwrap_or_default();
+            let reasoning: String = row.try_get("reasoning").unwrap_or_default();
+            if !content.is_empty() || !reasoning.is_empty() {
+                yield Ok::<Event, Infallible>(Event::default().data(
+                    json!({"type": "partial_sync", "content": content, "reasoning": reasoning}).to_string()
+                ));
+            }
+        }
+
+        // ── 2. Replay existing non-token events from DB ───────────────────────
+        // Token events are covered by partial_sync; only replay structural events
+        // (tool_call, tool_result, usage, done, aborted, error).
         let existing: Vec<(i64, String)> = sqlx::query_as(
             "SELECT id, payload FROM generation_events WHERE job_id = $1 ORDER BY id ASC"
         )
@@ -189,6 +211,13 @@ pub async fn sse_handler(
             if is_terminal(payload) {
                 done = true;
             }
+            // Skip token events — already covered by partial_sync.
+            let event_type = serde_json::from_str::<serde_json::Value>(payload)
+                .ok()
+                .and_then(|v| v.get("type").and_then(|t| t.as_str()).map(str::to_string));
+            if matches!(event_type.as_deref(), Some("token") | Some("reasoning_token")) {
+                continue;
+            }
             yield Ok::<Event, Infallible>(Event::default().data(payload.clone()));
         }
 
@@ -196,7 +225,7 @@ pub async fn sse_handler(
             return;
         }
 
-        // ── 2. Subscribe to LISTEN/NOTIFY for live events ─────────────────────
+        // ── 3. Subscribe to LISTEN/NOTIFY for live events ─────────────────────
         // We use a dedicated connection for LISTEN.
         let mut listener = match sqlx::postgres::PgListener::connect_with(&pool).await {
             Ok(l) => l,
@@ -327,9 +356,12 @@ pub async fn reattach_handler(
 ) -> Result<impl IntoResponse, AppError> {
     verify_conversation_owner(&state, conversation_id, auth.user_id).await?;
 
-    // Find latest job (running or recently finished).
+    // Only reattach to an active (pending/running) job.
+    // Completed jobs don't need SSE replay — history is already loaded from the DB.
     let job_id: Option<Uuid> = sqlx::query_scalar(
-        "SELECT id FROM generation_jobs WHERE conversation_id = $1 ORDER BY created_at DESC LIMIT 1"
+        "SELECT id FROM generation_jobs \
+         WHERE conversation_id = $1 AND status IN ('pending', 'running') \
+         ORDER BY created_at DESC LIMIT 1"
     )
     .bind(conversation_id)
     .fetch_optional(&state.pool)
@@ -398,17 +430,33 @@ pub async fn stream_interrupt_handler(
 
     let (conversation_id, _) = resolve_job(&state, stream_id, auth.user_id).await?;
 
-    // Abort current job.
-    state.abort_job(stream_id).await;
+    // ── 1. Seal the in-flight streaming message ───────────────────────────
+    // The worker writes tokens live into messages.streaming=true; sealing it
+    // here (before interrupt_job) ensures the partial is in history before
+    // the new worker's db.restore() runs.  Idempotent if worker beats us.
+    let _ = sqlx::query(
+        "UPDATE messages SET streaming = false WHERE job_id = $1 AND streaming = true",
+    )
+    .bind(stream_id)
+    .execute(&state.pool)
+    .await;
 
-    // Persist the interrupt as a user message.
+    // ── 2. Mark old job as 'interrupted' ─────────────────────────────────
+    // Worker detects this status and exits without double-sealing.
+    state.interrupt_job(stream_id).await;
+
+    // ── 3. Persist the user's interrupt message synchronously ─────────────
     {
         use agentix::{Message, UserContent};
-        let msg = Message::User(vec![UserContent::Text(content)]);
-        state.persist_message(conversation_id, &msg);
+        state
+            .persist_message_async(
+                conversation_id,
+                Message::User(vec![UserContent::Text(content)]),
+            )
+            .await;
     }
 
-    // Start a new generation job.
+    // ── 4. Start new generation job immediately ───────────────────────────
     let new_job_id = state
         .start_generation(conversation_id, auth.user_id)
         .await
