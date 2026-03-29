@@ -82,7 +82,6 @@ pub fn create_router(state: AppState, allowed_origin: Option<&str>) -> Router {
         .route("/api/auth/github", get(github_oauth::github_login))
         .route("/api/auth/github/callback", get(github_oauth::github_callback))
         // ── Users ─────────────────────────────────────────────────────────────
-        .route("/api/users", post(register))
         .route("/api/users/me", get(get_me))
         .route("/api/users/me/profile", put(update_profile))
         .route("/api/users/me/password", put(update_password))

@@ -7,12 +7,6 @@ use crate::errors::{AppError, AppResult};
 use crate::web::AppState;
 use crate::web::auth::AuthUser;
 
-#[derive(Deserialize)]
-pub struct RegisterRequest {
-    pub name: String,
-    pub password: String,
-}
-
 #[derive(Serialize)]
 pub struct UserResponse {
     pub id: Uuid,
@@ -25,52 +19,6 @@ pub struct UserResponse {
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
-pub async fn register(
-    State(state): State<AppState>,
-    Json(req): Json<RegisterRequest>,
-) -> AppResult<Json<UserResponse>> {
-    if req.name.trim().is_empty() || req.password.trim().is_empty() {
-        return Err(AppError::bad_request("用户名和密码不能为空"));
-    }
-
-    let password_hash = bcrypt::hash(&req.password, bcrypt::DEFAULT_COST)?;
-
-    let row = sqlx::query(
-        r#"
-        INSERT INTO users (name, password_hash, display_name)
-        VALUES ($1, $2, $1)
-        RETURNING id, name, email, display_name, avatar_path, is_admin, last_login_at, created_at
-        "#,
-    )
-    .bind(req.name.trim())
-    .bind(password_hash)
-    .fetch_one(&state.pool)
-    .await?;
-
-    let user_id: Uuid = row.try_get("id").map_err(|_| AppError::internal("db error"))?;
-
-    // Log registration audit
-    let _ = crate::audit::log_audit(
-        &state.pool,
-        Some(user_id),
-        Some(user_id),
-        "register",
-        Some(serde_json::json!({ "name": req.name.trim() })),
-        None,
-    )
-    .await;
-
-    Ok(Json(UserResponse {
-        id: user_id,
-        name: row.try_get("name").map_err(|_| AppError::internal("db error"))?,
-        email: row.try_get("email").ok(),
-        display_name: row.try_get("display_name").ok(),
-        avatar_path: row.try_get("avatar_path").ok(),
-        is_admin: row.try_get("is_admin").map_err(|_| AppError::internal("db error"))?,
-        last_login_at: row.try_get("last_login_at").ok(),
-        created_at: row.try_get("created_at").map_err(|_| AppError::internal("db error"))?,
-    }))
-}
 
 pub async fn get_me(
     State(state): State<AppState>,
