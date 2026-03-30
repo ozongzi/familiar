@@ -11,6 +11,8 @@
     "shell:allow-kill",
     "shell:allow-stdin-write",
     "log:default",
-    "store:default"
+    "store:default",
+    "deep-link:default",
+    "shell:allow-open"
   ]
 }

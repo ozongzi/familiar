@@ -24,6 +24,13 @@
     },
     "withGlobalTauri": true
   },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["familiar"]
+      }
+    }
+  },
   "bundle": {
     "active": true,
     "targets": "all",

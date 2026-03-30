@@ -30,8 +30,8 @@ use crate::{
 
 // ── 注册表 ────────────────────────────────────────────────────────────────────
 
-/// 记录每个用户当前是否有客户端在线及其暴露的 MCP 工具。
-pub type TunnelRegistry = Arc<Mutex<HashMap<Uuid, McpTool>>>;
+/// 记录每个用户当前在线的所有客户端 MCP 工具（支持多连接）。
+pub type TunnelRegistry = Arc<Mutex<HashMap<Uuid, Vec<McpTool>>>>;
 
 pub fn new_tunnel_registry() -> TunnelRegistry {
     Arc::new(Mutex::new(HashMap::new()))
@@ -227,10 +227,13 @@ async fn handle_tunnel(socket: WebSocket, user_id: Uuid, state: AppState) {
     tracing::info!(%user_id, tools = mcp_tool.raw_tools().len(), "客户端隧道已连接");
 
     // 把隧道工具存进注册表，Worker 启动时会从注册表获取
+    let conn_idx;
     {
         let mut registry = state.tunnel_registry.lock().await;
-        registry.insert(user_id, mcp_tool.clone());
-        tracing::info!(%user_id, "隧道工具已存入注册表");
+        let entry = registry.entry(user_id).or_insert_with(Vec::new);
+        conn_idx = entry.len();
+        entry.push(mcp_tool.clone());
+        tracing::info!(%user_id, conn_idx, tools = mcp_tool.raw_tools().len(), "隧道工具已存入注册表");
     }
 
     // 等待 writer tasks 结束（连接断开时自动结束）
@@ -239,7 +242,14 @@ async fn handle_tunnel(socket: WebSocket, user_id: Uuid, state: AppState) {
     // 断开时从注册表移除
     {
         let mut registry = state.tunnel_registry.lock().await;
-        registry.remove(&user_id);
+        if let Some(v) = registry.get_mut(&user_id) {
+            if conn_idx < v.len() {
+                v.remove(conn_idx);
+            }
+            if v.is_empty() {
+                registry.remove(&user_id);
+            }
+        }
     }
 
     tracing::info!(%user_id, "客户端隧道已断开");

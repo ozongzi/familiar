@@ -3,6 +3,7 @@ use std::sync::Arc;
 use crate::config::Config;
 use crate::db::Db;
 use agentix::Message;
+use dashmap::DashMap;
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -20,6 +21,8 @@ pub struct AppState {
     pub github_client_id: String,
     pub github_client_secret: String,
     pub github_redirect_uri: String,
+    /// Pending Tauri OAuth tokens: state → session_token (short-lived, in-memory)
+    pub pending_auth: Arc<DashMap<String, String>>,
 }
 
 impl AppState {
@@ -39,6 +42,7 @@ impl AppState {
             github_client_secret: std::env::var("GITHUB_CLIENT_SECRET").unwrap_or_default(),
             github_redirect_uri: std::env::var("GITHUB_REDIRECT_URI")
                 .unwrap_or_else(|_| "http://localhost:5173/api/auth/github/callback".to_string()),
+            pending_auth: Arc::new(DashMap::new()),
         }
     }
 

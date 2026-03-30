@@ -1,9 +1,20 @@
 use std::sync::{Arc, Mutex};
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
+use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_store::StoreExt;
 
 #[cfg(not(target_os = "android"))]
 use tauri_plugin_shell::{ShellExt, process::CommandChild};
+
+mod browser;
+
+// ── Browser tunnel state ──────────────────────────────────────────────────────
+
+struct BrowserTunnelState {
+    stop_tx: Option<tokio::sync::oneshot::Sender<()>>,
+}
+
+type SharedBrowserTunnelState = Arc<Mutex<BrowserTunnelState>>;
 
 // ── 状态 ──────────────────────────────────────────────────────────────────────
 
@@ -163,6 +174,209 @@ fn load_local_mcps(app: &AppHandle) -> serde_json::Value {
         .unwrap_or(serde_json::Value::Array(vec![]))
 }
 
+// ── Browser tunnel (chromiumoxide MCP over WS) ────────────────────────────────
+
+/// Start the Rust-native browser MCP tunnel.
+/// Connects to /api/tunnel/browser via WebSocket and speaks MCP JSON-RPC,
+/// dispatching tool calls to chromiumoxide.
+#[tauri::command]
+#[cfg(not(target_os = "android"))]
+async fn start_browser_tunnel(
+    token: String,
+    server_url: String,
+    state: State<'_, SharedBrowserTunnelState>,
+) -> Result<(), String> {
+    // Stop any existing tunnel first
+    {
+        let mut s = state.lock().unwrap();
+        if let Some(tx) = s.stop_tx.take() {
+            let _ = tx.send(());
+        }
+    }
+
+    let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
+    {
+        let mut s = state.lock().unwrap();
+        s.stop_tx = Some(stop_tx);
+    }
+
+    let browser_state = browser::new_browser_state();
+
+    tokio::spawn(async move {
+        run_browser_tunnel(token, server_url, browser_state, stop_rx).await;
+    });
+
+    Ok(())
+}
+
+#[cfg(not(target_os = "android"))]
+async fn run_browser_tunnel(
+    token: String,
+    server_url: String,
+    browser_state: browser::SharedBrowserState,
+    mut stop_rx: tokio::sync::oneshot::Receiver<()>,
+) {
+    use tokio_tungstenite::connect_async;
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    use futures::{SinkExt, StreamExt};
+
+    let ws_base = server_url.replacen("https://", "wss://", 1).replacen("http://", "ws://", 1);
+    let ws_base = ws_base.trim_end_matches('/');
+    let url = format!("{ws_base}/api/tunnel");
+
+    log::info!("[browser-tunnel] 连接: {url}");
+
+    let mut request = url.as_str().into_client_request().unwrap();
+    request.headers_mut().insert(
+        "Authorization",
+        format!("Bearer {token}").parse().unwrap(),
+    );
+
+    let (ws_stream, _) = match connect_async(request).await {
+        Ok(v) => v,
+        Err(e) => {
+            log::error!("[browser-tunnel] 连接失败: {e}");
+            return;
+        }
+    };
+
+    log::info!("[browser-tunnel] 已连接");
+
+    let (mut ws_tx, mut ws_rx) = ws_stream.split();
+
+    loop {
+        tokio::select! {
+            _ = &mut stop_rx => {
+                log::info!("[browser-tunnel] 停止");
+                break;
+            }
+            msg = ws_rx.next() => {
+                let msg = match msg {
+                    Some(Ok(m)) => m,
+                    _ => { log::info!("[browser-tunnel] 连接断开"); break; }
+                };
+                let text = match msg.to_text() {
+                    Ok(t) => t.to_string(),
+                    Err(_) => continue,
+                };
+
+                // Parse JSON-RPC request
+                let req: serde_json::Value = match serde_json::from_str(&text) {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                };
+
+                // Handle ping
+                if req.get("type").and_then(|v| v.as_str()) == Some("ping") {
+                    let _ = ws_tx.send(tokio_tungstenite::tungstenite::Message::Text(
+                        "{\"type\":\"pong\"}".into()
+                    )).await;
+                    continue;
+                }
+
+                let id = req.get("id").cloned().unwrap_or(serde_json::Value::Null);
+                let method = req.get("method").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let params = req.get("params").cloned().unwrap_or(serde_json::Value::Object(Default::default()));
+
+                let browser_state = browser_state.clone();
+                let response = handle_mcp_request(&browser_state, &method, &params, id).await;
+
+                let resp_text = serde_json::to_string(&response).unwrap_or_default();
+                if let Err(e) = ws_tx.send(tokio_tungstenite::tungstenite::Message::Text(resp_text.into())).await {
+                    log::warn!("[browser-tunnel] 发送响应失败: {e}");
+                    break;
+                }
+            }
+        }
+    }
+}
+
+#[cfg(not(target_os = "android"))]
+async fn handle_mcp_request(
+    browser_state: &browser::SharedBrowserState,
+    method: &str,
+    params: &serde_json::Value,
+    id: serde_json::Value,
+) -> serde_json::Value {
+    use serde_json::json;
+
+    match method {
+        "initialize" => {
+            json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": { "tools": {} },
+                    "serverInfo": { "name": "familiar-browser", "version": "1.0.0" }
+                }
+            })
+        }
+        "tools/list" => {
+            json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": { "tools": browser::tool_definitions() }
+            })
+        }
+        "tools/call" => {
+            let tool_name = params.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            let args = params.get("arguments").cloned().unwrap_or(serde_json::Value::Object(Default::default()));
+            let result = browser::dispatch(browser_state, tool_name, &args).await;
+            // Format result as MCP content
+            let content = if let Some(err) = result.get("error") {
+                json!([{"type": "text", "text": err.as_str().unwrap_or("error")}])
+            } else if result.get("type").and_then(|v| v.as_str()) == Some("image") {
+                json!([{
+                    "type": "image",
+                    "data": result["data"],
+                    "mimeType": result["mimeType"]
+                }])
+            } else {
+                let text = serde_json::to_string_pretty(&result).unwrap_or_default();
+                json!([{"type": "text", "text": text}])
+            };
+            json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": { "content": content }
+            })
+        }
+        "notifications/initialized" | "ping" => {
+            json!({ "jsonrpc": "2.0", "id": id, "result": {} })
+        }
+        _ => {
+            json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": { "code": -32601, "message": format!("Method not found: {method}") }
+            })
+        }
+    }
+}
+
+#[tauri::command]
+#[cfg(not(target_os = "android"))]
+async fn stop_browser_tunnel(state: State<'_, SharedBrowserTunnelState>) -> Result<(), String> {
+    let mut s = state.lock().unwrap();
+    if let Some(tx) = s.stop_tx.take() {
+        let _ = tx.send(());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+#[cfg(target_os = "android")]
+async fn start_browser_tunnel(_token: String, _server_url: String) -> Result<(), String> {
+    Ok(())
+}
+
+#[tauri::command]
+#[cfg(target_os = "android")]
+async fn stop_browser_tunnel() -> Result<(), String> {
+    Ok(())
+}
+
 // ── 入口 ──────────────────────────────────────────────────────────────────────
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -172,9 +386,31 @@ pub fn run() {
     #[cfg(target_os = "android")]
     let tunnel_state: SharedTunnelState = Arc::new(Mutex::new(TunnelState {}));
 
+    let browser_tunnel_state: SharedBrowserTunnelState =
+        Arc::new(Mutex::new(BrowserTunnelState { stop_tx: None }));
+
     let builder = tauri::Builder::default()
         .manage(tunnel_state)
-        .plugin(tauri_plugin_store::Builder::default().build());
+        .manage(browser_tunnel_state)
+        .plugin(tauri_plugin_store::Builder::default().build())
+        .plugin(tauri_plugin_deep_link::init());
+
+    #[cfg(desktop)]
+    let builder = builder.plugin(
+        tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            use tauri::Emitter;
+            // Second instance launched with deep-link URL in argv
+            for arg in &argv {
+                if arg.starts_with("familiar://auth") {
+                    let _ = app.emit("familiar-auth", arg.clone());
+                }
+            }
+            // Focus the existing window
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.set_focus();
+            }
+        }),
+    );
 
     #[cfg(not(target_os = "android"))]
     let builder = builder.plugin(tauri_plugin_shell::init());
@@ -188,6 +424,22 @@ pub fn run() {
                         .build(),
                 )?;
             }
+
+            #[cfg(desktop)]
+            {
+                let _ = app.deep_link().register_all();
+            }
+
+            let handle = app.handle().clone();
+            app.deep_link().on_open_url(move |event| {
+                for url in event.urls() {
+                    let s = url.to_string();
+                    if s.starts_with("familiar://auth") {
+                        let _ = handle.emit("familiar-auth", s);
+                    }
+                }
+            });
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -195,6 +447,8 @@ pub fn run() {
             stop_tunnel,
             get_local_mcps,
             set_local_mcps,
+            start_browser_tunnel,
+            stop_browser_tunnel,
         ])
         .run(tauri::generate_context!())
         .expect("运行 Tauri 应用时出错");

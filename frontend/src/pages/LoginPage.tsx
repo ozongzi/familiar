@@ -1,6 +1,49 @@
+import { useEffect } from "react";
 import styles from "./LoginPage.module.css";
 
-export function LoginPage() {
+declare global {
+  interface Window {
+    __TAURI__?: unknown;
+  }
+}
+
+const isTauri = () => typeof window.__TAURI__ !== "undefined";
+
+interface LoginPageProps {
+  serverUrl?: string;
+  onLogin?: (token: string, isNew: boolean) => void;
+}
+
+export function LoginPage({ serverUrl = "", onLogin }: LoginPageProps) {
+  useEffect(() => {
+    if (!isTauri()) return;
+
+    let unlisten: (() => void) | undefined;
+
+    const setup = async () => {
+      const { listen } = await import("@tauri-apps/api/event");
+      unlisten = await listen<string>("familiar-auth", (event) => {
+        const url = new URL(event.payload);
+        const token = url.searchParams.get("token");
+        const isNew = url.searchParams.get("is_new") === "1";
+        if (token && onLogin) {
+          onLogin(token, isNew);
+        }
+      });
+    };
+
+    setup();
+    return () => { unlisten?.(); };
+  }, [onLogin]);
+
+  const handleGithubLogin = async (e: React.MouseEvent) => {
+    if (!isTauri()) return;
+    e.preventDefault();
+    const { open } = await import("@tauri-apps/plugin-shell");
+    const base = serverUrl || window.location.origin;
+    await open(`${base}/api/auth/github?client=tauri`);
+  };
+
   return (
     <div className={styles.page}>
       <div className={styles.card}>
@@ -10,7 +53,11 @@ export function LoginPage() {
         </div>
         <p className={styles.subtitle}>你的 AI 助手</p>
 
-        <a className={styles.githubBtn} href="/api/auth/github">
+        <a
+          className={styles.githubBtn}
+          href="/api/auth/github"
+          onClick={isTauri() ? handleGithubLogin : undefined}
+        >
           <svg height="20" width="20" viewBox="0 0 16 16" fill="currentColor">
             <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38
               0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13

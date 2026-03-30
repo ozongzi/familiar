@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "./store/auth.shared";
+import { getServerBase } from "./utils/tauri";
 import { LoginPage } from "./pages/LoginPage";
 import { ChatPage } from "./pages/ChatPage";
 import { AdminPage } from "./pages/AdminPage";
@@ -8,7 +9,7 @@ import { PrivacyPage } from "./pages/PrivacyPage";
 import { Routes, Route, Navigate } from "react-router-dom";
 
 export function App() {
-  const { token, loading, user, logout } = useAuth();
+  const { token, loading, user, logout, login } = useAuth();
   const [showPrivacy, setShowPrivacy] = useState(false);
 
   useEffect(() => {
@@ -38,7 +39,12 @@ export function App() {
   }
 
   if (!token) {
-    return <LoginPage />;
+    return (
+      <LoginPage
+        serverUrl={getServerBase()}
+        onLogin={async (t) => { await login(t); }}
+      />
+    );
   }
 
   if (showPrivacy) {

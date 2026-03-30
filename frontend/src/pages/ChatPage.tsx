@@ -96,15 +96,12 @@ export function ChatPage() {
 
   const messagesRef = useRef<HTMLDivElement>(null);
   const lockedRef = useRef(true);
-  // Track the last scrollTop the user was at, so we can distinguish
-  // programmatic scrolls from user-initiated ones.
-  const lastScrollTopRef = useRef(0);
-  const isProgrammaticScrollRef = useRef(false);
+  // Track scrollTop set by rAF so scroll handler can ignore those events.
+  const rafScrollTopRef = useRef<number>(-1);
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior = "auto") => {
     const el = messagesRef.current;
     if (!el) return;
-    isProgrammaticScrollRef.current = true;
     el.scrollTo({ top: el.scrollHeight, behavior });
   }, []);
 
@@ -113,18 +110,13 @@ export function ChatPage() {
     const el = messagesRef.current;
     if (!el) return;
     const onScroll = () => {
-      if (isProgrammaticScrollRef.current) {
-        isProgrammaticScrollRef.current = false;
-        lastScrollTopRef.current = el.scrollTop;
-        return;
-      }
+      // If this scroll matches what rAF just set, ignore it.
+      if (Math.abs(el.scrollTop - rafScrollTopRef.current) < 2) return;
       const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-      const scrolledUp = el.scrollTop < lastScrollTopRef.current - 5;
-      lastScrollTopRef.current = el.scrollTop;
-      if (scrolledUp) {
-        lockedRef.current = false;
-      } else if (atBottom) {
+      if (atBottom) {
         lockedRef.current = true;
+      } else {
+        lockedRef.current = false;
       }
     };
     el.addEventListener("scroll", onScroll, { passive: true });
@@ -142,8 +134,9 @@ export function ChatPage() {
       let rafId: number;
       const tick = () => {
         if (lockedRef.current) {
-          isProgrammaticScrollRef.current = true;
-          el.scrollTop = el.scrollHeight;
+          const target = el.scrollHeight - el.clientHeight;
+          rafScrollTopRef.current = target;
+          el.scrollTop = target;
         }
         rafId = requestAnimationFrame(tick);
       };

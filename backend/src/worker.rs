@@ -222,13 +222,15 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
     // Tunnel tools (live WebSocket — only in-memory source)
     {
         let registry = ctx.tunnel_registry.lock().await;
-        if let Some(tunnel_tool) = registry.get(&ctx.user_id) {
-            info!(
-                user = %ctx.user_id,
-                tools = tunnel_tool.raw_tools().len(),
-                "injecting tunnel tools"
-            );
-            bundle.push(tunnel_tool.clone());
+        if let Some(tunnel_tools) = registry.get(&ctx.user_id) {
+            for tunnel_tool in tunnel_tools {
+                info!(
+                    user = %ctx.user_id,
+                    tools = tunnel_tool.raw_tools().len(),
+                    "injecting tunnel tools"
+                );
+                bundle.push(tunnel_tool.clone());
+            }
         }
     }
 
@@ -432,30 +434,48 @@ async fn generation_loop(
 
             let mut tool_stream = tools.call(&tc.name, args).await;
             let mut result_val = json!(null);
+            let mut aborted_during_tool = false;
 
-            while let Some(output) = tool_stream.next().await {
-                match output {
-                    ToolOutput::Progress(p) => {
-                        // SpawnSpell yields JSON events with source="spawn" — emit them
-                        // directly so the frontend receives them as first-class events.
-                        let parsed = serde_json::from_str::<Value>(&p).ok();
-                        let is_spawn = parsed.as_ref()
-                            .and_then(|v| v.get("source"))
-                            .and_then(|s| s.as_str()) == Some("spawn");
-                        if is_spawn {
-                            emit(ctx, parsed.unwrap()).await;
-                        } else {
-                            emit(
-                                ctx,
-                                json!({"type": "tool_progress", "id": tc.id, "name": tc.name, "progress": p}),
-                            )
-                            .await;
+            loop {
+                tokio::select! {
+                    output = tool_stream.next() => {
+                        match output {
+                            None => break,
+                            Some(ToolOutput::Progress(p)) => {
+                                // SpawnSpell yields JSON events with source="spawn" — emit them
+                                // directly so the frontend receives them as first-class events.
+                                let parsed = serde_json::from_str::<Value>(&p).ok();
+                                let is_spawn = parsed.as_ref()
+                                    .and_then(|v| v.get("source"))
+                                    .and_then(|s| s.as_str()) == Some("spawn");
+                                if is_spawn {
+                                    emit(ctx, parsed.unwrap()).await;
+                                } else {
+                                    emit(
+                                        ctx,
+                                        json!({"type": "tool_progress", "id": tc.id, "name": tc.name, "progress": p}),
+                                    )
+                                    .await;
+                                }
+                            }
+                            Some(ToolOutput::Result(v)) => {
+                                result_val = v;
+                            }
                         }
                     }
-                    ToolOutput::Result(v) => {
-                        result_val = v;
+                    _ = async {
+                        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                    }, if check_stop_reason(&ctx.pool, ctx.job_id).await.is_some() => {
+                        aborted_during_tool = true;
+                        break;
                     }
                 }
+            }
+
+            if aborted_during_tool {
+                emit(ctx, json!({"type": "aborted"})).await;
+                set_job_status(&ctx.pool, ctx.job_id, "aborted", None).await;
+                return Ok(());
             }
 
             // Persist and emit tool result

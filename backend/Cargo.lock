@@ -22,6 +22,8 @@ dependencies = [
 [[package]]
 name = "agentix"
 version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4cbc53259fd89e469fb44c48c110224df121513c10c632ee999ec9a8baa0ff58"
 dependencies = [
  "agentix-macros",
  "async-stream",
@@ -43,6 +45,8 @@ dependencies = [
 [[package]]
 name = "agentix-macros"
 version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fef266999e26cbcd39f0e0a9d022b7eba6bcc114bc79fe14f9e0f40e141cc9c2"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -651,6 +655,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "dashmap"
+version = "6.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5041cc499144891f3790297212f32a74fb938e5136a14943f338ef9e0ae276cf"
+dependencies = [
+ "cfg-if",
+ "crossbeam-utils",
+ "hashbrown 0.14.5",
+ "lock_api",
+ "once_cell",
+ "parking_lot_core",
+]
+
+[[package]]
 name = "data-encoding"
 version = "2.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -836,6 +854,7 @@ dependencies = [
  "bytes",
  "chrono",
  "config",
+ "dashmap",
  "futures",
  "getrandom 0.2.17",
  "glob",

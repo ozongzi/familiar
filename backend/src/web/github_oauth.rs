@@ -8,19 +8,31 @@ use crate::errors::{AppError, AppResult};
 use crate::web::AppState;
 
 #[derive(Deserialize)]
-pub struct CallbackQuery {
-    pub code: String,
+pub struct LoginQuery {
+    pub client: Option<String>,
 }
 
-/// GET /api/auth/github → redirect to GitHub authorization page
-pub async fn github_login(State(state): State<AppState>) -> AppResult<Redirect> {
+#[derive(Deserialize)]
+pub struct CallbackQuery {
+    pub code: String,
+    pub state: Option<String>,
+}
+
+/// GET /api/auth/github?client=tauri → redirect to GitHub authorization page
+/// Pass client=tauri to get a familiar:// deep-link redirect after OAuth completes.
+pub async fn github_login(
+    State(state): State<AppState>,
+    Query(params): Query<LoginQuery>,
+) -> AppResult<Redirect> {
     if state.github_client_id.is_empty() {
         return Err(AppError::internal("GitHub OAuth not configured"));
     }
+    let oauth_state = params.client.as_deref().unwrap_or("web").to_string();
     let url = format!(
-        "https://github.com/login/oauth/authorize?client_id={}&scope=read:user&redirect_uri={}",
+        "https://github.com/login/oauth/authorize?client_id={}&scope=read:user&redirect_uri={}&state={}",
         state.github_client_id,
         urlencoding(&state.github_redirect_uri),
+        urlencoding(&oauth_state),
     );
     Ok(Redirect::to(&url))
 }
@@ -145,7 +157,13 @@ pub async fn github_callback(
         .await;
     }
 
-    Ok(Redirect::to(&format!("/#token={}&is_new={}", token, if is_new { "1" } else { "0" })))
+    let is_tauri = params.state.as_deref() == Some("tauri");
+    let redirect_url = if is_tauri {
+        format!("familiar://auth?token={}&is_new={}", token, if is_new { "1" } else { "0" })
+    } else {
+        format!("/#token={}&is_new={}", token, if is_new { "1" } else { "0" })
+    };
+    Ok(Redirect::to(&redirect_url))
 }
 
 fn generate_token() -> String {
