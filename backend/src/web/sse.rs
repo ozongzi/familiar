@@ -142,11 +142,11 @@ pub async fn send_message_handler(
     // can advance active_message_id first, causing the user message to be
     // inserted as a child of the streaming row (corrupted tree) and excluded
     // from the new worker's restore() call.
-    {
+    let user_message_id = {
         use agentix::Message;
         let msg = Message::User(user_parts);
-        state.persist_message_async(conversation_id, msg).await;
-    }
+        state.persist_message_async(conversation_id, msg).await
+    };
 
     // If there's already a running job, abort it first (interrupt semantics).
     // Then start a new generation job.
@@ -158,7 +158,7 @@ pub async fn send_message_handler(
     // job_id doubles as stream_id
     Ok((
         StatusCode::ACCEPTED,
-        Json(json!({ "stream_id": job_id })),
+        Json(json!({ "stream_id": job_id, "user_message_id": user_message_id })),
     ))
 }
 

@@ -144,7 +144,7 @@ impl AppState {
         });
     }
 
-    pub async fn persist_message_async(&self, conversation_id: Uuid, msg: Message) {
+    pub async fn persist_message_async(&self, conversation_id: Uuid, msg: Message) -> Option<i64> {
         use agentix::UserContent;
         use crate::embedding::EmbeddingClient;
         use crate::db::to_vector;
@@ -171,7 +171,7 @@ impl AppState {
             Ok(id) => id,
             Err(e) => {
                 tracing::error!("db append failed: {e}");
-                return;
+                return None;
             }
         };
 
@@ -195,5 +195,7 @@ impl AppState {
                 }
             });
         }
+
+        Some(row_id)
     }
 }

@@ -197,13 +197,9 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
     let mcp_tools = connect_mcps_from_db(ctx).await;
 
     // ── Build ToolBundle (spells + MCPs + tunnel) ─────────────────────────
-    let (spawn_tx, _) = tokio::sync::broadcast::channel::<String>(256);
-    let abort_flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
-
     let spell_deps = SpellDeps {
         subagent_prompt: global_cfg.subagent_prompt(),
         cheap_model: cheap_cfg,
-        spawn_tx: spawn_tx.clone(),
         db: ctx.db.clone(),
         embed: EmbeddingClient::new(
             global_cfg.embedding.api_key.clone(),
@@ -215,7 +211,6 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
         user_id: ctx.user_id,
         sandbox: ctx.sandbox.clone(),
         mcp_catalog: global_cfg.mcp_catalog.clone(),
-        abort_flag: Arc::clone(&abort_flag),
     };
 
     let mut bundle = ToolBundle::new();
@@ -441,11 +436,21 @@ async fn generation_loop(
             while let Some(output) = tool_stream.next().await {
                 match output {
                     ToolOutput::Progress(p) => {
-                        emit(
-                            ctx,
-                            json!({"type": "tool_progress", "id": tc.id, "name": tc.name, "progress": p}),
-                        )
-                        .await;
+                        // SpawnSpell yields JSON events with source="spawn" — emit them
+                        // directly so the frontend receives them as first-class events.
+                        let parsed = serde_json::from_str::<Value>(&p).ok();
+                        let is_spawn = parsed.as_ref()
+                            .and_then(|v| v.get("source"))
+                            .and_then(|s| s.as_str()) == Some("spawn");
+                        if is_spawn {
+                            emit(ctx, parsed.unwrap()).await;
+                        } else {
+                            emit(
+                                ctx,
+                                json!({"type": "tool_progress", "id": tc.id, "name": tc.name, "progress": p}),
+                            )
+                            .await;
+                        }
                     }
                     ToolOutput::Result(v) => {
                         result_val = v;

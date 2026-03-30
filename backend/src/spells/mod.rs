@@ -12,8 +12,6 @@ use skill_spell::SkillSpell;
 use sourcegraph_spell::search_code;
 
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
-
 use uuid::Uuid;
 
 use crate::config::{McpCatalogEntry, ModelConfig};
@@ -30,7 +28,6 @@ pub struct SpellDeps {
     pub subagent_prompt: Option<String>,
     // SpawnSpell
     pub cheap_model: ModelConfig,
-    pub spawn_tx: tokio::sync::broadcast::Sender<String>,
     // HistorySpell
     pub db: Db,
     pub embed: EmbeddingClient,
@@ -40,8 +37,6 @@ pub struct SpellDeps {
     pub user_id: Uuid,
     pub sandbox: Arc<crate::sandbox::SandboxManager>,
     pub mcp_catalog: Vec<McpCatalogEntry>,
-    // Shared
-    pub abort_flag: Arc<AtomicBool>,
 }
 
 /// Build the complete built-in spell bundle from the given dependencies.
@@ -72,8 +67,6 @@ pub fn build_all_spells(deps: SpellDeps) -> impl agentix::Tool {
         + SpawnSpell {
             cheap_model: deps.cheap_model,
             subagent_prompt: deps.subagent_prompt,
-            broadcast_tx: deps.spawn_tx,
-            abort_flag: Arc::clone(&deps.abort_flag),
             tools: subagent_tools,
         }
         + HistorySpell {

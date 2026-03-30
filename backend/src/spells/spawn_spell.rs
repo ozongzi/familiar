@@ -1,17 +1,13 @@
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
 
-use crate::config::ModelConfig;
-use crate::config::Provider;
+use crate::config::{ModelConfig, Provider};
 
-use agentix::{AgentEvent, Message, Tool, tool};
+use agentix::{AgentEvent, Message, Tool, ToolOutput, tool};
 use serde_json::json;
 
 pub struct SpawnSpell {
     pub cheap_model: ModelConfig,
     pub subagent_prompt: Option<String>,
-    pub broadcast_tx: tokio::sync::broadcast::Sender<String>,
-    pub abort_flag: Arc<AtomicBool>,
     pub tools: Arc<dyn Tool>,
 }
 
@@ -24,12 +20,13 @@ impl Tool for SpawnSpell {
     /// description: 本次操作意图（供 UI 渲染，可不填）
     /// goal: 子 Agent 的目标，尽量具体
     /// reasoner: 可选，默认为 false 若为 true 则使用 deepseek-reasoner 模型，适合需要复杂推理的子目标，否则使用 deepseek-chat 模型，适合一般对话和工具调用的子目标
-    async fn spawn(
+    #[streaming]
+    fn spawn(
         &self,
         description: Option<String>,
         goal: String,
         reasoner: Option<bool>,
-    ) -> Value {
+    ) {
         let _ = description;
 
         let model_name = if reasoner == Some(true) && self.cheap_model.provider == Provider::DeepSeek {
@@ -44,48 +41,51 @@ impl Tool for SpawnSpell {
         }
 
         let http = reqwest::Client::new();
-        let abort_flag = Arc::clone(&self.abort_flag);
-
         let history = vec![Message::User(vec![agentix::UserContent::Text(goal)])];
-        let mut result = String::new();
-        let mut agent_stream = agentix::agent(
-            Arc::clone(&self.tools),
-            http,
-            request,
-            history,
-            Some(25_000),
-        );
+        let tools = Arc::clone(&self.tools);
 
-        let bcast = |v: serde_json::Value| { let _ = self.broadcast_tx.send(v.to_string()); };
+        async_stream::stream! {
+            use futures::StreamExt;
 
-        while let Some(event) = agent_stream.next().await {
-            if abort_flag.load(std::sync::atomic::Ordering::Acquire) {
-                return json!({ "error": "任务被用户中断" });
-            }
-            match event {
-                AgentEvent::Token(t) => {
-                    result.push_str(&t);
-                    bcast(json!({"type": "token", "content": t, "source": "spawn"}));
+            let mut result = String::new();
+            let mut agent_stream = agentix::agent(tools, http, request, history, Some(25_000));
+
+            while let Some(event) = agent_stream.next().await {
+                match event {
+                    AgentEvent::Token(t) => {
+                        result.push_str(&t);
+                        yield ToolOutput::Progress(
+                            json!({"type": "token", "content": t, "source": "spawn"}).to_string()
+                        );
+                    }
+                    AgentEvent::Reasoning(t) => yield ToolOutput::Progress(
+                        json!({"type": "reasoning_token", "content": t, "source": "spawn"}).to_string()
+                    ),
+                    AgentEvent::ToolCallChunk(c) => yield ToolOutput::Progress(
+                        json!({"type": "tool_call", "id": c.id, "name": c.name, "delta": c.delta, "source": "spawn"}).to_string()
+                    ),
+                    AgentEvent::ToolCallStart(tc) => yield ToolOutput::Progress(
+                        json!({"type": "tool_call_complete", "id": tc.id, "name": tc.name, "source": "spawn"}).to_string()
+                    ),
+                    AgentEvent::ToolProgress { id, name, progress } => yield ToolOutput::Progress(
+                        json!({"type": "tool_progress", "id": id, "name": name, "progress": progress, "source": "spawn"}).to_string()
+                    ),
+                    AgentEvent::ToolResult { id, name, content } => yield ToolOutput::Progress(
+                        json!({"type": "tool_result", "id": id, "name": name, "result": content, "source": "spawn"}).to_string()
+                    ),
+                    AgentEvent::Error(e) => {
+                        yield ToolOutput::Result(json!({ "error": format!("子 Agent 错误: {e}") }));
+                        return;
+                    }
+                    AgentEvent::Warning(_) | AgentEvent::Usage(_) | AgentEvent::Done(_) => {}
                 }
-                AgentEvent::Reasoning(t) =>
-                    bcast(json!({"type": "reasoning_token", "content": t, "source": "spawn"})),
-                AgentEvent::ToolCallChunk(c) =>
-                    bcast(json!({"type": "tool_call", "id": c.id, "name": c.name, "delta": c.delta, "source": "spawn"})),
-                AgentEvent::ToolCallStart(tc) =>
-                    bcast(json!({"type": "tool_call_complete", "id": tc.id, "name": tc.name, "source": "spawn"})),
-                AgentEvent::ToolProgress { id, name, progress } =>
-                    bcast(json!({"type": "tool_progress", "id": id, "name": name, "progress": progress, "source": "spawn"})),
-                AgentEvent::ToolResult { id, name, content } =>
-                    bcast(json!({"type": "tool_result", "id": id, "name": name, "result": content, "source": "spawn"})),
-                AgentEvent::Error(e) => return json!({ "error": format!("子 Agent 错误: {e}") }),
-                AgentEvent::Warning(_) | AgentEvent::Usage(_) | AgentEvent::Done(_) => {}
             }
-        }
 
-        if result.is_empty() {
-            json!({ "error": "子 Agent 未返回任何结果" })
-        } else {
-            json!({ "result": result })
+            if result.is_empty() {
+                yield ToolOutput::Result(json!({ "error": "子 Agent 未返回任何结果" }));
+            } else {
+                yield ToolOutput::Result(json!({ "result": result }));
+            }
         }
     }
 }

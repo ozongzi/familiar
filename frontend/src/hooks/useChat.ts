@@ -592,33 +592,6 @@ export function useChat(
         sealActiveText();
         updateStatus("idle");
         clearPersistedStreamId(attachedConvRef.current);
-        // Backfill msgId for any user bubble that was created optimistically.
-        const convId = attachedConvRef.current;
-        const tok = token;
-        if (convId && tok) {
-          fetch(`${BASE()}/api/conversations/${convId}/messages`, {
-            headers: { Authorization: `Bearer ${tok}` },
-          })
-            .then((r) => r.ok ? r.json() : null)
-            .then((data: { messages?: { id: number; role: string }[] } | null) => {
-              if (!data?.messages) return;
-              const serverMsgs = data.messages;
-              setBubbles((prev) => {
-                let serverIdx = serverMsgs.length - 1;
-                const next = [...prev];
-                for (let i = next.length - 1; i >= 0; i--) {
-                  const b = next[i];
-                  if (b.kind !== "text" || b.role !== "user" || b.msgId != null) continue;
-                  while (serverIdx >= 0 && serverMsgs[serverIdx].role !== "user") serverIdx--;
-                  if (serverIdx < 0) break;
-                  next[i] = { ...b, msgId: serverMsgs[serverIdx].id };
-                  serverIdx--;
-                }
-                return next;
-              });
-            })
-            .catch(() => {/* ignore */});
-        }
         return true;
       } else if (event.type === "error") {
         clearPersistedStreamId(attachedConvRef.current);
@@ -969,8 +942,16 @@ export function useChat(
             (err as { error?: string }).error ?? `HTTP ${res.status}`,
           );
         }
-        const data = (await res.json()) as { stream_id: string };
+        const data = (await res.json()) as { stream_id: string; user_message_id?: number };
         streamId = data.stream_id;
+        if (data.user_message_id != null) {
+          const mid = data.user_message_id;
+          setBubbles((prev) =>
+            prev.map((b) =>
+              b.key === userBubble.key ? { ...b, msgId: mid } : b
+            )
+          );
+        }
       } catch (e) {
         updateStatus("error");
         setErrorMsg((e as Error).message ?? "发送失败，请重试");

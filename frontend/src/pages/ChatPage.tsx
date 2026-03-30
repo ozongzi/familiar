@@ -131,21 +131,32 @@ export function ChatPage() {
     return () => el.removeEventListener("scroll", onScroll);
   }, []);
 
-  // ── Auto-scroll: driven by ResizeObserver on content growth ────────────
+  // ── Auto-scroll: rAF loop while streaming, ResizeObserver otherwise ─────
   useEffect(() => {
     const el = messagesRef.current;
     if (!el) return;
-    const ro = new ResizeObserver(() => {
-      if (lockedRef.current) scrollToBottom("auto");
-    });
-    // Observe the scroll container itself (scrollHeight changes)
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [scrollToBottom]);
 
-  // Also scroll on status change (e.g. new message sent)
-  useEffect(() => {
-    if (lockedRef.current) scrollToBottom("auto");
+    if (status === "streaming" || status === "connecting") {
+      // During streaming, chase the bottom every animation frame so tokens
+      // are always visible without waiting for layout batching.
+      let rafId: number;
+      const tick = () => {
+        if (lockedRef.current) {
+          isProgrammaticScrollRef.current = true;
+          el.scrollTop = el.scrollHeight;
+        }
+        rafId = requestAnimationFrame(tick);
+      };
+      rafId = requestAnimationFrame(tick);
+      return () => cancelAnimationFrame(rafId);
+    } else {
+      // Idle: ResizeObserver is sufficient (content only grows on new messages).
+      const ro = new ResizeObserver(() => {
+        if (lockedRef.current) scrollToBottom("auto");
+      });
+      ro.observe(el);
+      return () => ro.disconnect();
+    }
   }, [status, scrollToBottom]);
 
   // ── Load history when switching to a real conversation ─────────────────
@@ -269,16 +280,20 @@ export function ChatPage() {
 
   const handleSend = useCallback(
     (text: string) => {
+      lockedRef.current = true;
       send(text);
+      scrollToBottom("auto");
     },
-    [send],
+    [send, scrollToBottom],
   );
 
   const handleInterrupt = useCallback(
     (text: string) => {
+      lockedRef.current = true;
       interrupt(text);
+      scrollToBottom("auto");
     },
-    [interrupt],
+    [interrupt, scrollToBottom],
   );
 
   const handleAbort = useCallback(() => {
