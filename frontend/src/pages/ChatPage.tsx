@@ -262,7 +262,7 @@ export function ChatPage() {
     (text: string) => {
       lockedRef.current = true;
       send(text);
-      scrollToBottom("auto");
+      scrollToBottom();
     },
     [send, scrollToBottom],
   );
@@ -271,7 +271,7 @@ export function ChatPage() {
     (text: string) => {
       lockedRef.current = true;
       interrupt(text);
-      scrollToBottom("auto");
+      scrollToBottom();
     },
     [interrupt, scrollToBottom],
   );
