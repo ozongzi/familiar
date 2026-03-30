@@ -97,18 +97,41 @@ export function ChatPage() {
   const messagesRef = useRef<HTMLDivElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
   const lockedRef = useRef(true);
-  // Set to true while a programmatic scroll is in progress so the scroll
-  // event handler doesn't immediately unlock when we move to the bottom.
-  const programmaticScrollRef = useRef(false);
+  const userScrollingRef = useRef(false);
 
-  // ── Scroll lock: sync scroll event, 40px threshold ───────────────────────
+  // ── Detect user scroll: pointer/touch down = user is scrolling ───────────
+  useEffect(() => {
+    const el = messagesRef.current;
+    if (!el) return;
+    const onDown = () => { userScrollingRef.current = true; };
+    const onUp = () => { userScrollingRef.current = false; };
+    el.addEventListener("pointerdown", onDown);
+    el.addEventListener("pointerup", onUp);
+    el.addEventListener("pointercancel", onUp);
+    el.addEventListener("touchstart", onDown, { passive: true });
+    el.addEventListener("touchend", onUp);
+    return () => {
+      el.removeEventListener("pointerdown", onDown);
+      el.removeEventListener("pointerup", onUp);
+      el.removeEventListener("pointercancel", onUp);
+      el.removeEventListener("touchstart", onDown);
+      el.removeEventListener("touchend", onUp);
+    };
+  }, []);
+
+  // ── Scroll lock via scroll event ─────────────────────────────────────────
   useEffect(() => {
     const el = messagesRef.current;
     if (!el) return;
     const onScroll = () => {
-      if (programmaticScrollRef.current) return;
-      const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
-      lockedRef.current = atBottom;
+      const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+      if (userScrollingRef.current) {
+        // User-driven scroll: always update lock state
+        lockedRef.current = atBottom;
+      } else if (atBottom) {
+        // Programmatic scroll reached bottom: re-lock
+        lockedRef.current = true;
+      }
     };
     el.addEventListener("scroll", onScroll, { passive: true });
     return () => el.removeEventListener("scroll", onScroll);
@@ -117,31 +140,24 @@ export function ChatPage() {
   const scrollToBottom = useCallback(() => {
     const el = messagesRef.current;
     if (!el) return;
-    programmaticScrollRef.current = true;
     el.scrollTop = el.scrollHeight;
-    // Allow the next user-scroll event through after the browser settles.
-    requestAnimationFrame(() => { programmaticScrollRef.current = false; });
   }, []);
 
-  // ── Auto-scroll while streaming ───────────────────────────────────────────
+  // ── Auto-scroll: MutationObserver on content changes ─────────────────────
+  // Only scrolls when locked. Never fires during user-initiated scrolls.
   useEffect(() => {
-    if (status !== "streaming" && status !== "connecting") return;
     const el = messagesRef.current;
     if (!el) return;
-    let rafId: number;
-    const tick = () => {
+    const mo = new MutationObserver(() => {
       if (lockedRef.current) {
-        programmaticScrollRef.current = true;
         el.scrollTop = el.scrollHeight;
-        requestAnimationFrame(() => { programmaticScrollRef.current = false; });
       }
-      rafId = requestAnimationFrame(tick);
-    };
-    rafId = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(rafId);
-  }, [status]);
+    });
+    mo.observe(el, { childList: true, subtree: true, characterData: true });
+    return () => mo.disconnect();
+  }, []);
 
-  // ── Auto-scroll on new idle content (e.g. history load) ──────────────────
+  // ── Scroll to bottom on history load / conversation switch ────────────────
   useEffect(() => {
     if (status === "streaming" || status === "connecting") return;
     if (lockedRef.current) scrollToBottom();
