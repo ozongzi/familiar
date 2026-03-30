@@ -62,15 +62,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       invoke("start_tunnel", { token: state.token, serverUrl }).catch((e) =>
         console.warn("[tunnel] start failed:", e),
       );
-      invoke("start_browser_tunnel", { token: state.token, serverUrl }).catch((e) =>
-        console.warn("[browser-tunnel] start failed:", e),
-      );
     } else {
       invoke("stop_tunnel").catch((e) =>
         console.warn("[tunnel] stop failed:", e),
-      );
-      invoke("stop_browser_tunnel").catch((e) =>
-        console.warn("[browser-tunnel] stop failed:", e),
       );
     }
   }, [state.token]);

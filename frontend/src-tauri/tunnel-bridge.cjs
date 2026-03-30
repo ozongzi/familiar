@@ -185,6 +185,20 @@ const stopLocalFns = localMcps.map((mcp) => {
   }
 });
 
+// ── Playwright MCP ────────────────────────────────────────────────────────────
+
+const PLAYWRIGHT_MCP_BIN = RESOURCE_DIR
+  ? path.join(RESOURCE_DIR, "mcp-bundle", "node_modules", "@playwright", "mcp", "cli.js")
+  : path.join(__dirname, "mcp-bundle", "node_modules", "@playwright", "mcp", "cli.js");
+
+if (fs.existsSync(PLAYWRIGHT_MCP_BIN)) {
+  log(`启动 Playwright MCP: ${PLAYWRIGHT_MCP_BIN}`);
+  // 60s timeout per tool call — browser ops can be slow
+  bridgeStdio("playwright", process.execPath, [PLAYWRIGHT_MCP_BIN], 60000);
+} else {
+  log(`未找到 Playwright MCP bin: ${PLAYWRIGHT_MCP_BIN}`);
+}
+
 // ── 退出清理 ──────────────────────────────────────────────────────────────────
 
 function shutdown() {
