@@ -21,6 +21,7 @@ use rmcp::{
 use serde_json::Value;
 use tokio::sync::Mutex;
 use uuid::Uuid;
+use agentix::Tool;
 
 use crate::{
     errors::AppError,
