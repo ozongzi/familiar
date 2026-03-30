@@ -173,7 +173,7 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
     // ── Build Request ─────────────────────────────────────────────────────
     let mut request = frontier_cfg.to_request();
     if let Some(prompt) = &system_prompt {
-        let rendered = shared_backend::prompt_template::render_prompt(
+        let rendered = crate::prompt_template::render_prompt(
             prompt,
             &[("USER_NAME", &user_name)],
         );
@@ -181,10 +181,19 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
     }
 
     // ── Load history from DB ──────────────────────────────────────────────
+    // Budget: 25k tokens. Drop oldest messages until we fit.
+    const HISTORY_TOKEN_BUDGET: usize = 25_000;
     let messages = match ctx.db.restore(ctx.conversation_id).await {
         Ok(h) => {
-            info!(conversation = %ctx.conversation_id, messages = h.len(), "restored history");
-            sanitize_history(h)
+            let mut h = sanitize_history(h);
+            let before = h.len();
+            agentix::truncate_to_token_budget(&mut h, HISTORY_TOKEN_BUDGET);
+            if h.len() < before {
+                info!(conversation = %ctx.conversation_id, dropped = before - h.len(), kept = h.len(), "history truncated to token budget");
+            } else {
+                info!(conversation = %ctx.conversation_id, messages = h.len(), "restored history");
+            }
+            h
         }
         Err(e) => {
             error!(conversation = %ctx.conversation_id, "failed to restore history: {e}");

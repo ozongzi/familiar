@@ -28,7 +28,7 @@ dependencies = [
  "async-trait",
  "eventsource-stream",
  "futures",
- "reqwest 0.13.2",
+ "reqwest",
  "rmcp",
  "schemars 0.8.22",
  "serde",
@@ -840,11 +840,10 @@ dependencies = [
  "getrandom 0.2.17",
  "glob",
  "pgvector",
- "reqwest 0.13.2",
+ "reqwest",
  "rmcp",
  "serde",
  "serde_json",
- "shared-backend",
  "sqlx",
  "tokio",
  "tower-http",
@@ -1277,7 +1276,6 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tower-service",
- "webpki-roots 1.0.6",
 ]
 
 [[package]]
@@ -2257,44 +2255,6 @@ checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
 
 [[package]]
 name = "reqwest"
-version = "0.12.28"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eddd3ca559203180a307f12d114c268abf583f59b03cb906fd0b3ff8646c1147"
-dependencies = [
- "base64 0.22.1",
- "bytes",
- "futures-core",
- "http",
- "http-body",
- "http-body-util",
- "hyper",
- "hyper-rustls",
- "hyper-util",
- "js-sys",
- "log",
- "percent-encoding",
- "pin-project-lite",
- "quinn",
- "rustls",
- "rustls-pki-types",
- "serde",
- "serde_json",
- "serde_urlencoded",
- "sync_wrapper",
- "tokio",
- "tokio-rustls",
- "tower",
- "tower-http",
- "tower-service",
- "url",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "web-sys",
- "webpki-roots 1.0.6",
-]
-
-[[package]]
-name = "reqwest"
 version = "0.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ab3f43e3283ab1488b624b44b0e988d0acea0b3214e694730a055cb6b2efa801"
@@ -2364,7 +2324,7 @@ dependencies = [
  "pastey",
  "pin-project-lite",
  "process-wrap",
- "reqwest 0.13.2",
+ "reqwest",
  "rmcp-macros",
  "schemars 1.2.1",
  "serde",
@@ -2764,28 +2724,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f40ca3c46823713e0d4209592e8d6e826aa57e928f09752619fc696c499637f6"
 dependencies = [
  "lazy_static",
-]
-
-[[package]]
-name = "shared-backend"
-version = "0.1.0"
-dependencies = [
- "agentix",
- "anyhow",
- "async-stream",
- "async-trait",
- "axum",
- "bcrypt",
- "chrono",
- "futures",
- "pgvector",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "sqlx",
- "tokio",
- "tracing",
- "uuid",
 ]
 
 [[package]]

@@ -9,7 +9,6 @@ path = "src/main.rs"
 
 [dependencies]
 agentix = { path = "../../../web/agentix/agentix", features = ["mcp"] }
-shared-backend = { path = "../../../web/shared-backend" }
 rmcp = { version = "1.1", features = ["client", "transport-async-rw"] }
 
 # Web

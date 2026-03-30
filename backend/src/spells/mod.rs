@@ -1,11 +1,15 @@
+mod history_spell;
 mod manage_mcp_spell;
+mod plan_spell;
+mod skill_spell;
+mod sourcegraph_spell;
 mod spawn_spell;
 mod ui_spells;
 
-use shared_backend::spells::history_spell::HistorySpell;
-use shared_backend::spells::plan_spell::PlanSpell;
-use shared_backend::spells::skill_spell::SkillSpell;
-use shared_backend::spells::sourcegraph_spell::search_code;
+use history_spell::HistorySpell;
+use plan_spell::PlanSpell;
+use skill_spell::SkillSpell;
+use sourcegraph_spell::search_code;
 
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;

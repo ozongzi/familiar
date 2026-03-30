@@ -3,6 +3,7 @@ mod config;
 mod db;
 mod embedding;
 mod errors;
+mod prompt_template;
 mod sandbox;
 mod spells;
 mod state;
