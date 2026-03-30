@@ -124,7 +124,7 @@ export function ChatPage() {
     const el = messagesRef.current;
     if (!el) return;
     const onScroll = () => {
-      const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+      const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 2;
       if (userScrollingRef.current) {
         // User-driven scroll: always update lock state
         lockedRef.current = atBottom;
