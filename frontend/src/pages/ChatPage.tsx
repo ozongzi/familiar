@@ -143,9 +143,9 @@ export function ChatPage() {
     el.scrollTop = el.scrollHeight;
   }, []);
 
-  // ── Auto-scroll: MutationObserver on content changes ─────────────────────
-  // Only scrolls when locked. Never fires during user-initiated scrolls.
+  // ── Auto-scroll: MutationObserver only while streaming ───────────────────
   useEffect(() => {
+    if (status !== "streaming" && status !== "connecting") return;
     const el = messagesRef.current;
     if (!el) return;
     const mo = new MutationObserver(() => {
@@ -153,9 +153,9 @@ export function ChatPage() {
         el.scrollTop = el.scrollHeight;
       }
     });
-    mo.observe(el, { childList: true, subtree: true, characterData: true });
+    mo.observe(el, { childList: true, subtree: true });
     return () => mo.disconnect();
-  }, []);
+  }, [status]);
 
   // ── Scroll to bottom on history load / conversation switch ────────────────
   useEffect(() => {
