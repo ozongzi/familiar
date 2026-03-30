@@ -95,62 +95,49 @@ export function ChatPage() {
   );
 
   const messagesRef = useRef<HTMLDivElement>(null);
+  const sentinelRef = useRef<HTMLDivElement>(null);
   const lockedRef = useRef(true);
-  // Track scrollTop set by rAF so scroll handler can ignore those events.
-  const rafScrollTopRef = useRef<number>(-1);
 
-  const scrollToBottom = useCallback((behavior: ScrollBehavior = "auto") => {
-    const el = messagesRef.current;
-    if (!el) return;
-    el.scrollTo({ top: el.scrollHeight, behavior });
+  // ── IntersectionObserver on bottom sentinel ───────────────────────────────
+  // sentinel visible → user is at bottom → lock. Hidden → user scrolled up → unlock.
+  useEffect(() => {
+    const sentinel = sentinelRef.current;
+    if (!sentinel) return;
+    const io = new IntersectionObserver(
+      ([entry]) => {
+        lockedRef.current = entry.isIntersecting;
+      },
+      { threshold: 0 },
+    );
+    io.observe(sentinel);
+    return () => io.disconnect();
   }, []);
 
-  // Detect user-initiated scroll up → unlock. Scroll back to bottom → re-lock.
+  const scrollToBottom = useCallback(() => {
+    sentinelRef.current?.scrollIntoView({ block: "end" });
+  }, []);
+
+  // ── Auto-scroll while streaming ───────────────────────────────────────────
   useEffect(() => {
+    if (status !== "streaming" && status !== "connecting") return;
     const el = messagesRef.current;
     if (!el) return;
-    const onScroll = () => {
-      // If this scroll matches what rAF just set, ignore it.
-      if (Math.abs(el.scrollTop - rafScrollTopRef.current) < 2) return;
-      const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-      if (atBottom) {
-        lockedRef.current = true;
-      } else {
-        lockedRef.current = false;
+    let rafId: number;
+    const tick = () => {
+      if (lockedRef.current) {
+        sentinelRef.current?.scrollIntoView({ block: "end" });
       }
-    };
-    el.addEventListener("scroll", onScroll, { passive: true });
-    return () => el.removeEventListener("scroll", onScroll);
-  }, []);
-
-  // ── Auto-scroll: rAF loop while streaming, ResizeObserver otherwise ─────
-  useEffect(() => {
-    const el = messagesRef.current;
-    if (!el) return;
-
-    if (status === "streaming" || status === "connecting") {
-      // During streaming, chase the bottom every animation frame so tokens
-      // are always visible without waiting for layout batching.
-      let rafId: number;
-      const tick = () => {
-        if (lockedRef.current) {
-          const target = el.scrollHeight - el.clientHeight;
-          rafScrollTopRef.current = target;
-          el.scrollTop = target;
-        }
-        rafId = requestAnimationFrame(tick);
-      };
       rafId = requestAnimationFrame(tick);
-      return () => cancelAnimationFrame(rafId);
-    } else {
-      // Idle: ResizeObserver is sufficient (content only grows on new messages).
-      const ro = new ResizeObserver(() => {
-        if (lockedRef.current) scrollToBottom("auto");
-      });
-      ro.observe(el);
-      return () => ro.disconnect();
-    }
-  }, [status, scrollToBottom]);
+    };
+    rafId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafId);
+  }, [status]);
+
+  // ── Auto-scroll on new idle content (e.g. history load) ──────────────────
+  useEffect(() => {
+    if (status === "streaming" || status === "connecting") return;
+    if (lockedRef.current) scrollToBottom();
+  }, [bubbles.length, status, scrollToBottom]);
 
   // ── Load history when switching to a real conversation ─────────────────
   useEffect(() => {
@@ -436,6 +423,8 @@ export function ChatPage() {
               ⚠️ {errorMsg}
             </div>
           )}
+
+          <div ref={sentinelRef} style={{ height: 1, flexShrink: 0 }} />
         </div>
 
         {/* Input — always enabled in draft mode */}
