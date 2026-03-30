@@ -127,51 +127,72 @@
 .editArea {
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 10px;
     width: 100%;
 }
 .editTextarea {
     width: 100%;
-    min-height: 60px;
-    resize: vertical;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 8px 10px;
+    min-height: 80px;
+    resize: none;
+    border: 1.5px solid var(--border);
+    border-radius: 12px;
+    padding: 12px 14px;
     font-size: 0.95em;
     font-family: inherit;
-    background: var(--bg-base);
+    line-height: 1.6;
+    background: var(--bg-elevated, var(--bg-base));
     color: var(--text-primary);
     outline: none;
     box-sizing: border-box;
+    transition: border-color 0.15s, box-shadow 0.15s;
+    field-sizing: content;
 }
 .editTextarea:focus {
     border-color: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent);
 }
 .editActions {
     display: flex;
-    gap: 6px;
+    gap: 8px;
     justify-content: flex-end;
+    align-items: center;
+}
+.editHint {
+    font-size: 0.78em;
+    color: var(--text-muted);
+    margin-right: auto;
 }
 .editConfirmBtn {
     background: var(--accent);
     color: #fff;
     border: none;
-    border-radius: 6px;
-    padding: 4px 14px;
-    font-size: 0.85em;
+    border-radius: 8px;
+    padding: 6px 18px;
+    font-size: 0.875em;
+    font-weight: 500;
     cursor: pointer;
+    transition: opacity 0.15s, transform 0.1s;
 }
 .editConfirmBtn:hover {
-    opacity: 0.85;
+    opacity: 0.88;
+}
+.editConfirmBtn:active {
+    transform: scale(0.97);
 }
 .editCancelBtn {
     background: none;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 4px 14px;
-    font-size: 0.85em;
+    border: 1.5px solid var(--border);
+    border-radius: 8px;
+    padding: 6px 14px;
+    font-size: 0.875em;
+    font-weight: 500;
     cursor: pointer;
     color: var(--text-secondary);
+    transition: border-color 0.15s, color 0.15s;
+}
+.editCancelBtn:hover {
+    border-color: var(--text-secondary);
+    color: var(--text-primary);
 }
 
 /* ─── Streaming cursor ───────────────────────────────────────────────────── */

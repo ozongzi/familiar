@@ -289,8 +289,9 @@ function TextChatBubble({
                   rows={3}
                 />
                 <div className={styles.editActions}>
-                  <button className={styles.editConfirmBtn} onClick={confirmEdit}>发送</button>
+                  <span className={styles.editHint}>Enter 发送 · Shift+Enter 换行 · Esc 取消</span>
                   <button className={styles.editCancelBtn} onClick={cancelEdit}>取消</button>
+                  <button className={styles.editConfirmBtn} onClick={confirmEdit}>发送</button>
                 </div>
               </div>
             ) : (
