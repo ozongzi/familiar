@@ -46,6 +46,19 @@ pub struct SpellDeps {
 
 /// Build the complete built-in spell bundle from the given dependencies.
 pub fn build_all_spells(deps: SpellDeps) -> impl agentix::Tool {
+    // Build the subagent tool bundle first (no SpawnSpell — avoids infinite recursion).
+    // SpawnSpell gets an Arc to this so its spawned sub-agents share the same tools.
+    let subagent_tools: Arc<dyn agentix::Tool> = Arc::new(
+        SkillSpell { pool: deps.pool.clone(), user_id: deps.user_id }
+            + search_code
+            + HistorySpell {
+                db: deps.db.clone(),
+                embedding: deps.embed.clone(),
+                conversation_id: deps.conversation_id,
+            }
+            + PlanSpell { pool: deps.pool.clone(), conversation_id: deps.conversation_id },
+    );
+
     SkillSpell {
             pool: deps.pool.clone(),
             user_id: deps.user_id,
@@ -61,6 +74,7 @@ pub fn build_all_spells(deps: SpellDeps) -> impl agentix::Tool {
             subagent_prompt: deps.subagent_prompt,
             broadcast_tx: deps.spawn_tx,
             abort_flag: Arc::clone(&deps.abort_flag),
+            tools: subagent_tools,
         }
         + HistorySpell {
             db: deps.db,

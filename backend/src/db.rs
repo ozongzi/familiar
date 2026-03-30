@@ -136,16 +136,6 @@ impl Db {
         Ok(())
     }
 
-    pub async fn seal_all_streaming_for_job(&self, job_id: Uuid) -> anyhow::Result<()> {
-        sqlx::query(
-            "UPDATE messages SET streaming = false WHERE job_id = $1 AND streaming = true",
-        )
-        .bind(job_id)
-        .execute(&self.pool)
-        .await?;
-        Ok(())
-    }
-
     pub async fn append(
         &self,
         conversation_id: Uuid,

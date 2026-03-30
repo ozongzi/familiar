@@ -181,18 +181,10 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
     }
 
     // ── Load history from DB ──────────────────────────────────────────────
-    // Budget: 25k tokens. Drop oldest messages until we fit.
-    const HISTORY_TOKEN_BUDGET: usize = 25_000;
     let messages = match ctx.db.restore(ctx.conversation_id).await {
         Ok(h) => {
-            let mut h = sanitize_history(h);
-            let before = h.len();
-            agentix::truncate_to_token_budget(&mut h, HISTORY_TOKEN_BUDGET);
-            if h.len() < before {
-                info!(conversation = %ctx.conversation_id, dropped = before - h.len(), kept = h.len(), "history truncated to token budget");
-            } else {
-                info!(conversation = %ctx.conversation_id, messages = h.len(), "restored history");
-            }
+            let h = sanitize_history(h);
+            info!(conversation = %ctx.conversation_id, messages = h.len(), "restored history");
             h
         }
         Err(e) => {
@@ -252,6 +244,8 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
 
 // ── Generation loop ───────────────────────────────────────────────────────────
 
+const HISTORY_TOKEN_BUDGET: usize = 25_000;
+
 async fn generation_loop(
     ctx: &WorkerContext,
     http: &reqwest::Client,
@@ -267,6 +261,13 @@ async fn generation_loop(
             emit(ctx, json!({"type": "aborted"})).await;
             set_job_status(&ctx.pool, ctx.job_id, "aborted", None).await;
             return Ok(());
+        }
+
+        // ── Truncate history to token budget ──────────────────────────────
+        let before = messages.len();
+        agentix::truncate_to_token_budget(&mut messages, HISTORY_TOKEN_BUDGET);
+        if messages.len() < before {
+            info!(conversation = %ctx.conversation_id, dropped = before - messages.len(), kept = messages.len(), "history truncated");
         }
 
         // ── Open streaming message row in DB ──────────────────────────────

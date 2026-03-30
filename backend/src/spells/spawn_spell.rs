@@ -4,7 +4,7 @@ use std::sync::atomic::AtomicBool;
 use crate::config::ModelConfig;
 use crate::config::Provider;
 
-use agentix::{LlmEvent, Message, tool};
+use agentix::{AgentEvent, Message, Tool, tool};
 use serde_json::json;
 
 pub struct SpawnSpell {
@@ -12,6 +12,7 @@ pub struct SpawnSpell {
     pub subagent_prompt: Option<String>,
     pub broadcast_tx: tokio::sync::broadcast::Sender<String>,
     pub abort_flag: Arc<AtomicBool>,
+    pub tools: Arc<dyn Tool>,
 }
 
 #[tool]
@@ -41,42 +42,43 @@ impl Tool for SpawnSpell {
         if let Some(prompt) = &self.subagent_prompt {
             request = request.system_prompt(prompt.clone());
         }
-        request = request.message(Message::User(vec![agentix::UserContent::Text(goal)]));
 
         let http = reqwest::Client::new();
-        let mut stream = match request.stream(&http).await {
-            Ok(s) => s,
-            Err(e) => return json!({ "error": format!("子 Agent 启动失败: {e}") }),
-        };
-
         let abort_flag = Arc::clone(&self.abort_flag);
-        let mut result = String::new();
 
-        while let Some(event) = stream.next().await {
+        let history = vec![Message::User(vec![agentix::UserContent::Text(goal)])];
+        let mut result = String::new();
+        let mut agent_stream = agentix::agent(
+            Arc::clone(&self.tools),
+            http,
+            request,
+            history,
+            Some(25_000),
+        );
+
+        let bcast = |v: serde_json::Value| { let _ = self.broadcast_tx.send(v.to_string()); };
+
+        while let Some(event) = agent_stream.next().await {
             if abort_flag.load(std::sync::atomic::Ordering::Acquire) {
                 return json!({ "error": "任务被用户中断" });
             }
-
             match event {
-                LlmEvent::Token(t) => {
+                AgentEvent::Token(t) => {
                     result.push_str(&t);
-                    let _ = self.broadcast_tx.send(
-                        json!({"type": "token", "content": t, "source": "spawn"}).to_string(),
-                    );
+                    bcast(json!({"type": "token", "content": t, "source": "spawn"}));
                 }
-                LlmEvent::ToolCallChunk(c) => {
-                    let _ = self.broadcast_tx.send(
-                        json!({"type": "tool_call", "id": c.id, "name": c.name, "delta": c.delta, "source": "spawn"}).to_string(),
-                    );
-                }
-                LlmEvent::Reasoning(t) => {
-                    let _ = self.broadcast_tx.send(
-                        json!({"type": "reasoning_token", "content": t, "source": "spawn"}).to_string(),
-                    );
-                }
-                LlmEvent::Error(e) => return json!({ "error": format!("子 Agent 错误: {e}") }),
-                LlmEvent::Done => break,
-                _ => {}
+                AgentEvent::Reasoning(t) =>
+                    bcast(json!({"type": "reasoning_token", "content": t, "source": "spawn"})),
+                AgentEvent::ToolCallChunk(c) =>
+                    bcast(json!({"type": "tool_call", "id": c.id, "name": c.name, "delta": c.delta, "source": "spawn"})),
+                AgentEvent::ToolCallStart(tc) =>
+                    bcast(json!({"type": "tool_call_complete", "id": tc.id, "name": tc.name, "source": "spawn"})),
+                AgentEvent::ToolProgress { id, name, progress } =>
+                    bcast(json!({"type": "tool_progress", "id": id, "name": name, "progress": progress, "source": "spawn"})),
+                AgentEvent::ToolResult { id, name, content } =>
+                    bcast(json!({"type": "tool_result", "id": id, "name": name, "result": content, "source": "spawn"})),
+                AgentEvent::Error(e) => return json!({ "error": format!("子 Agent 错误: {e}") }),
+                AgentEvent::Warning(_) | AgentEvent::Usage(_) | AgentEvent::Done(_) => {}
             }
         }
 
