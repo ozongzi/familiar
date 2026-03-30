@@ -174,11 +174,8 @@ fn load_local_mcps(app: &AppHandle) -> serde_json::Value {
         .unwrap_or(serde_json::Value::Array(vec![]))
 }
 
-// ── Browser tunnel (chromiumoxide MCP over WS) ────────────────────────────────
+// ── Browser tunnel (chromiumoxide via agentix McpService over WS) ────────────
 
-/// Start the Rust-native browser MCP tunnel.
-/// Connects to /api/tunnel/browser via WebSocket and speaks MCP JSON-RPC,
-/// dispatching tool calls to chromiumoxide.
 #[tauri::command]
 #[cfg(not(target_os = "android"))]
 async fn start_browser_tunnel(
@@ -186,7 +183,6 @@ async fn start_browser_tunnel(
     server_url: String,
     state: State<'_, SharedBrowserTunnelState>,
 ) -> Result<(), String> {
-    // Stop any existing tunnel first
     {
         let mut s = state.lock().unwrap();
         if let Some(tx) = s.stop_tx.take() {
@@ -218,139 +214,113 @@ async fn run_browser_tunnel(
 ) {
     use tokio_tungstenite::connect_async;
     use tokio_tungstenite::tungstenite::client::IntoClientRequest;
-    use futures::{SinkExt, StreamExt};
+    use futures::StreamExt;
 
-    let ws_base = server_url.replacen("https://", "wss://", 1).replacen("http://", "ws://", 1);
-    let ws_base = ws_base.trim_end_matches('/');
-    let url = format!("{ws_base}/api/tunnel");
-
-    log::info!("[browser-tunnel] 连接: {url}");
-
-    let mut request = url.as_str().into_client_request().unwrap();
-    request.headers_mut().insert(
-        "Authorization",
-        format!("Bearer {token}").parse().unwrap(),
-    );
-
-    let (ws_stream, _) = match connect_async(request).await {
-        Ok(v) => v,
-        Err(e) => {
-            log::error!("[browser-tunnel] 连接失败: {e}");
-            return;
-        }
-    };
-
-    log::info!("[browser-tunnel] 已连接");
-
-    let (mut ws_tx, mut ws_rx) = ws_stream.split();
-
+    // Reconnect loop
     loop {
-        tokio::select! {
-            _ = &mut stop_rx => {
-                log::info!("[browser-tunnel] 停止");
-                break;
-            }
-            msg = ws_rx.next() => {
-                let msg = match msg {
-                    Some(Ok(m)) => m,
-                    _ => { log::info!("[browser-tunnel] 连接断开"); break; }
-                };
-                let text = match msg.to_text() {
-                    Ok(t) => t.to_string(),
-                    Err(_) => continue,
-                };
+        if stop_rx.try_recv().is_ok() { return; }
 
-                // Parse JSON-RPC request
-                let req: serde_json::Value = match serde_json::from_str(&text) {
-                    Ok(v) => v,
-                    Err(_) => continue,
-                };
+        let ws_base = server_url.replacen("https://", "wss://", 1).replacen("http://", "ws://", 1);
+        let ws_base = ws_base.trim_end_matches('/');
+        let url = format!("{ws_base}/api/tunnel");
 
-                // Handle ping
-                if req.get("type").and_then(|v| v.as_str()) == Some("ping") {
-                    let _ = ws_tx.send(tokio_tungstenite::tungstenite::Message::Text(
-                        "{\"type\":\"pong\"}".into()
-                    )).await;
-                    continue;
+        let mut request = match url.as_str().into_client_request() {
+            Ok(r) => r,
+            Err(e) => { log::error!("[browser-tunnel] 构建请求失败: {e}"); return; }
+        };
+        request.headers_mut().insert(
+            "Authorization",
+            format!("Bearer {token}").parse().unwrap(),
+        );
+
+        let ws_stream = match connect_async(request).await {
+            Ok((s, _)) => s,
+            Err(e) => {
+                log::warn!("[browser-tunnel] 连接失败: {e}，3秒后重试");
+                tokio::select! {
+                    _ = &mut stop_rx => return,
+                    _ = tokio::time::sleep(std::time::Duration::from_secs(3)) => {}
                 }
+                continue;
+            }
+        };
+        log::info!("[browser-tunnel] 已连接 {url}");
 
-                let id = req.get("id").cloned().unwrap_or(serde_json::Value::Null);
-                let method = req.get("method").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                let params = req.get("params").cloned().unwrap_or(serde_json::Value::Object(Default::default()));
+        // Wrap WS into (rx, tx) that rmcp's serve_server can use.
+        // We use a channel pair: rmcp writes to a channel, we forward to WS;
+        // we read WS frames and forward to rmcp via a channel.
+        let (ws_sink, ws_source) = ws_stream.split();
 
-                let browser_state = browser_state.clone();
-                let response = handle_mcp_request(&browser_state, &method, &params, id).await;
+        // Build agentix McpService with BrowserTools
+        let tools = agentix::ToolBundle::new() + browser::BrowserTools { state: browser_state.clone() };
+        let service = agentix::McpService::new(tools, "familiar-browser".into(), "1.0.0".into());
 
-                let resp_text = serde_json::to_string(&response).unwrap_or_default();
-                if let Err(e) = ws_tx.send(tokio_tungstenite::tungstenite::Message::Text(resp_text.into())).await {
-                    log::warn!("[browser-tunnel] 发送响应失败: {e}");
+        // Adapt WS frames into rmcp transports via async read/write on byte streams.
+        // rmcp's transport-io expects AsyncRead + AsyncWrite; we use a pipe
+        // with a codec task bridging WS ↔ pipe.
+        let (client_read, mut server_write) = tokio::io::duplex(64 * 1024);
+        let (server_read, client_write) = tokio::io::duplex(64 * 1024);
+
+        // WS → server_write (frames become newline-delimited JSON)
+        let ws_to_pipe = tokio::spawn(async move {
+            use futures::StreamExt;
+            use tokio::io::AsyncWriteExt;
+            let mut ws_source = ws_source;
+            while let Some(frame) = ws_source.next().await {
+                match frame {
+                    Ok(tokio_tungstenite::tungstenite::Message::Text(t)) => {
+                        // Skip ping frames
+                        if t.contains("\"type\":\"ping\"") { continue; }
+                        let line = format!("{}\n", t.trim());
+                        if server_write.write_all(line.as_bytes()).await.is_err() { break; }
+                    }
+                    Ok(tokio_tungstenite::tungstenite::Message::Close(_)) => break,
+                    Err(_) => break,
+                    _ => {}
+                }
+            }
+        });
+
+        // client_read → WS sink
+        let ws_from_pipe = tokio::spawn(async move {
+            use tokio::io::AsyncBufReadExt;
+            use futures::SinkExt;
+            let reader = tokio::io::BufReader::new(client_read);
+            let mut lines = reader.lines();
+            let mut ws_sink = ws_sink;
+            while let Ok(Some(line)) = lines.next_line().await {
+                if line.trim().is_empty() { continue; }
+                if ws_sink.send(tokio_tungstenite::tungstenite::Message::Text(line)).await.is_err() {
                     break;
                 }
             }
-        }
-    }
-}
+        });
 
-#[cfg(not(target_os = "android"))]
-async fn handle_mcp_request(
-    browser_state: &browser::SharedBrowserState,
-    method: &str,
-    params: &serde_json::Value,
-    id: serde_json::Value,
-) -> serde_json::Value {
-    use serde_json::json;
+        // Run rmcp server on the pipe transport.
+        // (AsyncRead, AsyncWrite) implements IntoTransport via transport-async-rw feature.
+        let serve = async move {
+            match rmcp::service::serve_server(service, (server_read, client_write)).await {
+                Ok(running) => { let _ = running.waiting().await; }
+                Err(e) => { log::error!("[browser-tunnel] rmcp serve 失败: {e}"); }
+            }
+        };
 
-    match method {
-        "initialize" => {
-            json!({
-                "jsonrpc": "2.0",
-                "id": id,
-                "result": {
-                    "protocolVersion": "2024-11-05",
-                    "capabilities": { "tools": {} },
-                    "serverInfo": { "name": "familiar-browser", "version": "1.0.0" }
-                }
-            })
+        tokio::select! {
+            _ = &mut stop_rx => {
+                ws_to_pipe.abort();
+                ws_from_pipe.abort();
+                return;
+            }
+            _ = serve => {
+                ws_to_pipe.abort();
+                ws_from_pipe.abort();
+            }
         }
-        "tools/list" => {
-            json!({
-                "jsonrpc": "2.0",
-                "id": id,
-                "result": { "tools": browser::tool_definitions() }
-            })
-        }
-        "tools/call" => {
-            let tool_name = params.get("name").and_then(|v| v.as_str()).unwrap_or("");
-            let args = params.get("arguments").cloned().unwrap_or(serde_json::Value::Object(Default::default()));
-            let result = browser::dispatch(browser_state, tool_name, &args).await;
-            // Format result as MCP content
-            let content = if let Some(err) = result.get("error") {
-                json!([{"type": "text", "text": err.as_str().unwrap_or("error")}])
-            } else if result.get("type").and_then(|v| v.as_str()) == Some("image") {
-                json!([{
-                    "type": "image",
-                    "data": result["data"],
-                    "mimeType": result["mimeType"]
-                }])
-            } else {
-                let text = serde_json::to_string_pretty(&result).unwrap_or_default();
-                json!([{"type": "text", "text": text}])
-            };
-            json!({
-                "jsonrpc": "2.0",
-                "id": id,
-                "result": { "content": content }
-            })
-        }
-        "notifications/initialized" | "ping" => {
-            json!({ "jsonrpc": "2.0", "id": id, "result": {} })
-        }
-        _ => {
-            json!({
-                "jsonrpc": "2.0",
-                "id": id,
-                "error": { "code": -32601, "message": format!("Method not found: {method}") }
-            })
+
+        log::info!("[browser-tunnel] 连接断开，3秒后重连");
+        tokio::select! {
+            _ = &mut stop_rx => return,
+            _ = tokio::time::sleep(std::time::Duration::from_secs(3)) => {}
         }
     }
 }

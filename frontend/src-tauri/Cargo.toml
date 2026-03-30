@@ -31,3 +31,6 @@ base64 = "0.22"
 futures = "0.3"
 tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
 url = "2"
+agentix = { path = "../../../agentix/agentix", features = ["mcp-server"] }
+# ^ local path to get pub McpService; switch back to version = "0.9.x" after next publish
+rmcp = { version = "1.1", features = ["server", "transport-async-rw"] }
