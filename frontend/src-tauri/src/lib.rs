@@ -255,24 +255,26 @@ async fn run_browser_tunnel(
         let tools = agentix::ToolBundle::new() + browser::BrowserTools { state: browser_state.clone() };
         let service = agentix::McpService::new(tools, "familiar-browser".into(), "1.0.0".into());
 
-        // Adapt WS frames into rmcp transports via async read/write on byte streams.
-        // rmcp's transport-io expects AsyncRead + AsyncWrite; we use a pipe
-        // with a codec task bridging WS ↔ pipe.
-        let (client_read, mut server_write) = tokio::io::duplex(64 * 1024);
-        let (server_read, client_write) = tokio::io::duplex(64 * 1024);
+        // Bridge WS ↔ rmcp via a single duplex pipe.
+        // rmcp holds one end (rmcp_io); we hold the other (bridge_io) and
+        // forward between it and the WS connection.
+        //
+        // Layout:
+        //   WS ──text──► bridge_io.write ──► rmcp_io.read   (rmcp receives)
+        //   WS ◄──text── bridge_io.read  ◄── rmcp_io.write  (rmcp sends)
+        let (rmcp_io, bridge_io) = tokio::io::duplex(64 * 1024);
+        let (bridge_read, mut bridge_write) = tokio::io::split(bridge_io);
 
-        // WS → server_write (frames become newline-delimited JSON)
-        let ws_to_pipe = tokio::spawn(async move {
-            use futures::StreamExt;
+        // WS → bridge_write  (incoming MCP messages, newline-delimited for rmcp codec)
+        let ws_to_bridge = tokio::spawn(async move {
             use tokio::io::AsyncWriteExt;
             let mut ws_source = ws_source;
             while let Some(frame) = ws_source.next().await {
                 match frame {
                     Ok(tokio_tungstenite::tungstenite::Message::Text(t)) => {
-                        // Skip ping frames
                         if t.contains("\"type\":\"ping\"") { continue; }
                         let line = format!("{}\n", t.trim());
-                        if server_write.write_all(line.as_bytes()).await.is_err() { break; }
+                        if bridge_write.write_all(line.as_bytes()).await.is_err() { break; }
                     }
                     Ok(tokio_tungstenite::tungstenite::Message::Close(_)) => break,
                     Err(_) => break,
@@ -281,11 +283,11 @@ async fn run_browser_tunnel(
             }
         });
 
-        // client_read → WS sink
-        let ws_from_pipe = tokio::spawn(async move {
+        // bridge_read → WS  (outgoing MCP responses)
+        let bridge_to_ws = tokio::spawn(async move {
             use tokio::io::AsyncBufReadExt;
             use futures::SinkExt;
-            let reader = tokio::io::BufReader::new(client_read);
+            let reader = tokio::io::BufReader::new(bridge_read);
             let mut lines = reader.lines();
             let mut ws_sink = ws_sink;
             while let Ok(Some(line)) = lines.next_line().await {
@@ -296,10 +298,9 @@ async fn run_browser_tunnel(
             }
         });
 
-        // Run rmcp server on the pipe transport.
-        // (AsyncRead, AsyncWrite) implements IntoTransport via transport-async-rw feature.
+        // Run rmcp server — it reads/writes rmcp_io (the other half of the duplex)
         let serve = async move {
-            match rmcp::service::serve_server(service, (server_read, client_write)).await {
+            match rmcp::service::serve_server(service, rmcp_io).await {
                 Ok(running) => { let _ = running.waiting().await; }
                 Err(e) => { log::error!("[browser-tunnel] rmcp serve 失败: {e}"); }
             }
@@ -307,13 +308,13 @@ async fn run_browser_tunnel(
 
         tokio::select! {
             _ = &mut stop_rx => {
-                ws_to_pipe.abort();
-                ws_from_pipe.abort();
+                ws_to_bridge.abort();
+                bridge_to_ws.abort();
                 return;
             }
             _ = serve => {
-                ws_to_pipe.abort();
-                ws_from_pipe.abort();
+                ws_to_bridge.abort();
+                bridge_to_ws.abort();
             }
         }
 

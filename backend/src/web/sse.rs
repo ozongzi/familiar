@@ -399,11 +399,25 @@ pub async fn branch_handler(
     .map_err(|e| AppError::internal(&e.to_string()))?
     .flatten();
 
-    let branch_tip = parent_id.unwrap_or(body.message_id);
-    state.db.branch(conversation_id, branch_tip).await
-        .map_err(|e| AppError::internal(&e.to_string()))?;
+    // When the edited message is the root (parent_id IS NULL), reset
+    // active_message_id to NULL so the next insert becomes a new root node.
+    // Otherwise point at the parent so the new message threads correctly.
+    match parent_id {
+        Some(pid) => {
+            state.db.branch(conversation_id, pid).await
+                .map_err(|e| AppError::internal(&e.to_string()))?;
+        }
+        None => {
+            sqlx::query(
+                "UPDATE conversations SET active_message_id = NULL WHERE id = $1"
+            )
+            .bind(conversation_id)
+            .execute(&state.pool)
+            .await
+            .map_err(|e| AppError::internal(&e.to_string()))?;
+        }
+    }
 
-    // No in-memory state to clear — next worker will load fresh history from DB.
     Ok(StatusCode::OK)
 }
 
