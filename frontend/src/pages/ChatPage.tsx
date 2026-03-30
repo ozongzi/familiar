@@ -97,24 +97,30 @@ export function ChatPage() {
   const messagesRef = useRef<HTMLDivElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
   const lockedRef = useRef(true);
+  // Set to true while a programmatic scroll is in progress so the scroll
+  // event handler doesn't immediately unlock when we move to the bottom.
+  const programmaticScrollRef = useRef(false);
 
-  // ── IntersectionObserver on bottom sentinel ───────────────────────────────
-  // sentinel visible → user is at bottom → lock. Hidden → user scrolled up → unlock.
+  // ── Scroll lock: sync scroll event, 40px threshold ───────────────────────
   useEffect(() => {
-    const sentinel = sentinelRef.current;
-    if (!sentinel) return;
-    const io = new IntersectionObserver(
-      ([entry]) => {
-        lockedRef.current = entry.isIntersecting;
-      },
-      { threshold: 0 },
-    );
-    io.observe(sentinel);
-    return () => io.disconnect();
+    const el = messagesRef.current;
+    if (!el) return;
+    const onScroll = () => {
+      if (programmaticScrollRef.current) return;
+      const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+      lockedRef.current = atBottom;
+    };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
   }, []);
 
   const scrollToBottom = useCallback(() => {
-    sentinelRef.current?.scrollIntoView({ block: "end" });
+    const el = messagesRef.current;
+    if (!el) return;
+    programmaticScrollRef.current = true;
+    el.scrollTop = el.scrollHeight;
+    // Allow the next user-scroll event through after the browser settles.
+    requestAnimationFrame(() => { programmaticScrollRef.current = false; });
   }, []);
 
   // ── Auto-scroll while streaming ───────────────────────────────────────────
@@ -125,7 +131,9 @@ export function ChatPage() {
     let rafId: number;
     const tick = () => {
       if (lockedRef.current) {
-        sentinelRef.current?.scrollIntoView({ block: "end" });
+        programmaticScrollRef.current = true;
+        el.scrollTop = el.scrollHeight;
+        requestAnimationFrame(() => { programmaticScrollRef.current = false; });
       }
       rafId = requestAnimationFrame(tick);
     };

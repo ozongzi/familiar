@@ -436,14 +436,30 @@ async fn generation_loop(
             let mut result_val = json!(null);
             let mut aborted_during_tool = false;
 
+            // Poll for abort every 500 ms concurrently with the tool stream.
+            // Using a separate async block ensures the abort check races the
+            // tool future properly even when tool_stream.next() never resolves.
+            let abort_poll = async {
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                    if check_stop_reason(&ctx.pool, ctx.job_id).await.is_some() {
+                        return;
+                    }
+                }
+            };
+            tokio::pin!(abort_poll);
+
             loop {
                 tokio::select! {
+                    biased;
+                    _ = &mut abort_poll => {
+                        aborted_during_tool = true;
+                        break;
+                    }
                     output = tool_stream.next() => {
                         match output {
                             None => break,
                             Some(ToolOutput::Progress(p)) => {
-                                // SpawnSpell yields JSON events with source="spawn" — emit them
-                                // directly so the frontend receives them as first-class events.
                                 let parsed = serde_json::from_str::<Value>(&p).ok();
                                 let is_spawn = parsed.as_ref()
                                     .and_then(|v| v.get("source"))
@@ -462,12 +478,6 @@ async fn generation_loop(
                                 result_val = v;
                             }
                         }
-                    }
-                    _ = async {
-                        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                    }, if check_stop_reason(&ctx.pool, ctx.job_id).await.is_some() => {
-                        aborted_during_tool = true;
-                        break;
                     }
                 }
             }
