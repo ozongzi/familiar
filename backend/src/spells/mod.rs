@@ -51,7 +51,13 @@ pub struct SpellDeps {
 pub fn build_all_spells(deps: SpellDeps) -> impl agentix::Tool {
     // Build the subagent tool bundle first (no SpawnSpell — avoids infinite recursion).
     // SpawnSpell gets an Arc to this so its spawned sub-agents share the same tools.
-    let subagent_tools: Arc<dyn agentix::Tool> = Arc::new(
+    let subagent_tavily: Option<TavilySpell> = deps.tavily_api_key.as_deref().map(|k| TavilySpell {
+        api_key: k.to_string(),
+        http: deps.http.clone(),
+    });
+
+    let mut subagent_bundle = agentix::ToolBundle::new();
+    subagent_bundle.push(
         SkillSpell { pool: deps.pool.clone(), user_id: deps.user_id }
             + search_code
             + HistorySpell {
@@ -61,6 +67,10 @@ pub fn build_all_spells(deps: SpellDeps) -> impl agentix::Tool {
             }
             + PlanSpell { pool: deps.pool.clone(), conversation_id: deps.conversation_id },
     );
+    if let Some(t) = subagent_tavily {
+        subagent_bundle.push(t);
+    }
+    let subagent_tools: Arc<dyn agentix::Tool> = Arc::new(subagent_bundle);
 
     let bundle = SkillSpell {
             pool: deps.pool.clone(),
