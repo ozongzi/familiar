@@ -10,15 +10,15 @@
 }
 
 .panel {
-    background: var(--bg-secondary, #1e1e1e);
-    border: 1px solid var(--border, #333);
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
     border-radius: 12px;
     width: min(640px, 92vw);
     max-height: 70vh;
     display: flex;
     flex-direction: column;
     overflow: hidden;
-    box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
+    box-shadow: 0 24px 64px rgba(0, 0, 0, 0.18);
 }
 
 .inputRow {
@@ -26,8 +26,8 @@
     align-items: center;
     gap: 10px;
     padding: 14px 16px;
-    border-bottom: 1px solid var(--border, #333);
-    color: var(--text-muted, #888);
+    border-bottom: 1px solid var(--border-subtle);
+    color: var(--text-muted);
     flex-shrink: 0;
 }
 
@@ -37,18 +37,18 @@
     border: none;
     outline: none;
     font-size: 1rem;
-    color: var(--text-primary, #e0e0e0);
-    caret-color: var(--accent, #7c7cff);
+    color: var(--text-primary);
+    caret-color: var(--accent);
 }
 
 .input::placeholder {
-    color: var(--text-muted, #666);
+    color: var(--text-muted);
 }
 
 .clearBtn {
     background: none;
     border: none;
-    color: var(--text-muted, #888);
+    color: var(--text-muted);
     cursor: pointer;
     font-size: 1.1rem;
     padding: 2px 6px;
@@ -57,7 +57,7 @@
 }
 
 .clearBtn:hover {
-    color: var(--text-primary, #e0e0e0);
+    color: var(--text-primary);
 }
 
 .results {
@@ -68,7 +68,7 @@
 
 .hint {
     text-align: center;
-    color: var(--text-muted, #666);
+    color: var(--text-muted);
     font-size: 0.875rem;
     padding: 24px 16px;
     margin: 0;
@@ -87,7 +87,7 @@
 }
 
 .resultItem:hover {
-    background: var(--bg-hover, rgba(255, 255, 255, 0.06));
+    background: var(--bg-hover);
 }
 
 .resultMeta {
@@ -100,7 +100,7 @@
 .convName {
     font-size: 0.78rem;
     font-weight: 600;
-    color: var(--text-secondary, #aaa);
+    color: var(--text-secondary);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -109,8 +109,8 @@
 
 .role {
     font-size: 0.72rem;
-    color: var(--text-muted, #666);
-    background: var(--bg-tertiary, rgba(255,255,255,0.05));
+    color: var(--text-muted);
+    background: var(--bg-surface);
     border-radius: 4px;
     padding: 1px 6px;
     flex-shrink: 0;
@@ -118,7 +118,7 @@
 
 .snippet {
     font-size: 0.875rem;
-    color: var(--text-primary, #d0d0d0);
+    color: var(--text-secondary);
     line-height: 1.5;
     margin: 0;
     white-space: nowrap;
