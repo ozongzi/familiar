@@ -1,5 +1,6 @@
 mod history_spell;
 mod manage_mcp_spell;
+mod memory_spell;
 mod plan_spell;
 mod skill_spell;
 mod sourcegraph_spell;
@@ -8,6 +9,8 @@ mod tavily_spell;
 mod ui_spells;
 
 use history_spell::HistorySpell;
+use memory_spell::MemorySpell;
+pub use memory_spell::load_memories_for_prompt;
 use plan_spell::PlanSpell;
 use skill_spell::SkillSpell;
 use sourcegraph_spell::search_code;
@@ -87,8 +90,12 @@ pub fn build_all_spells(deps: SpellDeps) -> impl agentix::Tool {
             catalog: deps.mcp_catalog,
         }
         + PlanSpell {
-            pool: deps.pool,
+            pool: deps.pool.clone(),
             conversation_id: deps.conversation_id,
+        }
+        + MemorySpell {
+            pool: deps.pool,
+            user_id: deps.user_id,
         };
 
     let mut tb = agentix::ToolBundle::new();

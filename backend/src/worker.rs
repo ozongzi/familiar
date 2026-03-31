@@ -217,6 +217,11 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
         system_prompt = Some(system_prompt.unwrap_or_default() + &plan_section);
     }
 
+    // ── Append memories to system prompt ─────────────────────────────────
+    if let Some(mem_section) = crate::spells::load_memories_for_prompt(&ctx.pool, ctx.user_id).await {
+        system_prompt = Some(system_prompt.unwrap_or_default() + &mem_section);
+    }
+
     // ── Build Request ─────────────────────────────────────────────────────
     let mut request = frontier_cfg.to_request();
     if let Some(prompt) = &system_prompt {
