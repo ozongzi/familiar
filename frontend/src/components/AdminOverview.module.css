@@ -1,0 +1,219 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  width: 100%;
+}
+
+/* ── Stat cards ─────────────────────────────────────────────────────────── */
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+}
+
+@media (max-width: 800px) {
+  .cards { grid-template-columns: repeat(2, 1fr); }
+}
+
+.statCard {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg, 12px);
+  padding: 20px 24px;
+}
+
+.statCardClickable {
+  cursor: pointer;
+  transition: border-color 150ms, box-shadow 150ms;
+}
+.statCardClickable:hover {
+  border-color: var(--accent, #6366f1);
+  box-shadow: 0 0 0 3px var(--accent-subtle, rgba(99,102,241,0.08));
+}
+
+.statValue {
+  font-size: 28px;
+  font-weight: 600;
+  letter-spacing: -0.5px;
+  color: var(--text-primary);
+  line-height: 1;
+  margin-bottom: 6px;
+}
+
+.statLabel {
+  font-size: 13px;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.statSub {
+  font-size: 11px;
+  color: var(--text-tertiary, var(--text-muted));
+  margin-top: 2px;
+}
+
+/* ── Chart (full width) ──────────────────────────────────────────────────── */
+
+.chartCard {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg, 12px);
+  padding: 20px 24px;
+}
+
+.chartWrap {
+  height: 200px;
+  position: relative;
+}
+
+/* ── Users + convs row ───────────────────────────────────────────────────── */
+
+.row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+@media (max-width: 900px) {
+  .row { grid-template-columns: 1fr; }
+}
+
+.tableCard {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg, 12px);
+  padding: 20px 24px;
+  overflow: auto;
+}
+
+/* ── Shared card header ──────────────────────────────────────────────────── */
+
+.cardHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 16px;
+}
+
+.filterTag {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0;
+  background: var(--accent-subtle, rgba(99,102,241,0.1));
+  color: var(--accent, #6366f1);
+}
+
+/* ── Table ───────────────────────────────────────────────────────────────── */
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.table th {
+  text-align: left;
+  color: var(--text-tertiary, var(--text-muted));
+  font-weight: 500;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  padding: 0 8px 8px 0;
+  border-bottom: 1px solid var(--border-subtle);
+  white-space: nowrap;
+}
+
+.table td {
+  padding: 8px 8px 0 0;
+  color: var(--text-secondary);
+  vertical-align: top;
+}
+
+.table tbody tr:hover td {
+  color: var(--text-primary);
+}
+
+.rowSelected td {
+  background: var(--accent-subtle, rgba(99,102,241,0.05));
+}
+
+.username {
+  color: var(--text-primary) !important;
+  font-weight: 500;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.date {
+  color: var(--text-tertiary, var(--text-muted)) !important;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.empty {
+  color: var(--text-tertiary, var(--text-muted)) !important;
+  font-style: italic;
+  padding-top: 12px !important;
+  text-align: center;
+}
+
+.filterBtn {
+  padding: 2px 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  background: none;
+  color: var(--text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: border-color 120ms, color 120ms;
+}
+.filterBtn:hover {
+  border-color: var(--accent, #6366f1);
+  color: var(--accent, #6366f1);
+}
+
+/* ── Quick actions ───────────────────────────────────────────────────────── */
+
+.actionsCard {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg, 12px);
+  padding: 20px 24px;
+}
+
+.actionBtns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.actionBtn {
+  padding: 8px 18px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md, 8px);
+  background: var(--bg-base);
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: border-color 120ms, color 120ms, background 120ms;
+}
+.actionBtn:hover {
+  border-color: var(--accent, #6366f1);
+  color: var(--accent, #6366f1);
+  background: var(--accent-subtle, rgba(99,102,241,0.06));
+}

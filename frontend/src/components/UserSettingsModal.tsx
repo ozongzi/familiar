@@ -6,6 +6,7 @@ import type { UserSettings, Provider } from "../api/types";
 import styles from "./UserSettingsModal.module.css";
 import "highlight.js/styles/github.css";
 import { UserSkillsPanel } from "./SkillsPanel";
+import { UserModelsPanel } from "./UserModelsPanel";
 
 const PROVIDER_LABELS: Record<Provider, string> = {
   deepseek: "DeepSeek",
@@ -27,7 +28,7 @@ interface Props {
 }
 
 export function UserSettingsModal({ token, onClose }: Props) {
-  const [activeTab, setActiveTab] = useState<"general" | "profile" | "skills">("profile");
+  const [activeTab, setActiveTab] = useState<"general" | "profile" | "skills" | "models">("profile");
   
   // General Settings State
   const [settings, setSettings] = useState<UserSettings | null>(null);
@@ -204,6 +205,12 @@ export function UserSettingsModal({ token, onClose }: Props) {
               onClick={() => setActiveTab("skills")}
             >
               我的 Skills
+            </button>
+            <button
+              className={`${styles.tabBtn} ${activeTab === "models" ? styles.active : ""}`}
+              onClick={() => setActiveTab("models")}
+            >
+              我的模型
             </button>
           </div>
 
@@ -427,6 +434,11 @@ export function UserSettingsModal({ token, onClose }: Props) {
           {activeTab === "skills" && (
             <div className={styles.section}>
               <UserSkillsPanel token={token} />
+            </div>
+          )}
+          {activeTab === "models" && (
+            <div className={styles.section}>
+              <UserModelsPanel token={token} />
             </div>
           )}
           </div>

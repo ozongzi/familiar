@@ -16,9 +16,10 @@
   padding: 10px 14px;
   border: 1px solid var(--border-subtle);
   border-radius: 6px;
-  background: var(--bg-surface);
-  color: var(--text-base);
+  background: var(--bg-input, var(--bg-base));
+  color: var(--text-primary);
   font-size: 0.95em;
+  font-family: inherit;
 }
 
 .searchBox:focus {
