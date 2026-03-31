@@ -117,7 +117,9 @@ pub async fn update_model(
     Json(req): Json<UpsertModelRequest>,
 ) -> AppResult<Json<ModelResponse>> {
     let row = sqlx::query_as::<_, ModelRow>(
-        "UPDATE models SET label=$1, provider=$2, model_name=$3, api_base=$4, api_key=$5, extra_body=$6
+        "UPDATE models SET label=$1, provider=$2, model_name=$3, api_base=$4,
+         api_key = CASE WHEN $5 = '' THEN api_key ELSE $5 END,
+         extra_body=$6
          WHERE id=$7 AND user_id=$8 AND scope='user'
          RETURNING *",
     )
@@ -214,7 +216,9 @@ pub async fn admin_update_model(
 ) -> AppResult<Json<ModelResponse>> {
     guard_admin(&auth)?;
     let row = sqlx::query_as::<_, ModelRow>(
-        "UPDATE models SET label=$1, provider=$2, model_name=$3, api_base=$4, api_key=$5, extra_body=$6
+        "UPDATE models SET label=$1, provider=$2, model_name=$3, api_base=$4,
+         api_key = CASE WHEN $5 = '' THEN api_key ELSE $5 END,
+         extra_body=$6
          WHERE id=$7 AND scope='global'
          RETURNING *",
     )
