@@ -154,7 +154,7 @@ export function PlanTool({ bubble }: { bubble: ToolBubble }) {
 
   useEffect(() => {
     if (bubble.pending) setExpanded(true);
-  }, [bubble.pending]);
+  }, [bubble.pending, setExpanded]);
 
   const steps = parseTodosFromArgs(bubble.argsRaw);
   const label = bubble.description || "制定计划";

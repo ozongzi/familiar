@@ -49,8 +49,7 @@ pub struct CreateSkillRequest {
 
 #[derive(sqlx::FromRow)]
 struct SimpleSettingsRow {
-    frontier_model: Option<Value>,
-    _cheap_model: Option<Value>,
+    cheap_model: Option<Value>,
     system_prompt: Option<String>,
 }
 
@@ -59,7 +58,7 @@ pub async fn get_settings(
     auth: AuthUser,
 ) -> AppResult<Json<UserSettingsResponse>> {
     let row = sqlx::query_as::<_, SimpleSettingsRow>(
-        "SELECT frontier_model, cheap_model as _cheap_model, system_prompt FROM user_settings WHERE user_id = $1",
+        "SELECT cheap_model, system_prompt FROM user_settings WHERE user_id = $1",
     )
     .bind(auth.user_id)
     .fetch_optional(&state.pool)
@@ -67,28 +66,28 @@ pub async fn get_settings(
 
     if let Some(r) = row {
         let api_key = r
-            .frontier_model
+            .cheap_model
             .as_ref()
             .and_then(|v| v.get("api_key"))
             .and_then(|v| v.as_str())
             .map(str::to_string);
-        
+
         let api_base = r
-            .frontier_model
+            .cheap_model
             .as_ref()
             .and_then(|v| v.get("api_base"))
             .and_then(|v| v.as_str())
             .map(str::to_string);
 
         let model_name = r
-            .frontier_model
+            .cheap_model
             .as_ref()
             .and_then(|v| v.get("name"))
             .and_then(|v| v.as_str())
             .map(str::to_string);
 
         let provider = r
-            .frontier_model
+            .cheap_model
             .as_ref()
             .and_then(|v| v.get("provider"))
             .and_then(|v| v.as_str())
@@ -125,10 +124,9 @@ pub async fn update_settings(
         "default" => {
             sqlx::query(
                 r#"
-                INSERT INTO user_settings (user_id, frontier_model, cheap_model, system_prompt, updated_at)
-                VALUES ($1, NULL, NULL, NULL, NOW())
+                INSERT INTO user_settings (user_id, cheap_model, system_prompt, updated_at)
+                VALUES ($1, NULL, NULL, NOW())
                 ON CONFLICT (user_id) DO UPDATE SET
-                    frontier_model = NULL,
                     cheap_model = NULL,
                     system_prompt = NULL,
                     updated_at = NOW()
@@ -164,12 +162,6 @@ pub async fn update_settings(
 
             let global_cfg = state.get_global_config().await?;
 
-            let mut frontier = global_cfg.frontier_model;
-            frontier.api_key = api_key.clone();
-            frontier.api_base = api_base.clone();
-            frontier.name = model_name.clone();
-            frontier.provider = provider;
-
             let mut cheap = global_cfg.cheap_model;
             cheap.api_key = api_key;
             cheap.api_base = api_base;
@@ -178,17 +170,15 @@ pub async fn update_settings(
 
             sqlx::query(
                 r#"
-                INSERT INTO user_settings (user_id, frontier_model, cheap_model, system_prompt, updated_at)
-                VALUES ($1, $2, $3, $4, NOW())
+                INSERT INTO user_settings (user_id, cheap_model, system_prompt, updated_at)
+                VALUES ($1, $2, $3, NOW())
                 ON CONFLICT (user_id) DO UPDATE SET
-                    frontier_model = EXCLUDED.frontier_model,
                     cheap_model = EXCLUDED.cheap_model,
                     system_prompt = EXCLUDED.system_prompt,
                     updated_at = NOW()
                 "#,
             )
             .bind(auth.user_id)
-            .bind(serde_json::to_value(frontier).map_err(|e| AppError::internal(&e.to_string()))?)
             .bind(serde_json::to_value(cheap).map_err(|e| AppError::internal(&e.to_string()))?)
             .bind(system_prompt)
             .execute(&state.pool)

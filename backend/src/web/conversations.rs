@@ -15,12 +15,14 @@ use crate::web::auth::AuthUser;
 pub struct ConversationResponse {
     pub id: Uuid,
     pub name: String,
+    pub model_id: Option<Uuid>,
     pub created_at: String,
 }
 
 #[derive(Deserialize)]
 pub struct CreateConversationRequest {
     pub name: Option<String>,
+    pub model_id: Option<Uuid>,
 }
 
 pub async fn list_conversations(
@@ -29,7 +31,7 @@ pub async fn list_conversations(
 ) -> AppResult<Json<Vec<ConversationResponse>>> {
     let rows = sqlx::query(
         r#"
-        SELECT id, name, created_at
+        SELECT id, name, model_id, created_at
         FROM conversations
         WHERE user_id = $1
         ORDER BY created_at DESC
@@ -48,12 +50,16 @@ pub async fn list_conversations(
             let name: String = r
                 .try_get("name")
                 .map_err(|_| AppError::internal("db error"))?;
+            let model_id: Option<Uuid> = r
+                .try_get("model_id")
+                .map_err(|_| AppError::internal("db error"))?;
             let created_at: chrono::DateTime<chrono::Utc> = r
                 .try_get("created_at")
                 .map_err(|_| AppError::internal("db error"))?;
             Ok(ConversationResponse {
                 id,
                 name,
+                model_id,
                 created_at: created_at.to_rfc3339(),
             })
         })
@@ -71,13 +77,14 @@ pub async fn create_conversation(
 
     let row = sqlx::query(
         r#"
-        INSERT INTO conversations (user_id, name)
-        VALUES ($1, $2)
-        RETURNING id, name, created_at
+        INSERT INTO conversations (user_id, name, model_id)
+        VALUES ($1, $2, $3)
+        RETURNING id, name, model_id, created_at
         "#,
     )
     .bind(auth.user_id)
     .bind(&name)
+    .bind(req.model_id)
     .fetch_one(&state.pool)
     .await?;
 
@@ -87,6 +94,9 @@ pub async fn create_conversation(
     let name: String = row
         .try_get("name")
         .map_err(|_| AppError::internal("db error"))?;
+    let model_id: Option<Uuid> = row
+        .try_get("model_id")
+        .map_err(|_| AppError::internal("db error"))?;
     let created_at: chrono::DateTime<chrono::Utc> = row
         .try_get("created_at")
         .map_err(|_| AppError::internal("db error"))?;
@@ -94,6 +104,7 @@ pub async fn create_conversation(
     Ok(Json(ConversationResponse {
         id,
         name,
+        model_id,
         created_at: created_at.to_rfc3339(),
     }))
 }
@@ -181,7 +192,7 @@ pub async fn rename_conversation(
         UPDATE conversations
         SET name = $1
         WHERE id = $2 AND user_id = $3
-        RETURNING id, name, created_at
+        RETURNING id, name, model_id, created_at
         "#,
     )
     .bind(&name)
@@ -197,6 +208,9 @@ pub async fn rename_conversation(
     let name: String = row
         .try_get("name")
         .map_err(|_| AppError::internal("db error"))?;
+    let model_id: Option<Uuid> = row
+        .try_get("model_id")
+        .map_err(|_| AppError::internal("db error"))?;
     let created_at: chrono::DateTime<chrono::Utc> = row
         .try_get("created_at")
         .map_err(|_| AppError::internal("db error"))?;
@@ -204,6 +218,7 @@ pub async fn rename_conversation(
     Ok(Json(ConversationResponse {
         id,
         name,
+        model_id,
         created_at: created_at.to_rfc3339(),
     }))
 }

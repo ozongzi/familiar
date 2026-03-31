@@ -85,30 +85,75 @@ async fn run_worker(ctx: WorkerContext) -> anyhow::Result<()> {
 async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
     let global_cfg = Config::load_from_db(&ctx.pool).await.unwrap_or_default();
 
-    // ── Resolve user settings / model config ──────────────────────────────
-    let user_settings: Option<(Option<Value>, Option<Value>, Option<String>)> = sqlx::query_as(
-        "SELECT frontier_model, cheap_model, system_prompt FROM user_settings WHERE user_id = $1",
+    // ── Resolve cheap model + system prompt from user settings ────────────
+    let user_settings: Option<(Option<Value>, Option<String>)> = sqlx::query_as(
+        "SELECT cheap_model, system_prompt FROM user_settings WHERE user_id = $1",
     )
     .bind(ctx.user_id)
     .fetch_optional(&ctx.pool)
     .await
     .unwrap_or(None);
 
-    let (frontier_cfg, cheap_cfg, mut system_prompt) = if let Some((f, c, p)) = user_settings {
-        let f_cfg: ModelConfig = f
-            .and_then(|v| serde_json::from_value(v).ok())
-            .unwrap_or_else(|| global_cfg.frontier_model.clone());
+    let (cheap_cfg, mut system_prompt) = if let Some((c, p)) = user_settings {
         let c_cfg: ModelConfig = c
             .and_then(|v| serde_json::from_value(v).ok())
             .unwrap_or_else(|| global_cfg.cheap_model.clone());
         let s_prompt = p.or_else(|| global_cfg.system_prompt());
-        (f_cfg, c_cfg, s_prompt)
+        (c_cfg, s_prompt)
     } else {
-        (
-            global_cfg.frontier_model.clone(),
-            global_cfg.cheap_model.clone(),
-            global_cfg.system_prompt(),
+        (global_cfg.cheap_model.clone(), global_cfg.system_prompt())
+    };
+
+    // ── Resolve frontier model: conversation model_id > global default ────
+    let frontier_cfg: ModelConfig = {
+        fn model_from_row(provider: String, name: String, api_base: String, api_key: String, extra_body: Value) -> ModelConfig {
+            let provider_parsed = serde_json::from_value::<crate::config::Provider>(
+                serde_json::Value::String(provider),
+            )
+            .unwrap_or(crate::config::Provider::DeepSeek);
+            ModelConfig {
+                provider: provider_parsed,
+                name,
+                api_base,
+                api_key,
+                extra_body: extra_body
+                    .as_object()
+                    .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+                    .unwrap_or_default(),
+            }
+        }
+
+        // 1. conversation-level model_id
+        let conv_model: Option<(String, String, String, String, Value)> = sqlx::query_as(
+            "SELECT m.provider, m.model_name, m.api_base, m.api_key, m.extra_body
+             FROM conversations c
+             JOIN models m ON m.id = c.model_id
+             WHERE c.id = $1",
         )
+        .bind(ctx.conversation_id)
+        .fetch_optional(&ctx.pool)
+        .await
+        .unwrap_or(None);
+
+        if let Some((provider, name, api_base, api_key, extra_body)) = conv_model {
+            model_from_row(provider, name, api_base, api_key, extra_body)
+        } else {
+            // 2. global default model
+            let default_model: Option<(String, String, String, String, Value)> = sqlx::query_as(
+                "SELECT provider, model_name, api_base, api_key, extra_body
+                 FROM models WHERE scope = 'global' AND is_default = true LIMIT 1",
+            )
+            .fetch_optional(&ctx.pool)
+            .await
+            .unwrap_or(None);
+
+            if let Some((provider, name, api_base, api_key, extra_body)) = default_model {
+                model_from_row(provider, name, api_base, api_key, extra_body)
+            } else {
+                // 3. fallback: cheap_model
+                cheap_cfg.clone()
+            }
+        }
     };
 
     // ── Resolve user name ─────────────────────────────────────────────────

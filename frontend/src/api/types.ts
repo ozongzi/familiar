@@ -37,11 +37,35 @@ export interface MeResponse {
 export interface Conversation {
   id: string;
   name: string;
+  model_id: string | null;
   created_at: string;
 }
 
 export interface CreateConversationRequest {
   name?: string;
+  model_id?: string | null;
+}
+
+// ─── Models ───────────────────────────────────────────────────────────────
+
+export interface Model {
+  id: string;
+  scope: "global" | "user";
+  label: string;
+  provider: Provider;
+  model_name: string;
+  api_base: string;
+  is_default: boolean;
+  created_at: string;
+}
+
+export interface UpsertModelRequest {
+  label: string;
+  provider: Provider;
+  model_name: string;
+  api_base?: string;
+  api_key?: string;
+  extra_body?: Record<string, unknown>;
 }
 
 export interface RenameConversationRequest {
@@ -216,7 +240,6 @@ export interface McpCatalogEntry {
 export interface AdminConfig {
   public_path: string;
   artifacts_path: string;
-  frontier_model: ModelConfig;
   cheap_model: ModelConfig;
   embedding: ModelConfig;
   server: ServerConfig;

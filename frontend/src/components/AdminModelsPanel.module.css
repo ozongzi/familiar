@@ -1,0 +1,189 @@
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.header h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.addBtn {
+  background: var(--accent, #6366f1);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-md, 8px);
+  padding: 6px 14px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.addBtn:hover {
+  opacity: 0.88;
+}
+
+.error {
+  color: var(--error, #ef4444);
+  font-size: 13px;
+  margin: 0;
+}
+
+.form {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg, 12px);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.row label {
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.row input,
+.row select {
+  background: var(--bg-base, #fff);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm, 6px);
+  color: var(--text-primary);
+  font-size: 13px;
+  padding: 7px 10px;
+  outline: none;
+}
+
+.row input:focus,
+.row select:focus {
+  border-color: var(--accent, #6366f1);
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.saveBtn {
+  background: var(--accent, #6366f1);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-md, 8px);
+  padding: 7px 18px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.saveBtn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.cancelBtn {
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md, 8px);
+  color: var(--text-secondary);
+  padding: 7px 14px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.empty {
+  color: var(--text-tertiary);
+  font-size: 13px;
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md, 8px);
+  padding: 10px 14px;
+}
+
+.itemDefault {
+  border-color: var(--accent, #6366f1);
+}
+
+.defaultBadge {
+  display: inline-block;
+  margin-left: 6px;
+  background: var(--accent, #6366f1);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 4px;
+  padding: 1px 6px;
+  vertical-align: middle;
+}
+
+.itemInfo {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.itemLabel {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.itemMeta {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.itemActions {
+  display: flex;
+  gap: 6px;
+}
+
+.itemActions button {
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm, 6px);
+  color: var(--text-secondary);
+  font-size: 12px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.itemActions button:hover {
+  border-color: var(--border-default);
+  color: var(--text-primary);
+}
+
+.deleteBtn {
+  color: var(--error, #ef4444) !important;
+}
+
+.deleteBtn:hover {
+  border-color: var(--error, #ef4444) !important;
+}

@@ -27,10 +27,13 @@ export function useConversations(token: string | null) {
   }, [fetchConversations]);
 
   const createConversation = useCallback(
-    async (name?: string): Promise<Conversation | null> => {
+    async (name?: string, modelId?: string | null): Promise<Conversation | null> => {
       if (!token) return null;
       try {
-        const conv = await api.createConversation(token, name ? { name } : {});
+        const conv = await api.createConversation(token, {
+          ...(name ? { name } : {}),
+          ...(modelId ? { model_id: modelId } : {}),
+        });
         setConversations((prev) => [conv, ...prev]);
         return conv;
       } catch {

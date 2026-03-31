@@ -76,6 +76,8 @@ import type {
   AdminConfig,
   AppSkill,
   SearchResult,
+  Model,
+  UpsertModelRequest,
 } from "./types";
 
 export const api = {
@@ -213,6 +215,43 @@ export const api = {
       { content },
       token,
     );
+  },
+
+  // ── Models ──────────────────────────────────────────────────
+  listModels(token: string) {
+    return get<Model[]>("/api/models", token);
+  },
+
+  createModel(token: string, body: UpsertModelRequest) {
+    return post<Model>("/api/models", body, token);
+  },
+
+  updateModel(token: string, id: string, body: UpsertModelRequest) {
+    return request<Model>("PUT", `/api/models/${id}`, body, token);
+  },
+
+  deleteModel(token: string, id: string) {
+    return del<{ ok: boolean }>(`/api/models/${id}`, token);
+  },
+
+  adminListModels(token: string) {
+    return get<Model[]>("/api/admin/models", token);
+  },
+
+  adminCreateModel(token: string, body: UpsertModelRequest) {
+    return post<Model>("/api/admin/models", body, token);
+  },
+
+  adminUpdateModel(token: string, id: string, body: UpsertModelRequest) {
+    return request<Model>("PUT", `/api/admin/models/${id}`, body, token);
+  },
+
+  adminDeleteModel(token: string, id: string) {
+    return del<{ ok: boolean }>(`/api/admin/models/${id}`, token);
+  },
+
+  adminSetDefaultModel(token: string, id: string) {
+    return post<{ ok: boolean }>(`/api/admin/models/${id}/default`, {}, token);
   },
 
   // ── MCPs ─────────────────────────────────────────────────────────────────

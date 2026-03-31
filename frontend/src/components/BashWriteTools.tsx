@@ -43,7 +43,7 @@ export function BashTool({ bubble }: { bubble: ToolBubble }) {
 
   useEffect(() => {
     if (bubble.pending) setExpanded(true);
-  }, [bubble.pending]);
+  }, [bubble.pending, setExpanded]);
 
   useEffect(() => {
     if (bubble.pending && outputRef.current) {
@@ -131,7 +131,7 @@ export function WriteTool({ bubble }: { bubble: ToolBubble }) {
 
   useEffect(() => {
     if (bubble.pending) setExpanded(true);
-  }, [bubble.pending]);
+  }, [bubble.pending, setExpanded]);
 
   const badge = bubble.pending ? null : (
     <>
@@ -270,7 +270,7 @@ export function MultiWriteTool({ bubble }: { bubble: ToolBubble }) {
 
   useEffect(() => {
     if (bubble.pending) setExpanded(true);
-  }, [bubble.pending]);
+  }, [bubble.pending, setExpanded]);
 
   const label = bubble.description || "批量写入文件";
 

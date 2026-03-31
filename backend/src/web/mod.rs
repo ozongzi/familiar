@@ -5,6 +5,7 @@ pub mod files;
 pub mod github_oauth;
 pub mod history;
 pub mod mcps;
+pub mod models;
 pub mod sessions;
 pub mod settings;
 pub mod sse;
@@ -26,6 +27,11 @@ use axum::{
     routing::{delete, get, patch, post, put},
 };
 use mcps::{create_mcp, delete_mcp, list_mcps, update_mcp};
+use models::{
+    list_models, create_model, update_model, delete_model,
+    admin_list_models, admin_create_model, admin_update_model, admin_delete_model,
+    admin_set_default_model,
+};
 use settings::{
     create_skill, delete_skill, get_settings, list_skills, update_settings, update_skill,
 };
@@ -133,6 +139,16 @@ pub fn create_router(state: AppState, allowed_origin: Option<&str>) -> Router {
         .route("/api/mcps", post(create_mcp))
         .route("/api/mcps/{id}", put(update_mcp))
         .route("/api/mcps/{id}", delete(delete_mcp))
+        // ── Models ────────────────────────────────────────────────────────────
+        .route("/api/models", get(list_models))
+        .route("/api/models", post(create_model))
+        .route("/api/models/{id}", put(update_model))
+        .route("/api/models/{id}", delete(delete_model))
+        .route("/api/admin/models", get(admin_list_models))
+        .route("/api/admin/models", post(admin_create_model))
+        .route("/api/admin/models/{id}", put(admin_update_model))
+        .route("/api/admin/models/{id}", delete(admin_delete_model))
+        .route("/api/admin/models/{id}/default", post(admin_set_default_model))
         // ── File download / preview ───────────────────────────────────────────
         .route("/api/files", get(download_file))
         .route("/api/files", post(upload_file))

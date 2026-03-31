@@ -16,7 +16,7 @@ export function App() {
     if (token && sessionStorage.getItem("familiar_show_privacy") === "1") {
       setShowPrivacy(true);
     }
-  }, [token]);
+  }, [token, setShowPrivacy]);
 
   if (loading) {
     return (

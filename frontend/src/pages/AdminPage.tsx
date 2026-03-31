@@ -5,10 +5,11 @@ import { AuditLogView } from "../components/AuditLogView";
 import { AdminConfig } from "../components/AdminConfig";
 import { TokenUsageView } from "../components/TokenUsageView";
 import { AppSkillsPanel } from "../components/SkillsPanel";
+import { AdminModelsPanel } from "../components/AdminModelsPanel";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../store/auth.shared";
 
-type AdminView = "users" | "audit" | "config" | "usage" | "skills";
+type AdminView = "users" | "audit" | "config" | "usage" | "skills" | "models";
 
 const TABS: { id: AdminView; label: string; icon: () => React.ReactElement }[] = [
   { id: "users",  label: "用户管理", icon: UsersIcon },
@@ -16,6 +17,7 @@ const TABS: { id: AdminView; label: string; icon: () => React.ReactElement }[] =
   { id: "config", label: "系统配置", icon: ConfigIcon },
   { id: "usage",  label: "Token 用量", icon: UsageIcon },
   { id: "skills", label: "默认 Skills", icon: SkillsIcon },
+  { id: "models", label: "全局模型", icon: ModelsIcon },
 ];
 
 export function AdminPage() {
@@ -52,6 +54,7 @@ export function AdminPage() {
         {currentView === "config" && <AdminConfig />}
         {currentView === "usage"  && <TokenUsageView />}
         {currentView === "skills" && <AppSkillsPanel token={token ?? ""} />}
+        {currentView === "models" && <AdminModelsPanel token={token ?? ""} />}
       </div>
     </div>
   );
@@ -105,6 +108,16 @@ function SkillsIcon() {
       <path d="M12 2a7 7 0 0 1 7 7c0 3.87-3.13 7-7 7S5 12.87 5 9a7 7 0 0 1 7-7z" />
       <path d="M12 16v6" />
       <path d="M8 22h8" />
+    </svg>
+  );
+}
+
+function ModelsIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <ellipse cx="12" cy="5" rx="9" ry="3" />
+      <path d="M21 12c0 1.66-4.03 3-9 3S3 13.66 3 12" />
+      <path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5" />
     </svg>
   );
 }

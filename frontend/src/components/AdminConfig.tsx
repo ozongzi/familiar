@@ -352,12 +352,6 @@ export function AdminConfig() {
             </div>
 
             <ModelConfigBlock
-              label="Frontier Model"
-              value={config.frontier_model}
-              onChange={(v) => setConfig({ ...config, frontier_model: v })}
-            />
-
-            <ModelConfigBlock
               label="Cheap Model"
               value={config.cheap_model}
               onChange={(v) => setConfig({ ...config, cheap_model: v })}

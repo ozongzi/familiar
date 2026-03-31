@@ -8,6 +8,7 @@ import { MessageBubble } from "../components/MessageBubble";
 import { useParams, useNavigate } from "react-router-dom";
 
 import { ChatInput } from "../components/ChatInput";
+import { ModelPicker } from "../components/ModelPicker";
 import { useAuth } from "../store/auth.shared";
 import { useConversations } from "../hooks/useConversations";
 import { useChat } from "../hooks/useChat";
@@ -35,6 +36,7 @@ export function ChatPage() {
   const activeId = conversationId ?? DRAFT_ID;
 
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [draftModelId, setDraftModelId] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarVisible, setSidebarVisible] = useState(true);
   const [mcpOpen, setMcpOpen] = useState(false);
@@ -51,10 +53,15 @@ export function ChatPage() {
 
   // ── Draft-mode conversation factory passed to useChat ──────────────────
   // Creates a real conversation and returns its id.
+  const draftModelIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    draftModelIdRef.current = draftModelId;
+  }, [draftModelId]);
+
   const createDraftConversation = useCallback(async (): Promise<
     string | null
   > => {
-    const conv = await createConversation();
+    const conv = await createConversation(undefined, draftModelIdRef.current);
     if (!conv) return null;
     // Set the flag before navigating so the effect sees it synchronously.
     skipNextHistoryLoadRef.current = true;
@@ -435,6 +442,13 @@ export function ChatPage() {
             <div className={styles.empty}>
               <img src="/favicon.svg" width={52} height={52} alt="" />
               <p className={styles.emptyTitle}>{getZenGreetingBySeason()}</p>
+              {token && (
+                <ModelPicker
+                  token={token}
+                  value={draftModelId}
+                  onChange={setDraftModelId}
+                />
+              )}
             </div>
           )}
 

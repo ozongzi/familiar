@@ -1,0 +1,102 @@
+.root {
+  position: relative;
+  display: inline-flex;
+}
+
+.trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  padding: 5px 12px 5px 10px;
+  cursor: pointer;
+  transition: border-color 150ms, color 150ms, background 150ms;
+  white-space: nowrap;
+}
+
+.trigger:hover {
+  border-color: var(--border-default);
+  color: var(--text-primary);
+  background: var(--bg-hover, rgba(0,0,0,0.04));
+}
+
+.triggerIcon {
+  font-size: 11px;
+  opacity: 0.7;
+}
+
+.triggerLabel {
+  font-weight: 500;
+}
+
+.triggerChevron {
+  font-size: 8px;
+  opacity: 0.5;
+  margin-left: 2px;
+}
+
+.dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg, 12px);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.10), 0 2px 6px rgba(0,0,0,0.06);
+  padding: 4px;
+  min-width: 160px;
+  z-index: 100;
+  animation: fadeIn 120ms ease-out;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateX(-50%) translateY(-4px); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+.option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-md, 8px);
+  color: var(--text-secondary);
+  font-size: 13px;
+  padding: 7px 10px;
+  cursor: pointer;
+  transition: background 100ms, color 100ms;
+}
+
+.option:hover {
+  background: var(--bg-hover, rgba(0,0,0,0.05));
+  color: var(--text-primary);
+}
+
+.optionActive {
+  color: var(--accent, #6366f1);
+  font-weight: 500;
+}
+
+.optionActive:hover {
+  background: var(--accent-subtle, rgba(99,102,241,0.08));
+}
+
+.optionLabel {
+  flex: 1;
+}
+
+.optionTag {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  background: var(--bg-subtle, rgba(0,0,0,0.06));
+  border-radius: 4px;
+  padding: 1px 5px;
+}
