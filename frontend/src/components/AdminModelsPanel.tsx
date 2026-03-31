@@ -3,7 +3,7 @@ import { api } from "../api/client";
 import type { Model, UpsertModelRequest, Provider } from "../api/types";
 import styles from "./AdminModelsPanel.module.css";
 
-const PROVIDERS: Provider[] = ["deepseek", "openai", "anthropic", "gemini"];
+const PROVIDERS: Provider[] = ["deepseek", "openai", "anthropic", "gemini", "kimi", "glm", "minimax", "grok"];
 
 const EMPTY_FORM: UpsertModelRequest = {
   label: "",

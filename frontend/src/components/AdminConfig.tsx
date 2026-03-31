@@ -14,9 +14,13 @@ import "highlight.js/styles/github.css";
 
 const PROVIDER_LABELS: Record<Provider, string> = {
   deepseek: "DeepSeek",
-  openai: "OpenAI",
+  openai:   "OpenAI",
   anthropic: "Anthropic",
-  gemini: "Gemini",
+  gemini:   "Gemini",
+  kimi:     "Kimi",
+  glm:      "GLM",
+  minimax:  "MiniMax",
+  grok:     "Grok",
 };
 
 const PROVIDER_DEFAULTS: Record<Provider, { api_base: string }> = {
@@ -24,6 +28,10 @@ const PROVIDER_DEFAULTS: Record<Provider, { api_base: string }> = {
   openai:    { api_base: "https://api.openai.com/v1" },
   anthropic: { api_base: "https://api.anthropic.com" },
   gemini:    { api_base: "https://generativelanguage.googleapis.com/v1beta" },
+  kimi:      { api_base: "https://api.moonshot.cn/v1" },
+  glm:       { api_base: "https://open.bigmodel.cn/api/paas/v4" },
+  minimax:   { api_base: "https://api.minimaxi.com/anthropic" },
+  grok:      { api_base: "https://api.x.ai/v1" },
 };
 
 function ModelConfigBlock({

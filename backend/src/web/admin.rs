@@ -685,7 +685,6 @@ pub async fn get_token_usage_by_user(
                COALESCE(SUM((c.token_usage->>'total_tokens')::bigint), 0)::bigint      AS total_tokens
         FROM users u
         LEFT JOIN conversations c ON c.user_id = u.id
-        WHERE u.is_admin = false
         GROUP BY u.id, u.name
         ORDER BY total_tokens DESC
         "#

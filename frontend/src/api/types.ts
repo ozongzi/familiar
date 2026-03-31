@@ -201,7 +201,7 @@ export interface UserSettings {
   system_prompt: string | null;
 }
 
-export type Provider = "deepseek" | "openai" | "anthropic" | "gemini";
+export type Provider = "deepseek" | "openai" | "anthropic" | "gemini" | "kimi" | "glm" | "minimax" | "grok";
 
 export interface ModelConfig {
   name: string;
