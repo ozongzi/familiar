@@ -38,6 +38,14 @@ pub enum Provider {
     Anthropic,
     #[serde(rename = "gemini")]
     Gemini,
+    #[serde(rename = "kimi")]
+    Kimi,
+    #[serde(rename = "glm")]
+    Glm,
+    #[serde(rename = "minimax")]
+    Minimax,
+    #[serde(rename = "grok")]
+    Grok,
 }
 
 impl Provider {
@@ -48,6 +56,10 @@ impl Provider {
             Provider::OpenAI    => agentix::Provider::OpenAI,
             Provider::Anthropic => agentix::Provider::Anthropic,
             Provider::Gemini    => agentix::Provider::Gemini,
+            Provider::Kimi      => agentix::Provider::Kimi,
+            Provider::Glm       => agentix::Provider::Glm,
+            Provider::Minimax   => agentix::Provider::Minimax,
+            Provider::Grok      => agentix::Provider::Grok,
         }
     }
 }
