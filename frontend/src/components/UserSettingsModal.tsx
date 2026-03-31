@@ -2,33 +2,14 @@ import { useMemo, useState, useEffect } from "react";
 import hljs from "highlight.js";
 import { api } from "../api/client";
 import { getProfile, updateProfile, updatePassword, uploadAvatar } from "../api/profile";
-import type { UserSettings, Provider } from "../api/types";
+import type { UserSettings } from "../api/types";
+import { PROVIDER_DEFAULT_BASE } from "../constants/providers";
+import { ProviderSelector } from "./ProviderSelector";
 import styles from "./UserSettingsModal.module.css";
 import "highlight.js/styles/github.css";
 import { UserSkillsPanel } from "./SkillsPanel";
 import { UserModelsPanel } from "./UserModelsPanel";
 
-const PROVIDER_LABELS: Record<Provider, string> = {
-  deepseek:  "DeepSeek",
-  openai:    "OpenAI",
-  anthropic: "Anthropic",
-  gemini:    "Gemini",
-  kimi:      "Kimi",
-  glm:       "GLM",
-  minimax:   "MiniMax",
-  grok:      "Grok",
-};
-
-const PROVIDER_DEFAULTS: Record<Provider, string> = {
-  deepseek:  "https://api.deepseek.com",
-  openai:    "https://api.openai.com/v1",
-  anthropic: "https://api.anthropic.com",
-  gemini:    "https://generativelanguage.googleapis.com/v1beta",
-  kimi:      "https://api.moonshot.cn/v1",
-  glm:       "https://open.bigmodel.cn/api/paas/v4",
-  minimax:   "https://api.minimaxi.com/anthropic",
-  grok:      "https://api.x.ai/v1",
-};
 
 interface Props {
   token: string;
@@ -248,24 +229,11 @@ export function UserSettingsModal({ token, onClose }: Props) {
                 <div className={styles.customConfig}>
                   <div className={styles.field}>
                     <label>Provider</label>
-                    <div className={styles.providerToggle}>
-                      {(Object.keys(PROVIDER_LABELS) as Provider[]).map((p) => (
-                        <button
-                          key={p}
-                          className={`${styles.providerBtn} ${
-                            (settings.provider ?? "deepseek") === p ? styles.providerBtnActive : ""
-                          }`}
-                          onClick={() =>
-                            setSettings({
-                              ...settings,
-                              provider: p,
-                            })
-                          }
-                        >
-                          {PROVIDER_LABELS[p]}
-                        </button>
-                      ))}
-                    </div>
+                    <ProviderSelector
+                      variant="buttons"
+                      value={settings.provider ?? "deepseek"}
+                      onChange={(p) => setSettings({ ...settings, provider: p })}
+                    />
                   </div>
 
                   <div className={styles.field}>
@@ -276,7 +244,7 @@ export function UserSettingsModal({ token, onClose }: Props) {
                       onChange={(e) =>
                         setSettings({ ...settings, api_base: e.target.value })
                       }
-                      placeholder={PROVIDER_DEFAULTS[settings.provider ?? "deepseek"]}
+                      placeholder={PROVIDER_DEFAULT_BASE[settings.provider ?? "deepseek"]}
                     />
                   </div>
                   

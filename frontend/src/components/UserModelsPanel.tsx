@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
 import { api } from "../api/client";
-import type { Model, UpsertModelRequest, Provider } from "../api/types";
+import type { Model, UpsertModelRequest } from "../api/types";
+import { ProviderSelector } from "./ProviderSelector";
 import styles from "./AdminModelsPanel.module.css";
 
-const PROVIDERS: Provider[] = ["deepseek", "openai", "anthropic", "gemini", "kimi", "glm", "minimax", "grok"];
 
 const EMPTY_FORM: UpsertModelRequest = {
   label: "",
@@ -116,12 +116,7 @@ export function UserModelsPanel({ token }: Props) {
           </div>
           <div className={styles.row}>
             <label>Provider</label>
-            <select
-              value={form.provider}
-              onChange={(e) => setForm({ ...form, provider: e.target.value as Provider })}
-            >
-              {PROVIDERS.map((p) => <option key={p} value={p}>{p}</option>)}
-            </select>
+            <ProviderSelector value={form.provider} onChange={(p) => setForm({ ...form, provider: p })} />
           </div>
           <div className={styles.row}>
             <label>Model Name</label>

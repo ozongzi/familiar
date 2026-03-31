@@ -9,30 +9,11 @@ import {
   deleteGlobalMcp,
 } from "../api/admin";
 import type { AdminConfig, GlobalMcp, ModelConfig, Provider } from "../api/types";
+import { PROVIDER_DEFAULT_BASE } from "../constants/providers";
+import { ProviderSelector } from "./ProviderSelector";
 import styles from "./AdminConfig.module.css";
 import "highlight.js/styles/github.css";
 
-const PROVIDER_LABELS: Record<Provider, string> = {
-  deepseek: "DeepSeek",
-  openai:   "OpenAI",
-  anthropic: "Anthropic",
-  gemini:   "Gemini",
-  kimi:     "Kimi",
-  glm:      "GLM",
-  minimax:  "MiniMax",
-  grok:     "Grok",
-};
-
-const PROVIDER_DEFAULTS: Record<Provider, { api_base: string }> = {
-  deepseek:  { api_base: "https://api.deepseek.com" },
-  openai:    { api_base: "https://api.openai.com/v1" },
-  anthropic: { api_base: "https://api.anthropic.com" },
-  gemini:    { api_base: "https://generativelanguage.googleapis.com/v1beta" },
-  kimi:      { api_base: "https://api.moonshot.cn/v1" },
-  glm:       { api_base: "https://open.bigmodel.cn/api/paas/v4" },
-  minimax:   { api_base: "https://api.minimaxi.com/anthropic" },
-  grok:      { api_base: "https://api.x.ai/v1" },
-};
 
 function ModelConfigBlock({
   label,
@@ -50,17 +31,7 @@ function ModelConfigBlock({
       <h4>{label}</h4>
       <div className={styles.field}>
         <label>Provider</label>
-        <div className={styles.typeToggle}>
-          {(Object.keys(PROVIDER_LABELS) as Provider[]).map((p) => (
-            <button
-              key={p}
-              className={`${styles.typeBtn} ${provider === p ? styles.active : ""}`}
-              onClick={() => onChange({ ...value, provider: p })}
-            >
-              {PROVIDER_LABELS[p]}
-            </button>
-          ))}
-        </div>
+        <ProviderSelector variant="buttons" value={provider} onChange={(p) => onChange({ ...value, provider: p })} />
       </div>
       <div className={styles.fieldRow}>
         <div className={styles.field}>
@@ -77,7 +48,7 @@ function ModelConfigBlock({
             type="text"
             value={value.api_base}
             onChange={(e) => onChange({ ...value, api_base: e.target.value })}
-            placeholder={PROVIDER_DEFAULTS[provider].api_base}
+            placeholder={PROVIDER_DEFAULT_BASE[provider]}
           />
         </div>
         <div className={styles.field}>
