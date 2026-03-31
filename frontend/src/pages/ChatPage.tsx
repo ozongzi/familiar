@@ -297,9 +297,9 @@ export function ChatPage() {
   );
 
   const handleSend = useCallback(
-    (text: string) => {
+    (text: string, images?: string[]) => {
       lockedRef.current = true;
-      send(text);
+      send(text, images);
       scrollToBottom();
     },
     [send, scrollToBottom],

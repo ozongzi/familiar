@@ -382,6 +382,43 @@ export function useChat(
           } catch {
             /* not JSON — fall through */
           }
+
+          // Multimodal message: "__multimodal__:[{type,text/image_url,...}]"
+          if (m.content.startsWith("__multimodal__:")) {
+            const json = m.content.slice("__multimodal__:".length);
+            try {
+              // agentix 0.10.1 internal tag format:
+              //   { type: "text", text: "..." }
+              //   { type: "image", data: { base64: "..." }, mime_type: "..." }
+              type Part =
+                | { type: "text"; text: string }
+                | { type: "image"; data: { base64?: string; url?: string }; mime_type: string };
+              const parts = JSON.parse(json) as Part[];
+              const text = parts
+                .filter((p): p is Extract<Part, { type: "text" }> => p.type === "text")
+                .map(p => p.text)
+                .join("");
+              const images = parts
+                .filter((p): p is Extract<Part, { type: "image" }> => p.type === "image")
+                .map(p => p.data.base64
+                  ? `data:${p.mime_type};base64,${p.data.base64}`
+                  : p.data.url ?? "")
+                .filter(Boolean);
+              history.push({
+                kind: "text",
+                key: uid(),
+                role: "user",
+                content: text,
+                reasoning: "",
+                streaming: false,
+                images: images.length > 0 ? images : undefined,
+                msgId: m.id,
+              });
+              continue;
+            } catch {
+              /* fall through to plain text */
+            }
+          }
         }
 
         const key = uid();

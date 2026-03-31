@@ -44,6 +44,8 @@ export function ChatInput({
 }: Props) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
+  const wrapperRef = useRef<HTMLDivElement>(null);
   const [hasText, setHasText] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -60,6 +62,16 @@ export function ChatInput({
   useEffect(() => {
     resize();
   }, [resize]);
+
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const onResize = () => {
+      wrapperRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
+    };
+    vv.addEventListener("resize", onResize);
+    return () => vv.removeEventListener("resize", onResize);
+  }, []);
 
   const handlePaste = useCallback((e: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const items = Array.from(e.clipboardData.items);
@@ -124,6 +136,20 @@ export function ChatInput({
     setHasText((el?.value.trim().length ?? 0) > 0);
   }, [resize]);
 
+  const handleImagePick = useCallback(() => {
+    const input = imageInputRef.current;
+    if (!input || !input.files || input.files.length === 0) return;
+    Array.from(input.files).forEach((file) => {
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        const dataUrl = ev.target?.result as string;
+        if (dataUrl) setPendingImages((prev) => [...prev, dataUrl]);
+      };
+      reader.readAsDataURL(file);
+    });
+    input.value = "";
+  }, []);
+
   const handleFileUpload = useCallback(async () => {
     const fileInput = fileInputRef.current;
     if (!fileInput || !fileInput.files || fileInput.files.length === 0) return;
@@ -175,7 +201,7 @@ export function ChatInput({
   const btnDisabled = disabled || (isSendMode && !hasText && pendingImages.length === 0);
 
   return (
-    <div className={styles.wrapper}>
+    <div ref={wrapperRef} className={styles.wrapper}>
       <div className={`${styles.box} ${disabled ? styles.boxDisabled : ""}`}>
         <input
           ref={fileInputRef}
@@ -183,6 +209,15 @@ export function ChatInput({
           className={styles.fileInput}
           onChange={handleFileUpload}
           aria-label="上传文件"
+        />
+        <input
+          ref={imageInputRef}
+          type="file"
+          accept="image/*"
+          multiple
+          className={styles.fileInput}
+          onChange={handleImagePick}
+          aria-label="选择图片"
         />
 
         {/* 图片预览 */}
@@ -225,6 +260,15 @@ export function ChatInput({
               ) : (
                 <UploadIcon />
               )}
+            </button>
+            <button
+              className={styles.uploadBtn}
+              onClick={() => imageInputRef.current?.click()}
+              disabled={disabled}
+              aria-label="选择图片"
+              title="选择图片"
+            >
+              <ImageIcon />
             </button>
 
             {onOpenMcp && (
@@ -403,6 +447,26 @@ function LocalPlugIcon() {
       <rect x="2" y="3" width="20" height="14" rx="2" />
       <path d="M8 21h8M12 17v4" />
       <path d="M9 8v3M15 8v3M9 11h6" />
+    </svg>
+  );
+}
+
+function ImageIcon() {
+  return (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+      <circle cx="8.5" cy="8.5" r="1.5" />
+      <polyline points="21 15 16 10 5 21" />
     </svg>
   );
 }
