@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { Sidebar } from "../components/Sidebar";
+import { SearchPanel } from "../components/SearchPanel";
 import { McpSettings } from "../components/McpSettings";
 import { LocalMcpSettings } from "../components/LocalMcpSettings";
 import { UserSettingsModal } from "../components/UserSettingsModal";
@@ -39,6 +40,7 @@ export function ChatPage() {
   const [mcpOpen, setMcpOpen] = useState(false);
   const [localMcpOpen, setLocalMcpOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
 
   // When useChat creates a conversation in draft mode, we want to update
   // activeId WITHOUT triggering the history-load effect (there's no history
@@ -98,6 +100,7 @@ export function ChatPage() {
   const sentinelRef = useRef<HTMLDivElement>(null);
   const lockedRef = useRef(true);
   const userScrollingRef = useRef(false);
+  const [showScrollBtn, setShowScrollBtn] = useState(false);
 
   // ── Detect user scroll: pointer/touch down = user is scrolling ───────────
   useEffect(() => {
@@ -128,9 +131,11 @@ export function ChatPage() {
       if (userScrollingRef.current) {
         // User-driven scroll: always update lock state
         lockedRef.current = atBottom;
+        setShowScrollBtn(!atBottom);
       } else if (atBottom) {
         // Programmatic scroll reached bottom: re-lock
         lockedRef.current = true;
+        setShowScrollBtn(false);
       }
     };
     el.addEventListener("scroll", onScroll, { passive: true });
@@ -140,7 +145,9 @@ export function ChatPage() {
   const scrollToBottom = useCallback(() => {
     const el = messagesRef.current;
     if (!el) return;
+    lockedRef.current = true;
     el.scrollTop = el.scrollHeight;
+    setShowScrollBtn(false);
   }, []);
 
   // ── Auto-scroll: MutationObserver only while streaming ───────────────────
@@ -353,6 +360,7 @@ export function ChatPage() {
           user={user}
           onLogout={logout}
           onOpenSettings={() => setSettingsOpen(true)}
+          onOpenSearch={() => setSearchOpen(true)}
           isOpen={sidebarOpen}
           onClose={() => setSidebarOpen(false)}
         />
@@ -370,6 +378,16 @@ export function ChatPage() {
         <UserSettingsModal
           token={token}
           onClose={() => setSettingsOpen(false)}
+        />
+      )}
+
+      {searchOpen && token && (
+        <SearchPanel
+          token={token}
+          onSelectConversation={(id) => {
+            handleSelectConversation(id);
+          }}
+          onClose={() => setSearchOpen(false)}
         />
       )}
 
@@ -411,6 +429,7 @@ export function ChatPage() {
         </header>
 
         {/* Message area */}
+        <div className={styles.messagesWrapper}>
         <div ref={messagesRef} className={styles.messages}>
           {isDraft && bubbles.length === 0 && (
             <div className={styles.empty}>
@@ -449,6 +468,17 @@ export function ChatPage() {
           )}
 
           <div ref={sentinelRef} style={{ height: 1, flexShrink: 0 }} />
+        </div>
+        {showScrollBtn && (
+          <button
+            className={styles.scrollToBottomBtn}
+            onClick={scrollToBottom}
+            aria-label="跳到最新"
+            title="跳到最新"
+          >
+            <ScrollDownIcon />
+          </button>
+        )}
         </div>
 
         {/* Input — always enabled in draft mode */}
@@ -545,6 +575,24 @@ function NewChatIcon() {
       aria-hidden="true"
     >
       <path d="M12 5v14M5 12h14" />
+    </svg>
+  );
+}
+
+function ScrollDownIcon() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <polyline points="6 9 12 15 18 9" />
     </svg>
   );
 }

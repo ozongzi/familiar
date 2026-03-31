@@ -2,7 +2,7 @@
 /**
  * tunnel-bridge.cjs
  *
- * 启动 @playwright/mcp 及本地 MCP 子进程，各自连一条 WS 隧道，双向转发 MCP 消息。
+ * 启动本地 MCP 子进程，各自连一条 WS 隧道，双向转发 MCP 消息。
  *
  * 环境变量：
  *   FAMILIAR_TOKEN        — Bearer token
@@ -44,10 +44,6 @@ const WS_MODULE = RESOURCE_DIR
   ? path.join(RESOURCE_DIR, "mcp-bundle", "node_modules", "ws", "index.js")
   : path.join(__dirname, "mcp-bundle", "node_modules", "ws", "index.js");
 
-const MCP_CLI = RESOURCE_DIR
-  ? path.join(RESOURCE_DIR, "mcp-bundle", "node_modules", "@playwright", "mcp", "cli.js")
-  : path.join(__dirname, "mcp-bundle", "node_modules", "@playwright", "mcp", "cli.js");
-
 const WebSocket = require(WS_MODULE);
 
 const RECONNECT_MS = 3000;
@@ -59,14 +55,38 @@ let stopping = false;
 
 /**
  * 启动一个 stdio MCP 进程并与一条 WS 隧道连接桥接。
- * @param {string} label  日志标签
- * @param {string} cmd    可执行文件
- * @param {string[]} args 参数
+ * @param {string} label        日志标签
+ * @param {string} cmd          可执行文件
+ * @param {string[]} args       参数
+ * @param {number|null} msgTimeoutMs  每条请求的超时（ms），超时则 kill+restart 进程；null = 不限时
  */
-function bridgeStdio(label, cmd, args) {
+function bridgeStdio(label, cmd, args, msgTimeoutMs = null) {
   let proc = null;
   let ws = null;
   let pingTimer = null;
+  let msgTimer = null;
+  let pendingRequestId = null;
+
+  function clearMsgTimer() {
+    if (msgTimer) { clearTimeout(msgTimer); msgTimer = null; }
+  }
+
+  function killAndRestart() {
+    log(`[${label}] 消息超时，发送错误响应`);
+    clearMsgTimer();
+    // 向服务器发一个 JSON-RPC error，让 backend worker 收到错误而不是一直等待
+    // 不 kill 进程——playwright 会在自己的超时后恢复，kill 会把 Chrome 一起干掉
+    if (pendingRequestId !== null && ws?.readyState === WebSocket.OPEN) {
+      const errMsg = JSON.stringify({
+        jsonrpc: "2.0",
+        id: pendingRequestId,
+        error: { code: -32000, message: "Tool timed out" },
+      });
+      ws.send(errMsg);
+      log(`[${label}] 已发送超时错误响应 id=${pendingRequestId}`);
+    }
+    pendingRequestId = null;
+  }
 
   function startProc() {
     if (proc) return;
@@ -78,13 +98,22 @@ function bridgeStdio(label, cmd, args) {
     proc.stderr?.on("data", (d) => log(`[${label}] stderr: ${d.toString().trim()}`));
     proc.on("exit", (code) => {
       log(`[${label}] 进程退出 (${code})`);
+      clearMsgTimer();
       proc = null;
       if (!stopping) setTimeout(startProc, 1000);
     });
     proc.stdout.on("data", (chunk) => {
-      if (ws?.readyState === WebSocket.OPEN) {
-        chunk.toString().split("\n").filter(Boolean).forEach((l) => ws.send(l));
-      }
+      const lines = chunk.toString().split("\n").filter(Boolean);
+      lines.forEach((l) => {
+        try {
+          const msg = JSON.parse(l);
+          if ("result" in msg || "error" in msg) {
+            clearMsgTimer();
+            pendingRequestId = null;
+          }
+        } catch {}
+        if (ws?.readyState === WebSocket.OPEN) ws.send(l);
+      });
     });
   }
 
@@ -101,10 +130,22 @@ function bridgeStdio(label, cmd, args) {
     ws.on("message", (data) => {
       const text = data.toString();
       try { if (JSON.parse(text)?.type === "pong") return; } catch {}
-      if (proc?.stdin?.writable) proc.stdin.write(text + "\n");
+      if (proc?.stdin?.writable) {
+        proc.stdin.write(text + "\n");
+        if (msgTimeoutMs) {
+          // 记录请求 ID，超时时用来发 error 响应
+          try {
+            const parsed = JSON.parse(text);
+            if (parsed.id !== undefined) pendingRequestId = parsed.id;
+          } catch {}
+          clearMsgTimer();
+          msgTimer = setTimeout(killAndRestart, msgTimeoutMs);
+        }
+      }
     });
     ws.on("close", (code) => {
       clearInterval(pingTimer);
+      clearMsgTimer();
       log(`[${label}] 连接断开 (${code})`);
       ws = null;
       if (!stopping) setTimeout(connectWs, RECONNECT_MS);
@@ -120,16 +161,6 @@ function bridgeStdio(label, cmd, args) {
     ws?.close();
   };
 }
-
-// ── 启动 @playwright/mcp ──────────────────────────────────────────────────────
-
-const isWindows = process.platform === "win32";
-const channelArgs = isWindows ? ["--browser", "msedge"] : [];
-const [playwrightCmd, playwrightArgs] = fs.existsSync(MCP_CLI)
-  ? [process.execPath, [MCP_CLI, ...channelArgs]]
-  : ["npx", ["-y", "@playwright/mcp@latest", ...channelArgs]];
-
-const stopPlaywright = bridgeStdio("playwright", playwrightCmd, playwrightArgs);
 
 // ── 启动本地 MCP ──────────────────────────────────────────────────────────────
 
@@ -154,11 +185,24 @@ const stopLocalFns = localMcps.map((mcp) => {
   }
 });
 
+// ── Playwright MCP ────────────────────────────────────────────────────────────
+
+const PLAYWRIGHT_MCP_BIN = RESOURCE_DIR
+  ? path.join(RESOURCE_DIR, "mcp-bundle", "node_modules", "@playwright", "mcp", "cli.js")
+  : path.join(__dirname, "mcp-bundle", "node_modules", "@playwright", "mcp", "cli.js");
+
+if (fs.existsSync(PLAYWRIGHT_MCP_BIN)) {
+  log(`启动 Playwright MCP: ${PLAYWRIGHT_MCP_BIN}`);
+  // 60s timeout per tool call — browser ops can be slow
+  bridgeStdio("playwright", process.execPath, [PLAYWRIGHT_MCP_BIN], 60000);
+} else {
+  log(`未找到 Playwright MCP bin: ${PLAYWRIGHT_MCP_BIN}`);
+}
+
 // ── 退出清理 ──────────────────────────────────────────────────────────────────
 
 function shutdown() {
   stopping = true;
-  stopPlaywright();
   stopLocalFns.forEach((fn) => fn());
   process.exit(0);
 }

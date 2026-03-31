@@ -16,6 +16,7 @@ interface Props {
   user?: MeResponse | null;
   onLogout: () => void;
   onOpenSettings?: () => void;
+  onOpenSearch?: () => void;
   isOpen?: boolean;
   onClose?: () => void;
 }
@@ -32,6 +33,7 @@ export function Sidebar({
   user,
   onLogout,
   onOpenSettings,
+  onOpenSearch,
   isOpen = false,
   onClose,
 }: Props) {
@@ -112,6 +114,14 @@ export function Sidebar({
           <img src="/favicon.svg" width={22} height={22} alt="" />
           Familiar
         </span>
+        <button
+          className={styles.searchBtn}
+          onClick={onOpenSearch}
+          title="搜索历史"
+          aria-label="搜索历史"
+        >
+          <SearchIcon />
+        </button>
         <button
           className={styles.newBtn}
           onClick={onCreate}
@@ -405,6 +415,25 @@ function LogoutIcon() {
       <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
       <polyline points="16 17 21 12 16 7" />
       <line x1="21" y1="12" x2="9" y2="12" />
+    </svg>
+  );
+}
+
+function SearchIcon() {
+  return (
+    <svg
+      width="15"
+      height="15"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <circle cx="11" cy="11" r="8" />
+      <line x1="21" y1="21" x2="16.65" y2="16.65" />
     </svg>
   );
 }

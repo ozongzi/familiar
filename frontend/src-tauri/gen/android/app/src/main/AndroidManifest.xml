@@ -28,6 +28,9 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="familiar" />
             </intent-filter>
+            <!-- DEEP LINK PLUGIN. AUTO-GENERATED. DO NOT REMOVE. -->
+            
+            <!-- DEEP LINK PLUGIN. AUTO-GENERATED. DO NOT REMOVE. -->
         </activity>
 
         <provider

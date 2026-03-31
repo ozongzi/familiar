@@ -1,8 +1,8 @@
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{Path, Query, State},
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::errors::{AppError, AppResult};
@@ -21,6 +21,67 @@ pub struct MessageResponse {
     pub created_at: i64,
     pub streaming: bool,
     pub reasoning: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct SearchQuery {
+    pub q: String,
+    pub limit: Option<usize>,
+}
+
+pub async fn search_messages(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Query(params): Query<SearchQuery>,
+) -> AppResult<Json<serde_json::Value>> {
+    let q = params.q.trim().to_string();
+    if q.is_empty() {
+        return Ok(Json(serde_json::json!({ "results": [] })));
+    }
+    let limit = params.limit.unwrap_or(20).min(50);
+
+    let rows = sqlx::query(
+        r#"
+        SELECT m.id, m.conversation_id, m.role, m.content, m.created_at,
+               c.name AS conv_name
+        FROM messages m
+        JOIN conversations c ON c.id = m.conversation_id
+        WHERE c.user_id = $1
+          AND m.content_tsv @@ plainto_tsquery('simple', $2)
+          AND m.streaming = false
+          AND m.content IS NOT NULL AND m.content != ''
+        ORDER BY m.id DESC
+        LIMIT $3
+        "#,
+    )
+    .bind(auth.user_id)
+    .bind(&q)
+    .bind(limit as i64)
+    .fetch_all(&state.pool)
+    .await?;
+
+    use sqlx::Row;
+    let results: Vec<serde_json::Value> = rows
+        .into_iter()
+        .map(|r| {
+            let id: i64 = r.try_get("id").unwrap_or(0);
+            let conv_id: uuid::Uuid = r.try_get("conversation_id").unwrap_or_default();
+            let role: String = r.try_get("role").unwrap_or_default();
+            let content: Option<String> = r.try_get("content").unwrap_or(None);
+            let created_at: i64 = r.try_get("created_at").unwrap_or(0);
+            let conv_name: String = r.try_get("conv_name").unwrap_or_default();
+            serde_json::json!({
+                "id": id,
+                "conversation_id": conv_id,
+                "conversation_name": conv_name,
+                "role": role,
+                "content": content,
+                "created_at": created_at,
+            })
+        })
+        .collect();
+
+    Ok(Json(serde_json::json!({ "results": results })))
 }
 
 pub async fn list_messages(

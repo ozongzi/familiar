@@ -127,6 +127,7 @@ pub fn create_router(state: AppState, allowed_origin: Option<&str>) -> Router {
         .route("/api/conversations/{id}/title", post(auto_title))
         // ── Messages ──────────────────────────────────────────────────────────
         .route("/api/conversations/{id}/messages", get(list_messages))
+        .route("/api/search", get(search_messages))
         // ── MCPs ──────────────────────────────────────────────────────────────
         .route("/api/mcps", get(list_mcps))
         .route("/api/mcps", post(create_mcp))

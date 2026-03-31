@@ -48,6 +48,17 @@ export interface RenameConversationRequest {
   name: string;
 }
 
+// ─── Search ──────────────────────────────────────────────────────────────
+
+export interface SearchResult {
+  id: number;
+  conversation_id: string;
+  conversation_name: string;
+  role: string;
+  content: string | null;
+  created_at: number;
+}
+
 // ─── Messages ─────────────────────────────────────────────────────────────
 
 export interface Message {

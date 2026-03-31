@@ -75,6 +75,7 @@ import type {
   CreateSkillRequest,
   AdminConfig,
   AppSkill,
+  SearchResult,
 } from "./types";
 
 export const api = {
@@ -199,6 +200,11 @@ export const api = {
       `/api/conversations/${conversationId}/messages`,
       token,
     );
+  },
+
+  searchMessages(token: string, q: string, limit = 20) {
+    const params = new URLSearchParams({ q, limit: String(limit) });
+    return get<{ results: SearchResult[] }>(`/api/search?${params}`, token);
   },
 
   sendMessage(token: string, conversationId: string, content: string) {
