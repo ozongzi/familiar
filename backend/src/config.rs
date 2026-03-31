@@ -26,50 +26,13 @@ pub struct McpCatalogEntry {
     pub args: Vec<String>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq)]
-#[derive(Default)]
-pub enum Provider {
-    #[serde(rename = "deepseek")]
-    #[default]
-    DeepSeek,
-    #[serde(rename = "openai")]
-    OpenAI,
-    #[serde(rename = "anthropic")]
-    Anthropic,
-    #[serde(rename = "gemini")]
-    Gemini,
-    #[serde(rename = "kimi")]
-    Kimi,
-    #[serde(rename = "glm")]
-    Glm,
-    #[serde(rename = "minimax")]
-    Minimax,
-    #[serde(rename = "grok")]
-    Grok,
-}
-
-impl Provider {
-    /// Convert to the agentix `Provider` enum.
-    pub fn to_agentix(self) -> agentix::Provider {
-        match self {
-            Provider::DeepSeek  => agentix::Provider::DeepSeek,
-            Provider::OpenAI    => agentix::Provider::OpenAI,
-            Provider::Anthropic => agentix::Provider::Anthropic,
-            Provider::Gemini    => agentix::Provider::Gemini,
-            Provider::Kimi      => agentix::Provider::Kimi,
-            Provider::Glm       => agentix::Provider::Glm,
-            Provider::Minimax   => agentix::Provider::Minimax,
-            Provider::Grok      => agentix::Provider::Grok,
-        }
-    }
-}
+pub use agentix::Provider;
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct ModelConfig {
     pub api_key: String,
     pub api_base: String,
     pub name: String,
-    #[serde(default)]
     pub provider: Provider,
     #[serde(default)]
     pub extra_body: HashMap<String, Value>,
@@ -78,7 +41,7 @@ pub struct ModelConfig {
 impl ModelConfig {
     /// Build an [`agentix::Request`] pre-filled with provider, key, base URL, and model.
     pub fn to_request(&self) -> agentix::Request {
-        agentix::Request::new(self.provider.to_agentix(), &self.api_key)
+        agentix::Request::new(self.provider, &self.api_key)
             .base_url(&self.api_base)
             .model(&self.name)
     }

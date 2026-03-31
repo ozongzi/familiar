@@ -110,9 +110,9 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
     let frontier_cfg: ModelConfig = {
         fn model_from_row(provider: String, name: String, api_base: String, api_key: String, extra_body: Value) -> ModelConfig {
             let provider_parsed = serde_json::from_value::<crate::config::Provider>(
-                serde_json::Value::String(provider),
+                serde_json::Value::String(provider.clone()),
             )
-            .unwrap_or(crate::config::Provider::DeepSeek);
+            .unwrap_or_else(|_| panic!("unknown provider in DB: {provider}"));
             ModelConfig {
                 provider: provider_parsed,
                 name,
