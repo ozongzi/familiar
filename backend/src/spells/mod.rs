@@ -4,12 +4,14 @@ mod plan_spell;
 mod skill_spell;
 mod sourcegraph_spell;
 mod spawn_spell;
+mod tavily_spell;
 mod ui_spells;
 
 use history_spell::HistorySpell;
 use plan_spell::PlanSpell;
 use skill_spell::SkillSpell;
 use sourcegraph_spell::search_code;
+use tavily_spell::TavilySpell;
 
 use std::sync::Arc;
 use uuid::Uuid;
@@ -37,6 +39,9 @@ pub struct SpellDeps {
     pub user_id: Uuid,
     pub sandbox: Arc<crate::sandbox::SandboxManager>,
     pub mcp_catalog: Vec<McpCatalogEntry>,
+    // TavilySpell
+    pub tavily_api_key: Option<String>,
+    pub http: reqwest::Client,
 }
 
 /// Build the complete built-in spell bundle from the given dependencies.
@@ -54,7 +59,7 @@ pub fn build_all_spells(deps: SpellDeps) -> impl agentix::Tool {
             + PlanSpell { pool: deps.pool.clone(), conversation_id: deps.conversation_id },
     );
 
-    SkillSpell {
+    let bundle = SkillSpell {
             pool: deps.pool.clone(),
             user_id: deps.user_id,
         }
@@ -84,5 +89,12 @@ pub fn build_all_spells(deps: SpellDeps) -> impl agentix::Tool {
         + PlanSpell {
             pool: deps.pool,
             conversation_id: deps.conversation_id,
-        }
+        };
+
+    let mut tb = agentix::ToolBundle::new();
+    tb.push(bundle);
+    if let Some(api_key) = deps.tavily_api_key {
+        tb.push(TavilySpell { api_key, http: deps.http });
+    }
+    tb
 }

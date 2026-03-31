@@ -83,7 +83,9 @@ async fn run_worker(ctx: WorkerContext) -> anyhow::Result<()> {
 }
 
 async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
+    let t0 = std::time::Instant::now();
     let global_cfg = Config::load_from_db(&ctx.pool).await.unwrap_or_default();
+    info!(ms = t0.elapsed().as_millis(), "⏱ load_from_db");
 
     // ── Resolve cheap model + system prompt from user settings ────────────
     let user_settings: Option<(Option<Value>, Option<String>)> = sqlx::query_as(
@@ -226,10 +228,11 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
     }
 
     // ── Load history from DB ──────────────────────────────────────────────
+    let t_restore = std::time::Instant::now();
     let messages = match ctx.db.restore(ctx.conversation_id).await {
         Ok(h) => {
             let h = sanitize_history(h);
-            info!(conversation = %ctx.conversation_id, messages = h.len(), "restored history");
+            info!(conversation = %ctx.conversation_id, messages = h.len(), ms = t_restore.elapsed().as_millis(), "⏱ restore history");
             h
         }
         Err(e) => {
@@ -239,7 +242,10 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
     };
 
     // ── Connect MCPs from DB ──────────────────────────────────────────────
+    let t_mcp = std::time::Instant::now();
     let mcp_tools = connect_mcps_from_db(ctx).await;
+    info!(ms = t_mcp.elapsed().as_millis(), tools = mcp_tools.len(), "⏱ connect_mcps");
+    info!(ms = t0.elapsed().as_millis(), "⏱ total pre-LLM setup");
 
     // ── Build ToolBundle (spells + MCPs + tunnel) ─────────────────────────
     let spell_deps = SpellDeps {
@@ -256,6 +262,8 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
         user_id: ctx.user_id,
         sandbox: ctx.sandbox.clone(),
         mcp_catalog: global_cfg.mcp_catalog.clone(),
+        tavily_api_key: global_cfg.tavily_api_key.clone(),
+        http: reqwest::Client::new(),
     };
 
     let mut bundle = ToolBundle::new();
@@ -723,9 +731,31 @@ fn embed_message_async(ctx: &WorkerContext, row_id: i64, content: String) {
     });
 }
 
-/// Write an SSE event to the generation_events table (trigger fires pg_notify).
+/// Write an SSE event.
+///
+/// Token events skip the DB INSERT and go directly via pg_notify for low latency.
+/// Structural events (tool_call, done, error, aborted, usage, …) are persisted to
+/// generation_events for reliable replay, then notified.
 async fn emit(ctx: &WorkerContext, payload: Value) {
     let payload_str = payload.to_string();
+    let event_type = payload.get("type").and_then(|v| v.as_str()).unwrap_or("");
+
+    // Fast path: token / reasoning_token — skip DB, notify with inline payload.
+    // Prefix "I:" signals an inline payload to the SSE consumer.
+    if matches!(event_type, "token" | "reasoning_token") {
+        let notify_payload = format!("I:{}:{}", ctx.job_id, payload_str);
+        // pg_notify payload limit is 8000 bytes; tokens are tiny, this is safe.
+        if notify_payload.len() < 7900 {
+            let _ = sqlx::query("SELECT pg_notify('generation_events', $1)")
+                .bind(&notify_payload)
+                .execute(&ctx.pool)
+                .await;
+            return;
+        }
+        // Fallback: payload too large, persist normally.
+    }
+
+    // Reliable path: persist to DB (trigger fires pg_notify with "job_id:event_id").
     if let Err(e) = sqlx::query(
         "INSERT INTO generation_events (job_id, payload) VALUES ($1, $2)",
     )

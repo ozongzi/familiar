@@ -272,8 +272,23 @@ pub async fn sse_handler(
             // Wait for notification with timeout (heartbeat / stale detection).
             match tokio::time::timeout(Duration::from_secs(30), listener.recv()).await {
                 Ok(Ok(notification)) => {
-                    // Notification payload is "job_id:event_id".
                     let payload_str = notification.payload();
+
+                    // Fast path: inline token payload "I:{job_id}:{json}"
+                    if let Some(rest) = payload_str.strip_prefix("I:") {
+                        // rest = "{job_id}:{json}"  — UUID is 36 chars + ':'
+                        if rest.len() > 37 {
+                            let (job_str, event_json) = rest.split_at(36);
+                            let event_json = &event_json[1..]; // skip ':'
+                            let notif_job: Option<Uuid> = job_str.parse().ok();
+                            if notif_job == Some(job_id) && !event_json.is_empty() {
+                                yield Ok(Event::default().data(event_json.to_string()));
+                            }
+                        }
+                        continue;
+                    }
+
+                    // Reliable path: "job_id:event_id" — fetch from DB.
                     let parts: Vec<&str> = payload_str.splitn(2, ':').collect();
                     if parts.len() != 2 {
                         continue;

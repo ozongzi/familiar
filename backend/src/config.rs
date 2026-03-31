@@ -15,6 +15,7 @@ pub struct Config {
     pub mcp: Vec<McpServerConfig>,
     #[serde(default)]
     pub mcp_catalog: Vec<McpCatalogEntry>,
+    pub tavily_api_key: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -117,6 +118,7 @@ struct AppConfigRow {
     system_prompt: Option<String>,
     subagent_prompt: Option<String>,
     mcp_catalog: Option<Value>,
+    tavily_api_key: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -155,6 +157,7 @@ impl Default for Config {
             },
             mcp: vec![],
             mcp_catalog: vec![],
+            tavily_api_key: None,
         }
     }
 }
@@ -165,7 +168,7 @@ impl Config {
             r#"
             SELECT
                 public_path, artifacts_path, cheap_model, embedding_model,
-                server_port, system_prompt, subagent_prompt, mcp_catalog
+                server_port, system_prompt, subagent_prompt, mcp_catalog, tavily_api_key
             FROM app_config WHERE id = true
             "#,
         )
@@ -185,6 +188,7 @@ impl Config {
             cfg.server.subagent_prompt = r.subagent_prompt;
 
             if let Some(mc) = r.mcp_catalog { cfg.mcp_catalog = serde_json::from_value(mc).unwrap_or(cfg.mcp_catalog); }
+            cfg.tavily_api_key = r.tavily_api_key;
         }
 
         // Load Global MCPs
