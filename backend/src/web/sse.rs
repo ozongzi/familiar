@@ -132,7 +132,7 @@ pub async fn send_message_handler(
             })
             .collect();
         if !content.is_empty() {
-            parts.push(UserContent::Text(content.clone()));
+            parts.push(UserContent::Text { text: content.clone() });
         }
         parts
     };
@@ -469,7 +469,7 @@ pub async fn stream_interrupt_handler(
         state
             .persist_message_async(
                 conversation_id,
-                Message::User(vec![UserContent::Text(content)]),
+                Message::User(vec![UserContent::Text { text: content }]),
             )
             .await;
     }
@@ -511,7 +511,7 @@ pub async fn stream_answer_handler(
         state
             .persist_message_async(
                 conversation_id,
-                Message::User(vec![UserContent::Text(content)]),
+                Message::User(vec![UserContent::Text { text: content }]),
             )
             .await;
     }

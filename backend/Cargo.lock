@@ -21,9 +21,9 @@ dependencies = [
 
 [[package]]
 name = "agentix"
-version = "0.10.0"
+version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "19f3b4b53efbba56311f52c8d1a1a29b06826a8a33b0978b8655ce1c2e84a272"
+checksum = "80510cc6052ca86fff89b21f92e39977f59548c44596db3396ffb0405d69ceb1"
 dependencies = [
  "agentix-macros",
  "async-stream",

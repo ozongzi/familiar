@@ -444,7 +444,7 @@ pub async fn upload_file(
     .to_string();
 
     use agentix::Message;
-    let msg = Message::User(vec![agentix::UserContent::Text(content_str.clone())]);
+    let msg = Message::User(vec![agentix::UserContent::Text { text: content_str.clone() }]);
     state.persist_message(conv_id, &msg);
 
     Ok((StatusCode::CREATED, Json(resp)))

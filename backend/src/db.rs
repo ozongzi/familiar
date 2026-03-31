@@ -158,7 +158,7 @@ impl Db {
                     parts
                         .iter()
                         .filter_map(|p| match p {
-                            UserContent::Text(t) => Some(t.as_str()),
+                            UserContent::Text { text: t } => Some(t.as_str()),
                             _ => None,
                         })
                         .collect::<Vec<_>>()
@@ -443,11 +443,11 @@ pub fn row_to_message(row: MessageRow) -> Message {
             let raw = row.content.unwrap_or_default();
             if let Some(json) = raw.strip_prefix("__multimodal__:") {
                 let parts: Vec<UserContent> = serde_json::from_str(json).unwrap_or_else(|_| {
-                    vec![UserContent::Text(raw.to_string())]
+                    vec![UserContent::Text { text: raw.to_string() }]
                 });
                 Message::User(parts)
             } else {
-                Message::User(vec![UserContent::Text(raw)])
+                Message::User(vec![UserContent::Text { text: raw }])
             }
         }
     }

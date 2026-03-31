@@ -160,7 +160,7 @@ impl AppState {
                 let t: String = parts
                     .iter()
                     .filter_map(|p| match p {
-                        UserContent::Text(s) => Some(s.as_str()),
+                        UserContent::Text { text: s } => Some(s.as_str()),
                         _ => None,
                     })
                     .collect::<Vec<_>>()

@@ -41,7 +41,7 @@ impl Tool for SpawnSpell {
         }
 
         let http = reqwest::Client::new();
-        let history = vec![Message::User(vec![agentix::UserContent::Text(goal)])];
+        let history = vec![Message::User(vec![agentix::UserContent::Text { text: goal }])];
         let tools = Arc::clone(&self.tools);
 
         async_stream::stream! {
