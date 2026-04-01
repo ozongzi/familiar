@@ -104,78 +104,18 @@ export function ChatPage() {
   );
 
   const messagesRef = useRef<HTMLDivElement>(null);
-  const sentinelRef = useRef<HTMLDivElement>(null);
-  const lockedRef = useRef(true);
-  const userScrollingRef = useRef(false);
-  const [showScrollBtn, setShowScrollBtn] = useState(false);
-
-  // ── Detect user scroll: pointer/touch down = user is scrolling ───────────
-  useEffect(() => {
-    const el = messagesRef.current;
-    if (!el) return;
-    const onDown = () => { userScrollingRef.current = true; };
-    const onUp = () => { userScrollingRef.current = false; };
-    el.addEventListener("pointerdown", onDown);
-    el.addEventListener("pointerup", onUp);
-    el.addEventListener("pointercancel", onUp);
-    el.addEventListener("touchstart", onDown, { passive: true });
-    el.addEventListener("touchend", onUp);
-    return () => {
-      el.removeEventListener("pointerdown", onDown);
-      el.removeEventListener("pointerup", onUp);
-      el.removeEventListener("pointercancel", onUp);
-      el.removeEventListener("touchstart", onDown);
-      el.removeEventListener("touchend", onUp);
-    };
-  }, []);
-
-  // ── Scroll lock via scroll event ─────────────────────────────────────────
-  useEffect(() => {
-    const el = messagesRef.current;
-    if (!el) return;
-    const onScroll = () => {
-      const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 2;
-      if (userScrollingRef.current) {
-        // User-driven scroll: always update lock state
-        lockedRef.current = atBottom;
-        setShowScrollBtn(!atBottom);
-      } else if (atBottom) {
-        // Programmatic scroll reached bottom: re-lock
-        lockedRef.current = true;
-        setShowScrollBtn(false);
-      }
-    };
-    el.addEventListener("scroll", onScroll, { passive: true });
-    return () => el.removeEventListener("scroll", onScroll);
-  }, []);
 
   const scrollToBottom = useCallback(() => {
     const el = messagesRef.current;
     if (!el) return;
-    lockedRef.current = true;
     el.scrollTop = el.scrollHeight;
-    setShowScrollBtn(false);
   }, []);
-
-  // ── Auto-scroll: MutationObserver only while streaming ───────────────────
-  useEffect(() => {
-    if (status !== "streaming" && status !== "connecting") return;
-    const el = messagesRef.current;
-    if (!el) return;
-    const mo = new MutationObserver(() => {
-      if (lockedRef.current) {
-        el.scrollTop = el.scrollHeight;
-      }
-    });
-    mo.observe(el, { childList: true, subtree: true });
-    return () => mo.disconnect();
-  }, [status]);
 
   // ── Scroll to bottom on history load / conversation switch ────────────────
   useEffect(() => {
     if (status === "streaming" || status === "connecting") return;
-    if (lockedRef.current) scrollToBottom();
-  }, [bubbles.length, status, scrollToBottom]);
+    scrollToBottom();
+  }, [activeId, status, scrollToBottom]);
 
   // ── Load history when switching to a real conversation ─────────────────
   useEffect(() => {
@@ -296,22 +236,25 @@ export function ChatPage() {
     [renameConversation],
   );
 
+  const scrollToTop = useCallback(() => {
+    const el = messagesRef.current;
+    if (!el) return;
+    el.scrollTop = 0;
+  }, []);
+
   const handleSend = useCallback(
     (text: string, images?: string[]) => {
-      lockedRef.current = true;
       send(text, images);
-      scrollToBottom();
+      scrollToTop();
     },
-    [send, scrollToBottom],
+    [send, scrollToTop],
   );
 
   const handleInterrupt = useCallback(
     (text: string) => {
-      lockedRef.current = true;
       interrupt(text);
-      scrollToBottom();
     },
-    [interrupt, scrollToBottom],
+    [interrupt],
   );
 
   const handleAbort = useCallback(() => {
@@ -481,18 +424,7 @@ export function ChatPage() {
             </div>
           )}
 
-          <div ref={sentinelRef} style={{ height: 1, flexShrink: 0 }} />
         </div>
-        {showScrollBtn && (
-          <button
-            className={styles.scrollToBottomBtn}
-            onClick={scrollToBottom}
-            aria-label="跳到最新"
-            title="跳到最新"
-          >
-            <ScrollDownIcon />
-          </button>
-        )}
         </div>
 
         {/* Input — always enabled in draft mode */}
@@ -593,20 +525,3 @@ function NewChatIcon() {
   );
 }
 
-function ScrollDownIcon() {
-  return (
-    <svg
-      width="16"
-      height="16"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <polyline points="6 9 12 15 18 9" />
-    </svg>
-  );
-}

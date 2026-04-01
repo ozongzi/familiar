@@ -128,8 +128,7 @@
   font-family: var(--font-mono);
   color: var(--text-primary);
   line-height: 1.7;
-  max-height: 200px;
-  overflow-y: auto;
+  overflow-y: visible;
   white-space: pre-wrap;
   word-break: break-all;
 }
@@ -165,8 +164,7 @@
   font-family: var(--font-mono);
   line-height: 1.7;
   overflow-x: auto;
-  max-height: 280px;
-  overflow-y: auto;
+  overflow-y: visible;
 }
 .diffLine {
   display: block;
@@ -217,8 +215,7 @@
 }
 
 .codePreview {
-  max-height: 240px;
-  overflow-y: auto;
+  overflow-y: visible;
   overflow-x: auto;
 }
 .codePreviewPre {
