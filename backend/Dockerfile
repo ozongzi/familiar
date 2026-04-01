@@ -1,5 +1,5 @@
 # ── Build ─────────────────────────────────────────────────────────────────────
-FROM rust:1.86-slim AS builder
+FROM rust:latest AS builder
 
 RUN apt-get update && apt-get install -y \
     musl-tools pkg-config libssl-dev \
