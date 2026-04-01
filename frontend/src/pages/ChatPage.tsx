@@ -107,12 +107,6 @@ export function ChatPage() {
   const lastUserBubbleRef = useRef<HTMLDivElement>(null);
   const lastBubbleRef = useRef<HTMLDivElement>(null);
 
-  // ── On conversation switch: scroll so the last message is visible ─────────
-  useEffect(() => {
-    if (status === "streaming" || status === "connecting") return;
-    lastBubbleRef.current?.scrollIntoView({ block: "end", behavior: "instant" });
-  }, [activeId, status]);
-
   // ── Load history when switching to a real conversation ─────────────────
   useEffect(() => {
     if (!activeId || activeId === DRAFT_ID || !token) {
@@ -138,6 +132,11 @@ export function ChatPage() {
           setHistory(msgs);
           setHistoryLoading(false);
           reattach(activeId, token);
+          // Scroll to bottom after history renders
+          requestAnimationFrame(() => {
+            const el = messagesRef.current;
+            if (el) el.scrollTop = el.scrollHeight;
+          });
         }
       } catch {
         if (!cancelled) {
@@ -236,7 +235,9 @@ export function ChatPage() {
     (text: string, images?: string[]) => {
       send(text, images);
       requestAnimationFrame(() =>
-        lastUserBubbleRef.current?.scrollIntoView({ block: "start", behavior: "instant" })
+        requestAnimationFrame(() =>
+          lastUserBubbleRef.current?.scrollIntoView({ block: "start", behavior: "instant" })
+        )
       );
     },
     [send],
