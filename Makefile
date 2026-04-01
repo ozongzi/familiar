@@ -50,9 +50,7 @@ build-sandbox:
 		echo "✓ sandbox image built and pushed"; \
 	fi
 
-# ── Deploy (local cross-compile → scp binary + client, then restart) ─────────
-# scp/rsync first, restart last — never stop before copying so the running
-# process is never killed mid-tool-call by its own deploy.
+# ── Deploy: legacy (musl binary + scp) ───────────────────────────────────────
 deploy: all build-sandbox
 	scp $(BIN) $(HOST):/usr/local/bin/familiar.new
 	ssh $(HOST) "mv /usr/local/bin/familiar.new /usr/local/bin/familiar"
@@ -60,6 +58,14 @@ deploy: all build-sandbox
 	rsync -av --delete frontend/dist/ $(HOST):/srv/familiar/frontend/dist
 	ssh $(HOST) "systemctl restart familiar"
 	@echo "✓ deployed"
+
+# ── Deploy: docker compose (build frontend → push compose files → up) ─────────
+deploy-docker: build-client build-sandbox
+	rsync -av --delete frontend/dist/ $(HOST):/root/familiar/frontend/dist
+	rsync -av docker-compose.yml $(HOST):/root/familiar/
+	rsync -av backend/Dockerfile backend/Cargo.toml backend/Cargo.lock backend/src backend/migrations $(HOST):/root/familiar/backend/
+	ssh $(HOST) "cd /root/familiar && docker compose up -d --build"
+	@echo "✓ deployed (docker compose)"
 
 # ── Clean ─────────────────────────────────────────────────────────────────────
 clean:

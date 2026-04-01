@@ -22,17 +22,10 @@ RUN cargo build --release --target x86_64-unknown-linux-musl
 FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y \
-    podman \
-    fuse-overlayfs \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Allow rootless podman inside this container
-RUN echo "app:100000:65536" >> /etc/subuid && \
-    echo "app:100000:65536" >> /etc/subgid
-
-RUN useradd -m -u 1000 app
-USER app
+RUN mkdir -p /app/frontend/dist /app/artifacts
 
 COPY --from=builder \
     /build/target/x86_64-unknown-linux-musl/release/familiar \

@@ -120,8 +120,8 @@ impl Default for Config {
         };
 
         Self {
-            public_path: "/srv/familiar/frontend/dist".to_string(),
-            artifacts_path: "/root/workplace/artifacts".to_string(),
+            public_path: "/app/frontend/dist".to_string(),
+            artifacts_path: "/app/artifacts".to_string(),
             cheap_model: default_model.clone(),
             embedding: default_model,
             server: ServerConfig {
