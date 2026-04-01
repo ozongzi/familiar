@@ -292,6 +292,11 @@ pub async fn try_compact(
         return None;
     }
 
+    if raw.contains("<function_calls>") || raw.contains("<｜DSML｜") {
+        warn!(conversation = %ctx.conversation_id, "compact output looks like a tool call, discarding");
+        return None;
+    }
+
     let formatted = format_compact_summary(&raw);
 
     // Persist to DB
