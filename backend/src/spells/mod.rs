@@ -10,6 +10,7 @@ mod ui_spells;
 
 use history_spell::HistorySpell;
 use memory_spell::MemorySpell;
+pub use memory_spell::consolidate_conversation_memories;
 pub use memory_spell::load_memories_for_prompt;
 use plan_spell::PlanSpell;
 use skill_spell::SkillSpell;
@@ -67,7 +68,7 @@ pub fn build_all_spells(deps: SpellDeps) -> impl agentix::Tool {
                 conversation_id: deps.conversation_id,
             }
             + PlanSpell { pool: deps.pool.clone(), conversation_id: deps.conversation_id }
-            + MemorySpell { pool: deps.pool.clone(), user_id: deps.user_id, conversation_id: deps.conversation_id },
+            + MemorySpell { pool: deps.pool.clone(), user_id: deps.user_id, conversation_id: deps.conversation_id, embed: deps.embed.clone() },
     );
     if let Some(t) = subagent_tavily {
         subagent_bundle.push(t);
@@ -92,7 +93,7 @@ pub fn build_all_spells(deps: SpellDeps) -> impl agentix::Tool {
         }
         + HistorySpell {
             db: deps.db,
-            embedding: deps.embed,
+            embedding: deps.embed.clone(),
             conversation_id: deps.conversation_id,
         }
         + ManageMcpSpell {
@@ -110,6 +111,7 @@ pub fn build_all_spells(deps: SpellDeps) -> impl agentix::Tool {
             pool: deps.pool,
             user_id: deps.user_id,
             conversation_id: deps.conversation_id,
+            embed: deps.embed,
         };
 
     let mut tb = agentix::ToolBundle::new();

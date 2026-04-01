@@ -300,6 +300,14 @@ pub async fn try_compact(
     .execute(&ctx.pool)
     .await;
 
+    // Promote high-value conversation memories to user scope
+    crate::spells::consolidate_conversation_memories(
+        &ctx.pool,
+        ctx.user_id,
+        ctx.conversation_id,
+    )
+    .await;
+
     // Emit SSE event so the frontend knows compaction happened
     crate::worker::emit(ctx, serde_json::json!({"type": "compact", "summary": &formatted})).await;
 
