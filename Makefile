@@ -1,6 +1,6 @@
-HOST = root@familiar.fhmmt.games
-BIN  = backend/target/x86_64-unknown-linux-musl/release/familiar
-REMOTE_SRC = /root
+HOST       = root@familiar.fhmmt.games
+BIN        = backend/target/x86_64-unknown-linux-musl/release/familiar
+REMOTE_DIR = /opt/familiar
 
 .PHONY: build build-client dev deploy clean
 
@@ -59,13 +59,22 @@ deploy: all build-sandbox
 	ssh $(HOST) "systemctl restart familiar"
 	@echo "✓ deployed"
 
-# ── Deploy: docker compose (build frontend → push compose files → up) ─────────
-deploy-docker: build-client build-sandbox
-	rsync -av --delete frontend/dist/ $(HOST):/root/familiar/frontend/dist
-	rsync -av docker-compose.yml $(HOST):/root/familiar/
-	rsync -av backend/Dockerfile backend/Cargo.toml backend/Cargo.lock backend/src backend/migrations $(HOST):/root/familiar/backend/
-	ssh $(HOST) "cd /root/familiar && docker compose up -d --build"
-	@echo "✓ deployed (docker compose)"
+# ── Deploy: local build → rsync → docker compose up (no build on server) ──────
+# 1. Cross-compile backend locally
+# 2. Build frontend locally
+# 3. Copy binary into backend/ so Dockerfile can COPY it
+# 4. rsync everything to server
+# 5. docker compose up --build (just rebuilds the tiny runtime image, fast)
+deploy: build build-client
+	cp $(BIN) backend/familiar
+	rsync -av --delete frontend/dist/    $(HOST):$(REMOTE_DIR)/frontend/dist/
+	rsync -av docker-compose.yml         $(HOST):$(REMOTE_DIR)/
+	rsync -av backend/Dockerfile         $(HOST):$(REMOTE_DIR)/backend/
+	rsync -av backend/familiar           $(HOST):$(REMOTE_DIR)/backend/
+	rsync -av backend/migrations/        $(HOST):$(REMOTE_DIR)/backend/migrations/
+	ssh $(HOST) "cd $(REMOTE_DIR) && docker compose up -d --build"
+	rm -f backend/familiar
+	@echo "✓ deployed"
 
 # ── Clean ─────────────────────────────────────────────────────────────────────
 clean:
