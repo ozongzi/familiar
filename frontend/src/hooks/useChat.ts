@@ -181,6 +181,7 @@ export function useChat(
   const spawnToolArgsRef = useRef<
     Map<string, { name: string; argsRaw: string }>
   >(new Map());
+  const activeToolKeysRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     onConversationCreatedRef.current = options.onConversationCreated;
@@ -446,6 +447,7 @@ export function useChat(
     setBubbles([]);
     activeTextKeyRef.current = null;
     spawnToolArgsRef.current.clear();
+    activeToolKeysRef.current.clear();
     updateStatus("idle");
     setErrorMsg(null);
     attachedConvRef.current = null;
@@ -533,34 +535,29 @@ export function useChat(
           });
           return false;
         }
-        const toolExists = (() => {
-          let found = false;
-          setBubbles((prev) => {
-            found = prev.some((b) => b.key === `tool-${event.id}` && b.kind === "tool");
-            if (found) {
-              return prev.map((b) => {
-                if (b.kind === "tool" && b.key === `tool-${event.id}` && b.name === "visualize") {
-                  const rawArgs = (b._rawArgs ?? "") + event.delta;
-                  const parsed = extractWidgetCode(tryParseWidgetArgs(rawArgs));
-                  const streamed = parsed ?? extractStreamingWidgetCode(rawArgs);
-                  return { ...b, _rawArgs: rawArgs, widgetCode: streamed ?? b.widgetCode };
-                }
-                if (b.key !== `tool-${event.id}` || b.kind !== "tool") return b;
-                const newArgsRaw = b.argsRaw + event.delta;
-                const desc = extractDescription(newArgsRaw);
-                return { ...b, argsRaw: newArgsRaw, description: desc ?? b.description };
-              });
-            }
-            return prev;
-          });
-          return found;
-        })();
-        if (!toolExists) {
+        const toolKey = `tool-${event.id}`;
+        if (activeToolKeysRef.current.has(toolKey)) {
+          setBubbles((prev) =>
+            prev.map((b) => {
+              if (b.kind !== "tool" || b.key !== toolKey) return b;
+              if (b.name === "visualize") {
+                const rawArgs = (b._rawArgs ?? "") + event.delta;
+                const parsed = extractWidgetCode(tryParseWidgetArgs(rawArgs));
+                const streamed = parsed ?? extractStreamingWidgetCode(rawArgs);
+                return { ...b, _rawArgs: rawArgs, widgetCode: streamed ?? b.widgetCode };
+              }
+              const newArgsRaw = b.argsRaw + event.delta;
+              const desc = extractDescription(newArgsRaw);
+              return { ...b, argsRaw: newArgsRaw, description: desc ?? b.description };
+            }),
+          );
+        } else {
+          activeToolKeysRef.current.add(toolKey);
           sealActiveText();
           setBubbles((prev) => {
             const toolBubble: ToolBubble = {
               kind: "tool",
-              key: `tool-${event.id}`,
+              key: toolKey,
               role: "tool",
               name: event.name,
               description: extractDescription(event.delta) ?? "",
