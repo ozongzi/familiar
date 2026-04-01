@@ -66,7 +66,7 @@ pub fn build_all_spells(deps: SpellDeps) -> impl agentix::Tool {
                 conversation_id: deps.conversation_id,
             }
             + PlanSpell { pool: deps.pool.clone(), conversation_id: deps.conversation_id }
-            + MemorySpell { pool: deps.pool.clone(), user_id: deps.user_id },
+            + MemorySpell { pool: deps.pool.clone(), user_id: deps.user_id, conversation_id: deps.conversation_id },
     );
     if let Some(t) = subagent_tavily {
         subagent_bundle.push(t);
@@ -107,6 +107,7 @@ pub fn build_all_spells(deps: SpellDeps) -> impl agentix::Tool {
         + MemorySpell {
             pool: deps.pool,
             user_id: deps.user_id,
+            conversation_id: deps.conversation_id,
         };
 
     let mut tb = agentix::ToolBundle::new();
