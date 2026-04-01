@@ -293,12 +293,7 @@ impl Tool for TavilySpell {
                     let urls: Vec<&str> = body
                         .get("urls")
                         .and_then(|v| v.as_array())
-                        .map(|arr| {
-                            arr.iter()
-                                .take(50)
-                                .filter_map(|v| v.as_str())
-                                .collect()
-                        })
+                        .map(|arr| arr.iter().take(50).filter_map(|v| v.as_str()).collect())
                         .unwrap_or_default();
                     if urls.is_empty() {
                         "No URLs found.".to_string()
@@ -355,10 +350,8 @@ impl Tool for TavilySpell {
                         .iter()
                         .map(|r| {
                             let url = r.get("url").and_then(|v| v.as_str()).unwrap_or("");
-                            let content = r
-                                .get("raw_content")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("");
+                            let content =
+                                r.get("raw_content").and_then(|v| v.as_str()).unwrap_or("");
                             let content = truncate(content, MAX_RAW_CHARS);
                             format!("URL: {url}\n{content}\n")
                         })

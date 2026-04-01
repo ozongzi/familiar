@@ -55,14 +55,19 @@ pub async fn download_file(
 
     let user_id = user_id_from_token(&state, &token).await?;
 
-    let conv_id = q.conversation_id.ok_or_else(|| AppError::bad_request("缺少 conversation_id"))?;
+    let conv_id = q
+        .conversation_id
+        .ok_or_else(|| AppError::bad_request("缺少 conversation_id"))?;
 
     // Resolve to an absolute path.
     // If the path starts with /workspace, map it back to the host path.
     let q_path = std::path::PathBuf::from(&q.path);
     let path = if q_path.starts_with("/workspace") {
         let relative = q_path.strip_prefix("/workspace").unwrap();
-        state.sandbox.get_conversation_dir(user_id, conv_id).join(relative)
+        state
+            .sandbox
+            .get_conversation_dir(user_id, conv_id)
+            .join(relative)
     } else {
         q_path
     };
@@ -163,12 +168,17 @@ pub async fn preview_file(
         .ok_or_else(AppError::unauthorized)?;
 
     let user_id = user_id_from_token(&state, &token).await?;
-    let conv_id = q.conversation_id.ok_or_else(|| AppError::bad_request("缺少 conversation_id"))?;
+    let conv_id = q
+        .conversation_id
+        .ok_or_else(|| AppError::bad_request("缺少 conversation_id"))?;
 
     let q_path = std::path::PathBuf::from(&q.path);
     let path = if q_path.starts_with("/workspace") {
         let relative = q_path.strip_prefix("/workspace").unwrap();
-        state.sandbox.get_conversation_dir(user_id, conv_id).join(relative)
+        state
+            .sandbox
+            .get_conversation_dir(user_id, conv_id)
+            .join(relative)
     } else {
         q_path
     };
@@ -444,7 +454,9 @@ pub async fn upload_file(
     .to_string();
 
     use agentix::Message;
-    let msg = Message::User(vec![agentix::UserContent::Text { text: content_str.clone() }]);
+    let msg = Message::User(vec![agentix::UserContent::Text {
+        text: content_str.clone(),
+    }]);
     state.persist_message(conv_id, &msg);
 
     Ok((StatusCode::CREATED, Json(resp)))

@@ -1,14 +1,15 @@
 mod audit;
+mod compact;
 mod config;
 mod db;
 mod embedding;
 mod errors;
+mod prompt;
 mod prompt_template;
 mod sandbox;
 mod spells;
 mod state;
 mod web;
-mod compact;
 mod worker;
 
 use std::sync::Arc;

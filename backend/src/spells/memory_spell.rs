@@ -230,7 +230,11 @@ impl Tool for MemorySpell {
 
         rows.iter()
             .map(|(id, content, cat, conv)| {
-                let scope_tag = if conv.is_some() { "[对话]" } else { "[用户]" };
+                let scope_tag = if conv.is_some() {
+                    "[对话]"
+                } else {
+                    "[用户]"
+                };
                 format!("{scope_tag} [{cat}] #{id} {content}")
             })
             .collect::<Vec<_>>()
@@ -341,7 +345,10 @@ pub async fn load_memories_for_prompt(
                 lines.extend(entries.clone());
             }
         }
-        sections.push(format!("### 关于用户的记忆（跨对话）\n{}", lines.join("\n")));
+        sections.push(format!(
+            "### 关于用户的记忆（跨对话）\n{}",
+            lines.join("\n")
+        ));
     }
 
     if !conv_rows.is_empty() {

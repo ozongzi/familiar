@@ -141,7 +141,8 @@ pub async fn github_callback(
         "github_login",
         Some(serde_json::json!({ "github_id": github_id, "login": login })),
         None,
-    ).await;
+    )
+    .await;
 
     let is_new = existing.is_none();
 
@@ -159,9 +160,17 @@ pub async fn github_callback(
 
     let is_tauri = params.state.as_deref() == Some("tauri");
     let redirect_url = if is_tauri {
-        format!("familiar://auth?token={}&is_new={}", token, if is_new { "1" } else { "0" })
+        format!(
+            "familiar://auth?token={}&is_new={}",
+            token,
+            if is_new { "1" } else { "0" }
+        )
     } else {
-        format!("/#token={}&is_new={}", token, if is_new { "1" } else { "0" })
+        format!(
+            "/#token={}&is_new={}",
+            token,
+            if is_new { "1" } else { "0" }
+        )
     };
     Ok(Redirect::to(&redirect_url))
 }
@@ -171,7 +180,9 @@ fn generate_token() -> String {
     let mut bytes = [0u8; 32];
     getrandom::getrandom(&mut bytes).expect("getrandom failed");
     let mut s = String::with_capacity(64);
-    for b in bytes { write!(s, "{b:02x}").unwrap(); }
+    for b in bytes {
+        write!(s, "{b:02x}").unwrap();
+    }
     s
 }
 
@@ -180,7 +191,9 @@ fn generate_invite_code() -> String {
     let mut bytes = [0u8; 5];
     getrandom::getrandom(&mut bytes).expect("getrandom failed");
     let mut s = String::with_capacity(10);
-    for b in bytes { write!(s, "{b:02x}").unwrap(); }
+    for b in bytes {
+        write!(s, "{b:02x}").unwrap();
+    }
     s
 }
 

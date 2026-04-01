@@ -10,7 +10,10 @@ pub fn render_prompt(template: &str, vars: &[(&str, &str)]) -> String {
     let now = chrono::Local::now();
 
     let mut out = template
-        .replace("{{CURRENT_TIME}}", &now.format("%Y-%m-%d %H:%M:%S %Z").to_string())
+        .replace(
+            "{{CURRENT_TIME}}",
+            &now.format("%Y-%m-%d %H:%M:%S %Z").to_string(),
+        )
         .replace("{{CURRENT_DATE}}", &now.format("%Y-%m-%d").to_string());
 
     for (k, v) in vars {

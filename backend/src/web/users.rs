@@ -19,7 +19,6 @@ pub struct UserResponse {
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
-
 pub async fn get_me(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -31,14 +30,22 @@ pub async fn get_me(
         .ok_or_else(|| AppError::not_found("用户不存在"))?;
 
     Ok(Json(UserResponse {
-        id: row.try_get("id").map_err(|_| AppError::internal("db error"))?,
-        name: row.try_get("name").map_err(|_| AppError::internal("db error"))?,
+        id: row
+            .try_get("id")
+            .map_err(|_| AppError::internal("db error"))?,
+        name: row
+            .try_get("name")
+            .map_err(|_| AppError::internal("db error"))?,
         email: row.try_get("email").ok(),
         display_name: row.try_get("display_name").ok(),
         avatar_path: row.try_get("avatar_path").ok(),
-        is_admin: row.try_get("is_admin").map_err(|_| AppError::internal("db error"))?,
+        is_admin: row
+            .try_get("is_admin")
+            .map_err(|_| AppError::internal("db error"))?,
         last_login_at: row.try_get("last_login_at").ok(),
-        created_at: row.try_get("created_at").map_err(|_| AppError::internal("db error"))?,
+        created_at: row
+            .try_get("created_at")
+            .map_err(|_| AppError::internal("db error"))?,
     }))
 }
 
@@ -57,7 +64,8 @@ pub async fn update_profile(
     if let Some(ref email) = req.email
         && !email.is_empty()
     {
-        let valid = email.split_once('@')
+        let valid = email
+            .split_once('@')
             .map(|(local, domain)| {
                 !local.is_empty()
                     && domain.contains('.')
@@ -92,9 +100,9 @@ pub async fn update_profile(
         Some(auth.user_id),
         Some(auth.user_id),
         "update_profile",
-        Some(serde_json::json!({ 
+        Some(serde_json::json!({
             "email": req.email,
-            "display_name": req.display_name 
+            "display_name": req.display_name
         })),
         None,
     )

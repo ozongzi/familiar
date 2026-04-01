@@ -107,7 +107,8 @@ pub async fn create_mcp(
         "mcp.create",
         Some(serde_json::json!({ "name": req.name, "type": req.r#type })),
         None,
-    ).await;
+    )
+    .await;
 
     Ok(Json(McpResponse::from(row)))
 }
@@ -145,7 +146,8 @@ pub async fn update_mcp(
         "mcp.update",
         Some(serde_json::json!({ "id": id, "name": req.name, "type": req.r#type })),
         None,
-    ).await;
+    )
+    .await;
 
     Ok(Json(McpResponse::from(row)))
 }
@@ -184,7 +186,8 @@ pub async fn delete_mcp(
         "mcp.delete",
         Some(serde_json::json!({ "id": id, "name": row.name })),
         None,
-    ).await;
+    )
+    .await;
 
     Ok(Json(json!({ "ok": true })))
 }

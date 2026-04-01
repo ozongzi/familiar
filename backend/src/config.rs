@@ -153,39 +153,79 @@ impl Config {
         let mut cfg = Self::default();
 
         if let Some(r) = row {
-            if let Some(pp) = r.public_path { cfg.public_path = pp; }
-            if let Some(ap) = r.artifacts_path { cfg.artifacts_path = ap; }
-            if let Some(cm) = r.cheap_model { cfg.cheap_model = serde_json::from_value(cm).unwrap_or(cfg.cheap_model); }
-            if let Some(em) = r.embedding_model { cfg.embedding = serde_json::from_value(em).unwrap_or(cfg.embedding); }
+            if let Some(pp) = r.public_path {
+                cfg.public_path = pp;
+            }
+            if let Some(ap) = r.artifacts_path {
+                cfg.artifacts_path = ap;
+            }
+            if let Some(cm) = r.cheap_model {
+                cfg.cheap_model = serde_json::from_value(cm).unwrap_or(cfg.cheap_model);
+            }
+            if let Some(em) = r.embedding_model {
+                cfg.embedding = serde_json::from_value(em).unwrap_or(cfg.embedding);
+            }
 
-            if let Some(port) = r.server_port { cfg.server.port = port as u16; }
+            if let Some(port) = r.server_port {
+                cfg.server.port = port as u16;
+            }
             cfg.server.system_prompt = r.system_prompt;
             cfg.server.subagent_prompt = r.subagent_prompt;
 
-            if let Some(mc) = r.mcp_catalog { cfg.mcp_catalog = serde_json::from_value(mc).unwrap_or(cfg.mcp_catalog); }
+            if let Some(mc) = r.mcp_catalog {
+                cfg.mcp_catalog = serde_json::from_value(mc).unwrap_or(cfg.mcp_catalog);
+            }
             cfg.tavily_api_key = r.tavily_api_key;
         }
 
         // Load Global MCPs
-        let mcps = sqlx::query_as::<_, GlobalMcp>("SELECT * FROM global_mcps ORDER BY created_at ASC")
-            .fetch_all(pool)
-            .await?;
+        let mcps =
+            sqlx::query_as::<_, GlobalMcp>("SELECT * FROM global_mcps ORDER BY created_at ASC")
+                .fetch_all(pool)
+                .await?;
 
-        cfg.mcp = mcps.into_iter().map(|m| {
-            match m.r#type.as_str() {
+        cfg.mcp = mcps
+            .into_iter()
+            .map(|m| match m.r#type.as_str() {
                 "http" => {
-                    let url = m.config.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let url = m
+                        .config
+                        .get("url")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
                     McpServerConfig::Http { name: m.name, url }
-                },
+                }
                 "stdio" => {
-                    let command = m.config.get("command").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                    let args = m.config.get("args").and_then(|v| serde_json::from_value(v.clone()).ok()).unwrap_or_default();
-                    let env = m.config.get("env").and_then(|v| serde_json::from_value(v.clone()).ok()).unwrap_or_default();
-                    McpServerConfig::Studio { name: m.name, command, args, env }
+                    let command = m
+                        .config
+                        .get("command")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let args = m
+                        .config
+                        .get("args")
+                        .and_then(|v| serde_json::from_value(v.clone()).ok())
+                        .unwrap_or_default();
+                    let env = m
+                        .config
+                        .get("env")
+                        .and_then(|v| serde_json::from_value(v.clone()).ok())
+                        .unwrap_or_default();
+                    McpServerConfig::Studio {
+                        name: m.name,
+                        command,
+                        args,
+                        env,
+                    }
+                }
+                _ => McpServerConfig::Http {
+                    name: m.name,
+                    url: "".to_string(),
                 },
-                _ => McpServerConfig::Http { name: m.name, url: "".to_string() },
-            }
-        }).collect();
+            })
+            .collect();
 
         Ok(cfg)
     }
@@ -228,9 +268,5 @@ impl Config {
 
     pub fn system_prompt(&self) -> Option<String> {
         self.server.system_prompt.clone()
-    }
-
-    pub(crate) fn subagent_prompt(&self) -> Option<String> {
-        self.server.subagent_prompt.clone()
     }
 }

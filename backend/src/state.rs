@@ -64,9 +64,7 @@ impl AppState {
         // Use a transaction-scoped advisory lock keyed on the conversation UUID.
         // This prevents two concurrent requests from both passing the "no running
         // job" check and creating duplicate workers (TOCTOU race).
-        let lock_key = i64::from_ne_bytes(
-            conversation_id.as_bytes()[..8].try_into().unwrap(),
-        );
+        let lock_key = i64::from_ne_bytes(conversation_id.as_bytes()[..8].try_into().unwrap());
 
         let mut tx = self.pool.begin().await?;
 
@@ -149,9 +147,9 @@ impl AppState {
     }
 
     pub async fn persist_message_async(&self, conversation_id: Uuid, msg: Message) -> Option<i64> {
-        use agentix::UserContent;
-        use crate::embedding::EmbeddingClient;
         use crate::db::to_vector;
+        use crate::embedding::EmbeddingClient;
+        use agentix::UserContent;
 
         let db = self.db.clone();
 
@@ -167,7 +165,9 @@ impl AppState {
                     .join("");
                 if t.is_empty() { None } else { Some(t) }
             }
-            Message::Assistant { content: Some(c), .. } if !c.is_empty() => Some(c.clone()),
+            Message::Assistant {
+                content: Some(c), ..
+            } if !c.is_empty() => Some(c.clone()),
             _ => None,
         };
 

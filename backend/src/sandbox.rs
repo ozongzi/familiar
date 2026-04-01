@@ -48,9 +48,10 @@ impl SandboxManager {
                         .args(["start", &container_name])
                         .status();
                     if let Ok(s) = start_status
-                        && s.success() {
-                            return Ok(container_name);
-                        }
+                        && s.success()
+                    {
+                        return Ok(container_name);
+                    }
                     Err("Failed to start container".into())
                 }
             }
@@ -79,9 +80,10 @@ impl SandboxManager {
                     .status();
 
                 if let Ok(s) = run_status
-                    && s.success() {
-                        return Ok(container_name);
-                    }
+                    && s.success()
+                {
+                    return Ok(container_name);
+                }
                 Err("Failed to create container".into())
             }
         }

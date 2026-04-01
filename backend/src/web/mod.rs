@@ -15,36 +15,38 @@ pub mod users;
 use std::{path::Path, sync::Arc};
 
 use admin::{
-    create_app_skill, delete_app_skill, get_admin_config, list_app_skills, update_admin_config,
-    update_app_skill, list_users, create_user, update_user, delete_user, reset_user_password,
-    list_audit_logs,
-    get_token_usage, get_token_usage_by_user, get_token_usage_conversations, get_token_usage_daily,
-    list_global_mcps, create_global_mcp, update_global_mcp, delete_global_mcp,
+    create_app_skill, create_global_mcp, create_user, delete_app_skill, delete_global_mcp,
+    delete_user, get_admin_config, get_token_usage, get_token_usage_by_user,
+    get_token_usage_conversations, get_token_usage_daily, list_app_skills, list_audit_logs,
+    list_global_mcps, list_users, reset_user_password, update_admin_config, update_app_skill,
+    update_global_mcp, update_user,
 };
 use axum::extract::DefaultBodyLimit;
+use axum::http::HeaderValue;
 use axum::{
     Router,
     routing::{delete, get, patch, post, put},
 };
 use mcps::{create_mcp, delete_mcp, list_mcps, update_mcp};
 use models::{
-    list_models, create_model, update_model, delete_model,
-    admin_list_models, admin_create_model, admin_update_model, admin_delete_model,
-    admin_set_default_model,
+    admin_create_model, admin_delete_model, admin_list_models, admin_set_default_model,
+    admin_update_model, create_model, delete_model, list_models, update_model,
 };
 use settings::{
     create_skill, delete_skill, get_settings, list_skills, update_settings, update_skill,
 };
 use sqlx::PgPool;
 use tower_http::cors::{Any, CorsLayer};
-use axum::http::HeaderValue;
 use tower_http::services::{ServeDir, ServeFile};
 
 use conversations::*;
-use files::{download_file, preview_file, upload_file, upload_avatar, get_avatar};
+use files::{download_file, get_avatar, preview_file, upload_avatar, upload_file};
 use history::*;
 use sessions::*;
-use sse::{send_message_handler, sse_handler, stream_abort_handler, stream_interrupt_handler, stream_answer_handler, reattach_handler, branch_handler};
+use sse::{
+    branch_handler, reattach_handler, send_message_handler, sse_handler, stream_abort_handler,
+    stream_answer_handler, stream_interrupt_handler,
+};
 use users::*;
 
 /// Web-layer application state — cheaply cloneable.
@@ -86,7 +88,10 @@ pub fn create_router(state: AppState, allowed_origin: Option<&str>) -> Router {
         .route("/api/sessions", post(login))
         .route("/api/sessions", delete(logout))
         .route("/api/auth/github", get(github_oauth::github_login))
-        .route("/api/auth/github/callback", get(github_oauth::github_callback))
+        .route(
+            "/api/auth/github/callback",
+            get(github_oauth::github_callback),
+        )
         // ── Users ─────────────────────────────────────────────────────────────
         .route("/api/users/me", get(get_me))
         .route("/api/users/me/profile", put(update_profile))
@@ -113,12 +118,21 @@ pub fn create_router(state: AppState, allowed_origin: Option<&str>) -> Router {
         .route("/api/admin/users", post(create_user))
         .route("/api/admin/users/{id}", put(update_user))
         .route("/api/admin/users/{id}", delete(delete_user))
-        .route("/api/admin/users/{id}/reset-password", post(reset_user_password))
+        .route(
+            "/api/admin/users/{id}/reset-password",
+            post(reset_user_password),
+        )
         // ── Admin Audit Logs ─────────────────────────────────────────────────
         .route("/api/admin/audit-logs", get(list_audit_logs))
         .route("/api/admin/token-usage", get(get_token_usage))
-        .route("/api/admin/token-usage/by-user", get(get_token_usage_by_user))
-        .route("/api/admin/token-usage/conversations", get(get_token_usage_conversations))
+        .route(
+            "/api/admin/token-usage/by-user",
+            get(get_token_usage_by_user),
+        )
+        .route(
+            "/api/admin/token-usage/conversations",
+            get(get_token_usage_conversations),
+        )
         .route("/api/admin/token-usage/daily", get(get_token_usage_daily))
         // ── User Skills (per-user) ─────────────────────────────────────────────
         .route("/api/skills", get(list_skills))
@@ -148,7 +162,10 @@ pub fn create_router(state: AppState, allowed_origin: Option<&str>) -> Router {
         .route("/api/admin/models", post(admin_create_model))
         .route("/api/admin/models/{id}", put(admin_update_model))
         .route("/api/admin/models/{id}", delete(admin_delete_model))
-        .route("/api/admin/models/{id}/default", post(admin_set_default_model))
+        .route(
+            "/api/admin/models/{id}/default",
+            post(admin_set_default_model),
+        )
         // ── File download / preview ───────────────────────────────────────────
         .route("/api/files", get(download_file))
         .route("/api/files", post(upload_file))

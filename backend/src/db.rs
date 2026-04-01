@@ -61,13 +61,12 @@ impl Db {
         let now = unix_now();
         let mut tx = self.pool.begin().await?;
 
-        let parent_id: Option<i64> = sqlx::query_scalar(
-            "SELECT active_message_id FROM conversations WHERE id = $1",
-        )
-        .bind(conversation_id)
-        .fetch_optional(&mut *tx)
-        .await?
-        .flatten();
+        let parent_id: Option<i64> =
+            sqlx::query_scalar("SELECT active_message_id FROM conversations WHERE id = $1")
+                .bind(conversation_id)
+                .fetch_optional(&mut *tx)
+                .await?
+                .flatten();
 
         let row_id: i64 = sqlx::query_scalar(
             r#"
@@ -166,30 +165,43 @@ impl Db {
                 };
                 ("user", Some(content), None, None, None)
             }
-            Message::Assistant { content, reasoning, tool_calls } => {
+            Message::Assistant {
+                content,
+                reasoning,
+                tool_calls,
+            } => {
                 let tc_json = if tool_calls.is_empty() {
                     None
                 } else {
                     serde_json::to_string(tool_calls).ok()
                 };
-                ("assistant", content.clone(), tc_json, None, reasoning.clone())
+                (
+                    "assistant",
+                    content.clone(),
+                    tc_json,
+                    None,
+                    reasoning.clone(),
+                )
             }
-            Message::ToolResult { call_id, content } => {
-                ("tool", Some(content.clone()), None, Some(call_id.clone()), None)
-            }
+            Message::ToolResult { call_id, content } => (
+                "tool",
+                Some(content.clone()),
+                None,
+                Some(call_id.clone()),
+                None,
+            ),
         };
         let is_summary = false;
         let now = unix_now();
 
         let mut tx = self.pool.begin().await?;
 
-        let parent_id: Option<i64> = sqlx::query_scalar(
-            "SELECT active_message_id FROM conversations WHERE id = $1",
-        )
-        .bind(conversation_id)
-        .fetch_optional(&mut *tx)
-        .await?
-        .flatten();
+        let parent_id: Option<i64> =
+            sqlx::query_scalar("SELECT active_message_id FROM conversations WHERE id = $1")
+                .bind(conversation_id)
+                .fetch_optional(&mut *tx)
+                .await?
+                .flatten();
 
         let row_id: i64 = sqlx::query_scalar(
             r#"
@@ -443,7 +455,9 @@ pub fn row_to_message(row: MessageRow) -> Message {
             let raw = row.content.unwrap_or_default();
             if let Some(json) = raw.strip_prefix("__multimodal__:") {
                 let parts: Vec<UserContent> = serde_json::from_str(json).unwrap_or_else(|_| {
-                    vec![UserContent::Text { text: raw.to_string() }]
+                    vec![UserContent::Text {
+                        text: raw.to_string(),
+                    }]
                 });
                 Message::User(parts)
             } else {

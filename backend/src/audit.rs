@@ -61,10 +61,7 @@ pub struct AuditLogPage {
     pub per_page: u32,
 }
 
-pub async fn query_audit_logs(
-    pool: &PgPool,
-    query: AuditLogQuery,
-) -> anyhow::Result<AuditLogPage> {
+pub async fn query_audit_logs(pool: &PgPool, query: AuditLogQuery) -> anyhow::Result<AuditLogPage> {
     let page = query.page.unwrap_or(1).max(1);
     let per_page = query.per_page.unwrap_or(30).clamp(1, 100);
     let offset = (page - 1) * per_page;
@@ -150,7 +147,9 @@ pub async fn query_audit_logs(
         ORDER BY al.created_at DESC
         LIMIT ${} OFFSET ${}
         "#,
-        where_clause, bind_idx, bind_idx + 1
+        where_clause,
+        bind_idx,
+        bind_idx + 1
     );
 
     let mut fetch_query = sqlx::query(&fetch_sql);
@@ -184,7 +183,9 @@ pub async fn query_audit_logs(
             action: row.try_get("action").unwrap_or_default(),
             details: row.try_get("details").ok(),
             ip_address: row.try_get("ip_address").ok(),
-            created_at: row.try_get("created_at").unwrap_or_else(|_| chrono::Utc::now()),
+            created_at: row
+                .try_get("created_at")
+                .unwrap_or_else(|_| chrono::Utc::now()),
         })
         .collect();
 

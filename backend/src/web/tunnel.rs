@@ -6,6 +6,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use agentix::McpTool;
+use agentix::Tool;
 use axum::{
     extract::{
         State, WebSocketUpgrade,
@@ -21,7 +22,6 @@ use rmcp::{
 use serde_json::Value;
 use tokio::sync::Mutex;
 use uuid::Uuid;
-use agentix::Tool;
 
 use crate::{
     errors::AppError,

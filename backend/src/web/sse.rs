@@ -84,8 +84,12 @@ async fn resolve_job(
         })?
         .ok_or_else(|| AppError::not_found("流不存在"))?;
 
-    let conv_id: Uuid = row.try_get("conversation_id").map_err(|_| AppError::internal("数据库错误"))?;
-    let owner_id: Uuid = row.try_get("user_id").map_err(|_| AppError::internal("数据库错误"))?;
+    let conv_id: Uuid = row
+        .try_get("conversation_id")
+        .map_err(|_| AppError::internal("数据库错误"))?;
+    let owner_id: Uuid = row
+        .try_get("user_id")
+        .map_err(|_| AppError::internal("数据库错误"))?;
 
     if owner_id != caller_user_id {
         return Err(AppError::forbidden("无权访问该流"));
@@ -132,7 +136,9 @@ pub async fn send_message_handler(
             })
             .collect();
         if !content.is_empty() {
-            parts.push(UserContent::Text { text: content.clone() });
+            parts.push(UserContent::Text {
+                text: content.clone(),
+            });
         }
         parts
     };
@@ -380,7 +386,7 @@ pub async fn reattach_handler(
     let job_id: Option<Uuid> = sqlx::query_scalar(
         "SELECT id FROM generation_jobs \
          WHERE conversation_id = $1 AND status IN ('pending', 'running') \
-         ORDER BY created_at DESC LIMIT 1"
+         ORDER BY created_at DESC LIMIT 1",
     )
     .bind(conversation_id)
     .fetch_optional(&state.pool)
@@ -405,31 +411,30 @@ pub async fn branch_handler(
 ) -> Result<impl IntoResponse, AppError> {
     verify_conversation_owner(&state, conversation_id, auth.user_id).await?;
 
-    let parent_id: Option<i64> = sqlx::query_scalar(
-        "SELECT parent_id FROM messages WHERE id = $1"
-    )
-    .bind(body.message_id)
-    .fetch_optional(&state.pool)
-    .await
-    .map_err(|e| AppError::internal(&e.to_string()))?
-    .flatten();
+    let parent_id: Option<i64> = sqlx::query_scalar("SELECT parent_id FROM messages WHERE id = $1")
+        .bind(body.message_id)
+        .fetch_optional(&state.pool)
+        .await
+        .map_err(|e| AppError::internal(&e.to_string()))?
+        .flatten();
 
     // When the edited message is the root (parent_id IS NULL), reset
     // active_message_id to NULL so the next insert becomes a new root node.
     // Otherwise point at the parent so the new message threads correctly.
     match parent_id {
         Some(pid) => {
-            state.db.branch(conversation_id, pid).await
+            state
+                .db
+                .branch(conversation_id, pid)
+                .await
                 .map_err(|e| AppError::internal(&e.to_string()))?;
         }
         None => {
-            sqlx::query(
-                "UPDATE conversations SET active_message_id = NULL WHERE id = $1"
-            )
-            .bind(conversation_id)
-            .execute(&state.pool)
-            .await
-            .map_err(|e| AppError::internal(&e.to_string()))?;
+            sqlx::query("UPDATE conversations SET active_message_id = NULL WHERE id = $1")
+                .bind(conversation_id)
+                .execute(&state.pool)
+                .await
+                .map_err(|e| AppError::internal(&e.to_string()))?;
         }
     }
 
@@ -467,12 +472,11 @@ pub async fn stream_interrupt_handler(
     // The worker writes tokens live into messages.streaming=true; sealing it
     // here (before interrupt_job) ensures the partial is in history before
     // the new worker's db.restore() runs.  Idempotent if worker beats us.
-    let _ = sqlx::query(
-        "UPDATE messages SET streaming = false WHERE job_id = $1 AND streaming = true",
-    )
-    .bind(stream_id)
-    .execute(&state.pool)
-    .await;
+    let _ =
+        sqlx::query("UPDATE messages SET streaming = false WHERE job_id = $1 AND streaming = true")
+            .bind(stream_id)
+            .execute(&state.pool)
+            .await;
 
     // ── 2. Mark old job as 'interrupted' ─────────────────────────────────
     // Worker detects this status and exits without double-sealing.
@@ -539,4 +543,3 @@ pub async fn stream_answer_handler(
 
     Ok((StatusCode::OK, Json(json!({ "stream_id": new_job_id }))))
 }
-

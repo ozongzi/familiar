@@ -23,6 +23,7 @@ use uuid::Uuid;
 use crate::config::{McpCatalogEntry, ModelConfig};
 use crate::db::Db;
 use crate::embedding::EmbeddingClient;
+use crate::prompt::PromptEngine;
 use manage_mcp_spell::ManageMcpSpell;
 use spawn_spell::SpawnSpell;
 use ui_spells::UiSpells;
@@ -31,7 +32,8 @@ use ui_spells::UiSpells;
 
 /// All runtime dependencies required to build the full built-in spell bundle.
 pub struct SpellDeps {
-    pub subagent_prompt: Option<String>,
+    pub prompt_engine: PromptEngine,
+    pub current_date: String,
     // SpawnSpell
     pub cheap_model: ModelConfig,
     pub history: Vec<agentix::Message>,
@@ -53,22 +55,33 @@ pub struct SpellDeps {
 pub fn build_all_spells(deps: SpellDeps) -> impl agentix::Tool {
     // Build the subagent tool bundle first (no SpawnSpell — avoids infinite recursion).
     // SpawnSpell gets an Arc to this so its spawned sub-agents share the same tools.
-    let subagent_tavily: Option<TavilySpell> = deps.tavily_api_key.as_deref().map(|k| TavilySpell {
-        api_key: k.to_string(),
-        http: deps.http.clone(),
-    });
+    let subagent_tavily: Option<TavilySpell> =
+        deps.tavily_api_key.as_deref().map(|k| TavilySpell {
+            api_key: k.to_string(),
+            http: deps.http.clone(),
+        });
 
     let mut subagent_bundle = agentix::ToolBundle::new();
     subagent_bundle.push(
-        SkillSpell { pool: deps.pool.clone(), user_id: deps.user_id }
-            + search_code
+        SkillSpell {
+            pool: deps.pool.clone(),
+            user_id: deps.user_id,
+        } + search_code
             + HistorySpell {
                 db: deps.db.clone(),
                 embedding: deps.embed.clone(),
                 conversation_id: deps.conversation_id,
             }
-            + PlanSpell { pool: deps.pool.clone(), conversation_id: deps.conversation_id }
-            + MemorySpell { pool: deps.pool.clone(), user_id: deps.user_id, conversation_id: deps.conversation_id, embed: deps.embed.clone() },
+            + PlanSpell {
+                pool: deps.pool.clone(),
+                conversation_id: deps.conversation_id,
+            }
+            + MemorySpell {
+                pool: deps.pool.clone(),
+                user_id: deps.user_id,
+                conversation_id: deps.conversation_id,
+                embed: deps.embed.clone(),
+            },
     );
     if let Some(t) = subagent_tavily {
         subagent_bundle.push(t);
@@ -76,18 +89,17 @@ pub fn build_all_spells(deps: SpellDeps) -> impl agentix::Tool {
     let subagent_tools: Arc<dyn agentix::Tool> = Arc::new(subagent_bundle);
 
     let bundle = SkillSpell {
-            pool: deps.pool.clone(),
-            user_id: deps.user_id,
-        }
-        + UiSpells {
-            user_id: deps.user_id,
-            conversation_id: deps.conversation_id,
-            sandbox: deps.sandbox.clone(),
-        }
-        + search_code
+        pool: deps.pool.clone(),
+        user_id: deps.user_id,
+    } + UiSpells {
+        user_id: deps.user_id,
+        conversation_id: deps.conversation_id,
+        sandbox: deps.sandbox.clone(),
+    } + search_code
         + SpawnSpell {
             cheap_model: deps.cheap_model,
-            subagent_prompt: deps.subagent_prompt,
+            fresh_prompt: deps.prompt_engine.build_subagent(false, &deps.current_date),
+            fork_prompt: deps.prompt_engine.build_subagent(true, &deps.current_date),
             tools: subagent_tools,
             history: deps.history,
         }
@@ -117,7 +129,10 @@ pub fn build_all_spells(deps: SpellDeps) -> impl agentix::Tool {
     let mut tb = agentix::ToolBundle::new();
     tb.push(bundle);
     if let Some(api_key) = deps.tavily_api_key {
-        tb.push(TavilySpell { api_key, http: deps.http });
+        tb.push(TavilySpell {
+            api_key,
+            http: deps.http,
+        });
     }
     tb
 }

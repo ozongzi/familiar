@@ -46,7 +46,8 @@ impl Tool for UiSpells {
                 return json!({ "error": format!("打包失败: {e}") });
             }
             let zip_path = if let Ok(rel) = zip_host_path.strip_prefix(
-                self.sandbox.get_conversation_dir(self.user_id, self.conversation_id)
+                self.sandbox
+                    .get_conversation_dir(self.user_id, self.conversation_id),
             ) {
                 format!("/workspace/{}", rel.display())
             } else {
@@ -56,7 +57,10 @@ impl Tool for UiSpells {
         } else {
             (host_path, filename, path)
         };
-        let size = tokio::fs::metadata(&host_path).await.map(|m| m.len()).unwrap_or(0);
+        let size = tokio::fs::metadata(&host_path)
+            .await
+            .map(|m| m.len())
+            .unwrap_or(0);
         json!({
             "display": "file",
             "filename": filename,
@@ -107,10 +111,12 @@ fn zip_dir(src: &Path, dst: &Path) -> anyhow::Result<()> {
 
     let file = File::create(dst)?;
     let mut zip = ZipWriter::new(file);
-    let options = SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Deflated);
+    let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
 
-    for entry in walkdir::WalkDir::new(src).into_iter().filter_map(|e| e.ok()) {
+    for entry in walkdir::WalkDir::new(src)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
         let entry_path = entry.path();
         let relative = entry_path.strip_prefix(src)?;
         if entry_path.is_dir() {

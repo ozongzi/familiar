@@ -18,15 +18,21 @@ impl Tool for HistorySpell {
     /// limit: 最多返回条数，默认 10
     async fn history_fts(&self, query: String, limit: Option<usize>) -> Value {
         let limit = limit.unwrap_or(10);
-        match self.db.fts_search(self.conversation_id, &query, limit).await {
+        match self
+            .db
+            .fts_search(self.conversation_id, &query, limit)
+            .await
+        {
             Ok(rows) => {
                 let items: Vec<Value> = rows
                     .into_iter()
-                    .map(|r| json!({
-                        "role": r.role,
-                        "content": r.content,
-                        "created_at": r.created_at,
-                    }))
+                    .map(|r| {
+                        json!({
+                            "role": r.role,
+                            "content": r.content,
+                            "created_at": r.created_at,
+                        })
+                    })
                     .collect();
                 json!({ "results": items })
             }
@@ -44,16 +50,22 @@ impl Tool for HistorySpell {
             Err(e) => return json!({ "error": format!("embed failed: {e}") }),
         };
         let query_vec = crate::db::to_vector(vec);
-        match self.db.semantic_search(self.conversation_id, query_vec, limit).await {
+        match self
+            .db
+            .semantic_search(self.conversation_id, query_vec, limit)
+            .await
+        {
             Ok(rows) => {
                 let items: Vec<Value> = rows
                     .into_iter()
-                    .map(|(r, score)| json!({
-                        "role": r.role,
-                        "content": r.content,
-                        "score": score,
-                        "created_at": r.created_at,
-                    }))
+                    .map(|(r, score)| {
+                        json!({
+                            "role": r.role,
+                            "content": r.content,
+                            "score": score,
+                            "created_at": r.created_at,
+                        })
+                    })
                     .collect();
                 json!({ "results": items })
             }

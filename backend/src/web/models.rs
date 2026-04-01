@@ -144,13 +144,11 @@ pub async fn delete_model(
     auth: AuthUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<Value>> {
-    let result = sqlx::query(
-        "DELETE FROM models WHERE id=$1 AND user_id=$2 AND scope='user'",
-    )
-    .bind(id)
-    .bind(auth.user_id)
-    .execute(&state.pool)
-    .await?;
+    let result = sqlx::query("DELETE FROM models WHERE id=$1 AND user_id=$2 AND scope='user'")
+        .bind(id)
+        .bind(auth.user_id)
+        .execute(&state.pool)
+        .await?;
 
     if result.rows_affected() == 0 {
         return Err(AppError::not_found("模型不存在"));
@@ -269,12 +267,10 @@ pub async fn admin_set_default_model(
         .execute(&mut *tx)
         .await?;
 
-    let rows = sqlx::query(
-        "UPDATE models SET is_default = true WHERE id=$1 AND scope='global'",
-    )
-    .bind(id)
-    .execute(&mut *tx)
-    .await?;
+    let rows = sqlx::query("UPDATE models SET is_default = true WHERE id=$1 AND scope='global'")
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
 
     tx.commit().await?;
 

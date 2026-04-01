@@ -165,7 +165,8 @@ pub async fn auto_title(
     );
 
     let http = reqwest::Client::new();
-    let resp = cm.to_request()
+    let resp = cm
+        .to_request()
         .max_tokens(64)
         .user(prompt)
         .complete(&http)

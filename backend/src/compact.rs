@@ -93,8 +93,7 @@ be verbatim to ensure there's no drift in task interpretation.\n\
 Please provide your summary based on the conversation so far, following this structure and \
 ensuring precision and thoroughness in your response.\n";
 
-const NO_TOOLS_TRAILER: &str =
-    "\n\nREMINDER: Do NOT call any tools. Respond with plain text only — \
+const NO_TOOLS_TRAILER: &str = "\n\nREMINDER: Do NOT call any tools. Respond with plain text only — \
 an <analysis> block followed by a <summary> block. \
 Tool calls will be rejected and you will fail the task.";
 
@@ -191,7 +190,11 @@ fn rough_token_count(messages: &[Message]) -> usize {
                 }
                 s
             }),
-            Message::Assistant { content, tool_calls, .. } => {
+            Message::Assistant {
+                content,
+                tool_calls,
+                ..
+            } => {
                 let mut s = content.clone().unwrap_or_default();
                 for tc in tool_calls {
                     s.push_str(&tc.arguments);
@@ -301,15 +304,15 @@ pub async fn try_compact(
     .await;
 
     // Promote high-value conversation memories to user scope
-    crate::spells::consolidate_conversation_memories(
-        &ctx.pool,
-        ctx.user_id,
-        ctx.conversation_id,
-    )
-    .await;
+    crate::spells::consolidate_conversation_memories(&ctx.pool, ctx.user_id, ctx.conversation_id)
+        .await;
 
     // Emit SSE event so the frontend knows compaction happened
-    crate::worker::emit(ctx, serde_json::json!({"type": "compact", "summary": &formatted})).await;
+    crate::worker::emit(
+        ctx,
+        serde_json::json!({"type": "compact", "summary": &formatted}),
+    )
+    .await;
 
     info!(
         conversation = %ctx.conversation_id,

@@ -1,6 +1,6 @@
 use crate::config::McpCatalogEntry;
-use agentix::tool;
 use agentix::McpTool;
+use agentix::tool;
 use serde_json::json;
 use sqlx::PgPool;
 use std::sync::Arc;
@@ -148,11 +148,12 @@ impl Tool for ManageMcpSpell {
     /// 停止并卸载 MCP 服务器
     /// name: 要卸载的服务器标识符
     async fn uninstall_mcp(&self, name: String) -> Value {
-        let res = sqlx::query("DELETE FROM conversation_mcps WHERE conversation_id = $1 AND name = $2")
-            .bind(self.conversation_id)
-            .bind(&name)
-            .execute(&self.pool)
-            .await;
+        let res =
+            sqlx::query("DELETE FROM conversation_mcps WHERE conversation_id = $1 AND name = $2")
+                .bind(self.conversation_id)
+                .bind(&name)
+                .execute(&self.pool)
+                .await;
 
         match res {
             Ok(r) if r.rows_affected() > 0 => {

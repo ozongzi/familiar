@@ -300,9 +300,9 @@ pub async fn create_user(
         Some(auth.user_id),
         Some(user.id),
         "create_user",
-        Some(serde_json::json!({ 
+        Some(serde_json::json!({
             "name": req.name,
-            "is_admin": is_admin 
+            "is_admin": is_admin
         })),
         None,
     )
@@ -377,10 +377,10 @@ pub async fn update_user(
         Some(auth.user_id),
         Some(user_id),
         "update_user",
-        Some(serde_json::json!({ 
+        Some(serde_json::json!({
             "email": req.email,
             "display_name": req.display_name,
-            "is_admin": req.is_admin 
+            "is_admin": req.is_admin
         })),
         None,
     )
@@ -408,11 +408,12 @@ pub async fn delete_user(
         .await?;
 
     // Get avatar path to delete file
-    let avatar_path: Option<String> = sqlx::query_scalar("SELECT avatar_path FROM users WHERE id = $1")
-        .bind(user_id)
-        .fetch_optional(&state.pool)
-        .await?
-        .flatten();
+    let avatar_path: Option<String> =
+        sqlx::query_scalar("SELECT avatar_path FROM users WHERE id = $1")
+            .bind(user_id)
+            .fetch_optional(&state.pool)
+            .await?
+            .flatten();
 
     // Delete user (cascade will delete sessions, conversations, messages)
     let res = sqlx::query("DELETE FROM users WHERE id = $1")
@@ -604,14 +605,23 @@ pub async fn update_global_mcp(
     );
 
     let mut query = sqlx::query_as::<_, crate::config::GlobalMcp>(&sql);
-    
-    if let Some(ref name) = req.name { query = query.bind(name); }
-    if let Some(ref t) = req.r#type { query = query.bind(t); }
-    if let Some(ref c) = req.config { query = query.bind(c); }
-    
+
+    if let Some(ref name) = req.name {
+        query = query.bind(name);
+    }
+    if let Some(ref t) = req.r#type {
+        query = query.bind(t);
+    }
+    if let Some(ref c) = req.config {
+        query = query.bind(c);
+    }
+
     query = query.bind(id);
 
-    let row = query.fetch_optional(&state.pool).await?.ok_or_else(|| AppError::not_found("Global MCP not found"))?;
+    let row = query
+        .fetch_optional(&state.pool)
+        .await?
+        .ok_or_else(|| AppError::not_found("Global MCP not found"))?;
 
     // No in-memory hot-reload needed — workers load MCPs from DB each time.
 
@@ -644,11 +654,10 @@ pub async fn get_token_usage(
     State(state): State<AppState>,
     _auth: AuthUser,
 ) -> AppResult<Json<serde_json::Value>> {
-    let rows: Vec<(Option<serde_json::Value>,)> = sqlx::query_as(
-        "SELECT token_usage FROM conversations WHERE token_usage IS NOT NULL"
-    )
-    .fetch_all(&state.pool)
-    .await?;
+    let rows: Vec<(Option<serde_json::Value>,)> =
+        sqlx::query_as("SELECT token_usage FROM conversations WHERE token_usage IS NOT NULL")
+            .fetch_all(&state.pool)
+            .await?;
 
     let mut prompt = 0i64;
     let mut completion = 0i64;
@@ -657,9 +666,12 @@ pub async fn get_token_usage(
 
     for (usage,) in rows {
         if let Some(u) = usage {
-            prompt     += u.get("prompt_tokens").and_then(|v| v.as_i64()).unwrap_or(0);
-            completion += u.get("completion_tokens").and_then(|v| v.as_i64()).unwrap_or(0);
-            total      += u.get("total_tokens").and_then(|v| v.as_i64()).unwrap_or(0);
+            prompt += u.get("prompt_tokens").and_then(|v| v.as_i64()).unwrap_or(0);
+            completion += u
+                .get("completion_tokens")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0);
+            total += u.get("total_tokens").and_then(|v| v.as_i64()).unwrap_or(0);
             count += 1;
         }
     }
@@ -692,17 +704,20 @@ pub async fn get_token_usage_by_user(
     .fetch_all(&state.pool)
     .await?;
 
-    let users: Vec<serde_json::Value> = rows.iter().map(|r| {
-        use sqlx::Row;
-        serde_json::json!({
-            "user_id":            r.get::<String, _>("user_id"),
-            "username":           r.get::<String, _>("username"),
-            "conversation_count": r.get::<i64, _>("conversation_count"),
-            "prompt_tokens":      r.get::<i64, _>("prompt_tokens"),
-            "completion_tokens":  r.get::<i64, _>("completion_tokens"),
-            "total_tokens":       r.get::<i64, _>("total_tokens"),
+    let users: Vec<serde_json::Value> = rows
+        .iter()
+        .map(|r| {
+            use sqlx::Row;
+            serde_json::json!({
+                "user_id":            r.get::<String, _>("user_id"),
+                "username":           r.get::<String, _>("username"),
+                "conversation_count": r.get::<i64, _>("conversation_count"),
+                "prompt_tokens":      r.get::<i64, _>("prompt_tokens"),
+                "completion_tokens":  r.get::<i64, _>("completion_tokens"),
+                "total_tokens":       r.get::<i64, _>("total_tokens"),
+            })
         })
-    }).collect();
+        .collect();
 
     Ok(Json(serde_json::json!({ "users": users })))
 }
@@ -728,7 +743,7 @@ pub async fn get_token_usage_conversations(
             WHERE COALESCE((c.token_usage->>'total_tokens')::bigint, 0) > 0
             ORDER BY c.created_at DESC
             LIMIT 200
-            "#
+            "#,
         )
         .fetch_all(&state.pool)
         .await?
@@ -747,25 +762,28 @@ pub async fn get_token_usage_conversations(
               AND COALESCE((c.token_usage->>'total_tokens')::bigint, 0) > 0
             ORDER BY c.created_at DESC
             LIMIT 200
-            "#
+            "#,
         )
         .bind(&user_id)
         .fetch_all(&state.pool)
         .await?
     };
 
-    let conversations: Vec<serde_json::Value> = rows.iter().map(|r| {
-        use sqlx::Row;
-        serde_json::json!({
-            "conv_id":           r.get::<String, _>("conv_id"),
-            "conv_name":         r.get::<String, _>("conv_name"),
-            "username":          r.get::<String, _>("username"),
-            "created_at":        r.get::<String, _>("created_at"),
-            "prompt_tokens":     r.get::<i64, _>("prompt_tokens"),
-            "completion_tokens": r.get::<i64, _>("completion_tokens"),
-            "total_tokens":      r.get::<i64, _>("total_tokens"),
+    let conversations: Vec<serde_json::Value> = rows
+        .iter()
+        .map(|r| {
+            use sqlx::Row;
+            serde_json::json!({
+                "conv_id":           r.get::<String, _>("conv_id"),
+                "conv_name":         r.get::<String, _>("conv_name"),
+                "username":          r.get::<String, _>("username"),
+                "created_at":        r.get::<String, _>("created_at"),
+                "prompt_tokens":     r.get::<i64, _>("prompt_tokens"),
+                "completion_tokens": r.get::<i64, _>("completion_tokens"),
+                "total_tokens":      r.get::<i64, _>("total_tokens"),
+            })
         })
-    }).collect();
+        .collect();
 
     Ok(Json(serde_json::json!({ "conversations": conversations })))
 }
@@ -791,17 +809,19 @@ pub async fn get_token_usage_daily(
     .fetch_all(&state.pool)
     .await?;
 
-    let days: Vec<serde_json::Value> = rows.iter().map(|r| {
-        use sqlx::Row;
-        serde_json::json!({
-            "day":                r.get::<String, _>("day"),
-            "total_tokens":       r.get::<i64, _>("total_tokens"),
-            "prompt_tokens":      r.get::<i64, _>("prompt_tokens"),
-            "completion_tokens":  r.get::<i64, _>("completion_tokens"),
-            "conversation_count": r.get::<i64, _>("conversation_count"),
+    let days: Vec<serde_json::Value> = rows
+        .iter()
+        .map(|r| {
+            use sqlx::Row;
+            serde_json::json!({
+                "day":                r.get::<String, _>("day"),
+                "total_tokens":       r.get::<i64, _>("total_tokens"),
+                "prompt_tokens":      r.get::<i64, _>("prompt_tokens"),
+                "completion_tokens":  r.get::<i64, _>("completion_tokens"),
+                "conversation_count": r.get::<i64, _>("conversation_count"),
+            })
         })
-    }).collect();
+        .collect();
 
     Ok(Json(serde_json::json!({ "days": days })))
 }
-

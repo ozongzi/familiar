@@ -13,13 +13,11 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use agentix::{
-    LlmEvent, McpTool, Message, Request, ToolBundle, Tool, ToolOutput, UserContent,
-};
 use agentix::raw::shared::ToolDefinition;
 use agentix::types::UsageStats;
+use agentix::{LlmEvent, McpTool, Message, Request, Tool, ToolBundle, ToolOutput, UserContent};
 use futures::StreamExt;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sqlx::PgPool;
 use tokio::time::timeout;
 use tracing::{error, info, warn};
@@ -88,27 +86,37 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
     info!(ms = t0.elapsed().as_millis(), "⏱ load_from_db");
 
     // ── Resolve cheap model + system prompt from user settings ────────────
-    let user_settings: Option<(Option<Value>, Option<String>)> = sqlx::query_as(
-        "SELECT cheap_model, system_prompt FROM user_settings WHERE user_id = $1",
-    )
-    .bind(ctx.user_id)
-    .fetch_optional(&ctx.pool)
-    .await
-    .unwrap_or(None);
+    let user_settings: Option<(Option<Value>, Option<String>)> =
+        sqlx::query_as("SELECT cheap_model, system_prompt FROM user_settings WHERE user_id = $1")
+            .bind(ctx.user_id)
+            .fetch_optional(&ctx.pool)
+            .await
+            .unwrap_or(None);
 
-    let (cheap_cfg, mut system_prompt) = if let Some((c, p)) = user_settings {
-        let c_cfg: ModelConfig = c
-            .and_then(|v| serde_json::from_value(v).ok())
-            .unwrap_or_else(|| global_cfg.cheap_model.clone());
-        let s_prompt = p.or_else(|| global_cfg.system_prompt());
-        (c_cfg, s_prompt)
+    let cheap_cfg = if let Some((c, _)) = &user_settings {
+        c.as_ref()
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+            .unwrap_or_else(|| global_cfg.cheap_model.clone())
     } else {
-        (global_cfg.cheap_model.clone(), global_cfg.system_prompt())
+        global_cfg.cheap_model.clone()
     };
+
+    // User may supply a fully custom system prompt that bypasses PromptEngine.
+    let custom_system_prompt: Option<String> = user_settings.and_then(|(_, p)| p);
+
+    let current_date = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    // Tera is Send+Sync, so PromptEngine can live across .await points.
+    let prompt_engine = crate::prompt::PromptEngine::new();
 
     // ── Resolve frontier model: conversation model_id > global default ────
     let frontier_cfg: ModelConfig = {
-        fn model_from_row(provider: String, name: String, api_base: String, api_key: String, extra_body: Value) -> ModelConfig {
+        fn model_from_row(
+            provider: String,
+            name: String,
+            api_base: String,
+            api_key: String,
+            extra_body: Value,
+        ) -> ModelConfig {
             let provider_parsed = serde_json::from_value::<crate::config::Provider>(
                 serde_json::Value::String(provider.clone()),
             )
@@ -159,15 +167,52 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
     };
 
     // ── Resolve user name ─────────────────────────────────────────────────
-    let user_name: String =
-        sqlx::query_scalar::<_, String>("SELECT name FROM users WHERE id = $1")
-            .bind(ctx.user_id)
-            .fetch_optional(&ctx.pool)
-            .await
-            .unwrap_or(None)
-            .unwrap_or_default();
+    let user_name: String = sqlx::query_scalar::<_, String>("SELECT name FROM users WHERE id = $1")
+        .bind(ctx.user_id)
+        .fetch_optional(&ctx.pool)
+        .await
+        .unwrap_or(None)
+        .unwrap_or_default();
 
-    // ── Append skills to system prompt ────────────────────────────────────
+    // ── Gather dynamic prompt inputs ──────────────────────────────────────
+
+    // Memories
+    let mem_section =
+        crate::spells::load_memories_for_prompt(&ctx.pool, ctx.user_id, ctx.conversation_id).await;
+    let has_memory = mem_section.is_some();
+
+    // Compact summary
+    let compact_summary =
+        crate::compact::load_compact_summary(&ctx.pool, ctx.conversation_id).await;
+    let has_compact = compact_summary.is_some();
+
+    // ── Build base system prompt via PromptEngine or custom override ───────
+    let mut system_prompt: String = if let Some(ref custom) = custom_system_prompt {
+        // User has provided a fully custom system prompt — use it as-is.
+        crate::prompt_template::render_prompt(&custom, &[("USER_NAME", &user_name)])
+    } else {
+        let raw = prompt_engine.build_main(
+            has_memory,
+            has_compact,
+            compact_summary.as_deref().unwrap_or(""),
+            &current_date,
+        );
+        crate::prompt_template::render_prompt(&raw, &[("USER_NAME", &user_name)])
+    };
+
+    // ── Append memory section (if not already handled by PromptEngine) ────
+    // When using a custom prompt, PromptEngine did not inject memories.
+    if custom_system_prompt.is_some() {
+        if let Some(mem) = &mem_section {
+            system_prompt.push_str(mem);
+        }
+        if let Some(summary) = &compact_summary {
+            let section = crate::compact::compact_summary_to_system_section(summary);
+            system_prompt.push_str(&section);
+        }
+    }
+
+    // ── Append skills ─────────────────────────────────────────────────────
     let app_skill_rows: Vec<(String, Option<String>)> =
         sqlx::query_as("SELECT name, description FROM app_skills ORDER BY name ASC")
             .fetch_all(&ctx.pool)
@@ -193,14 +238,13 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
     if !skills.is_empty() {
         skills.sort();
         skills.dedup();
-        let summary = format!(
+        system_prompt.push_str(&format!(
             "\n\n可用 Skills（需要时调用 load_skill 获取详细指令）：\n{}",
             skills.join("\n")
-        );
-        system_prompt = Some(system_prompt.unwrap_or_default() + &summary);
+        ));
     }
 
-    // ── Append plan to system prompt ──────────────────────────────────────
+    // ── Append active plan ────────────────────────────────────────────────
     let plan_row: Option<(String, String)> = sqlx::query_as(
         "SELECT title, steps_json FROM conversation_plans WHERE conversation_id = $1",
     )
@@ -210,27 +254,13 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
     .unwrap_or(None);
 
     if let Some((plan_title, plan_steps)) = plan_row {
-        let plan_section = format!(
-            "\n\n## 当前执行计划\n标题：{}\n步骤（JSON）：{}\n\n每次更新步骤状态时，调用 todo_list 工具同步最新进度。",
-            plan_title, plan_steps
-        );
-        system_prompt = Some(system_prompt.unwrap_or_default() + &plan_section);
-    }
-
-    // ── Append memories to system prompt ─────────────────────────────────
-    if let Some(mem_section) = crate::spells::load_memories_for_prompt(&ctx.pool, ctx.user_id, ctx.conversation_id).await {
-        system_prompt = Some(system_prompt.unwrap_or_default() + &mem_section);
+        system_prompt.push_str(&format!(
+            "\n\n## 当前执行计划\n标题：{plan_title}\n步骤（JSON）：{plan_steps}\n\n每次更新步骤状态时，调用 todo_list 工具同步最新进度。"
+        ));
     }
 
     // ── Build Request ─────────────────────────────────────────────────────
-    let mut request = frontier_cfg.to_request();
-    if let Some(prompt) = &system_prompt {
-        let rendered = crate::prompt_template::render_prompt(
-            prompt,
-            &[("USER_NAME", &user_name)],
-        );
-        request = request.system_prompt(rendered);
-    }
+    let mut request = frontier_cfg.to_request().system_prompt(system_prompt);
 
     // ── Load history from DB ──────────────────────────────────────────────
     let t_restore = std::time::Instant::now();
@@ -249,12 +279,17 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
     // ── Connect MCPs from DB ──────────────────────────────────────────────
     let t_mcp = std::time::Instant::now();
     let mcp_tools = connect_mcps_from_db(ctx).await;
-    info!(ms = t_mcp.elapsed().as_millis(), tools = mcp_tools.len(), "⏱ connect_mcps");
+    info!(
+        ms = t_mcp.elapsed().as_millis(),
+        tools = mcp_tools.len(),
+        "⏱ connect_mcps"
+    );
     info!(ms = t0.elapsed().as_millis(), "⏱ total pre-LLM setup");
 
     // ── Build ToolBundle (spells + MCPs + tunnel) ─────────────────────────
     let spell_deps = SpellDeps {
-        subagent_prompt: global_cfg.subagent_prompt(),
+        prompt_engine: crate::prompt::PromptEngine::new(),
+        current_date: current_date.clone(),
         cheap_model: cheap_cfg.clone(),
         history: messages.clone(),
         db: ctx.db.clone(),
@@ -294,10 +329,13 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
     }
 
     // ── Load existing compact summary → inject into system prompt ─────────
-    if let Some(summary) = crate::compact::load_compact_summary(&ctx.pool, ctx.conversation_id).await {
+    if let Some(summary) =
+        crate::compact::load_compact_summary(&ctx.pool, ctx.conversation_id).await
+    {
         let section = crate::compact::compact_summary_to_system_section(&summary);
-        let existing = request.system_message.clone().unwrap_or_default();
-        request = request.system_prompt(existing + &section);
+        let mut existing = request.system_message.clone().unwrap_or_default();
+        existing.push_str(&section);
+        request = request.system_prompt(existing);
     }
 
     // ── Run the LLM ↔ tool-call loop ─────────────────────────────────────
@@ -329,7 +367,9 @@ async fn generation_loop(
 
         // ── Auto-compact before truncation ────────────────────────────────
         if crate::compact::should_compact(&messages) {
-            if let Some(summary) = crate::compact::try_compact(ctx, &messages, &cheap_model, http).await {
+            if let Some(summary) =
+                crate::compact::try_compact(ctx, &messages, &cheap_model, http).await
+            {
                 // Replace entire history with a single summary user message
                 // so the next turn starts fresh with full context window.
                 messages = vec![Message::User(vec![agentix::UserContent::Text {
@@ -359,19 +399,24 @@ async fn generation_loop(
         // ── Open streaming message row in DB ──────────────────────────────
         // This is the single source of truth for partial content.
         // The interrupt handler can seal it; the worker seals it on completion.
-        let streaming_msg_id = ctx.db
+        let streaming_msg_id = ctx
+            .db
             .append_streaming(ctx.conversation_id, ctx.job_id)
             .await
             .map_err(|e| anyhow::anyhow!("append_streaming failed: {e}"))?;
 
         // ── Call LLM ──────────────────────────────────────────────────────
-        let req = base_request.clone()
+        let req = base_request
+            .clone()
             .messages(messages.clone())
             .tools(tool_defs.clone());
         let mut stream = match req.stream(http).await {
             Ok(s) => s,
             Err(e) => {
-                let _ = ctx.db.seal_streaming_message(streaming_msg_id, None, None, None).await;
+                let _ = ctx
+                    .db
+                    .seal_streaming_message(streaming_msg_id, None, None, None)
+                    .await;
                 return Err(anyhow::anyhow!("LLM stream failed: {e}"));
             }
         };
@@ -387,12 +432,23 @@ async fn generation_loop(
             if let Some(_reason) = check_stop_reason(&ctx.pool, ctx.job_id).await {
                 // Seal the streaming row with whatever we have — the interrupt
                 // handler may also call seal (idempotent).
-                let _ = ctx.db.seal_streaming_message(
-                    streaming_msg_id,
-                    if reply_buf.is_empty() { None } else { Some(&reply_buf) },
-                    if reasoning_buf.is_empty() { None } else { Some(&reasoning_buf) },
-                    None,
-                ).await;
+                let _ = ctx
+                    .db
+                    .seal_streaming_message(
+                        streaming_msg_id,
+                        if reply_buf.is_empty() {
+                            None
+                        } else {
+                            Some(&reply_buf)
+                        },
+                        if reasoning_buf.is_empty() {
+                            None
+                        } else {
+                            Some(&reasoning_buf)
+                        },
+                        None,
+                    )
+                    .await;
                 emit(ctx, json!({"type": "aborted"})).await;
                 set_job_status(&ctx.pool, ctx.job_id, "aborted", None).await;
                 return Ok(());
@@ -408,9 +464,10 @@ async fn generation_loop(
                     // Batch DB update every 10 tokens to reduce MVCC overhead.
                     token_count += 1;
                     if token_count % 10 == 0 {
-                        let _ = ctx.db.update_streaming_content(
-                            streaming_msg_id, &reply_buf, &reasoning_buf,
-                        ).await;
+                        let _ = ctx
+                            .db
+                            .update_streaming_content(streaming_msg_id, &reply_buf, &reasoning_buf)
+                            .await;
                     }
                 }
 
@@ -420,11 +477,19 @@ async fn generation_loop(
                 }
 
                 Some(LlmEvent::ToolCallChunk(c)) => {
-                    emit(ctx, json!({"type": "tool_call", "id": c.id, "name": c.name, "delta": c.delta})).await;
+                    emit(
+                        ctx,
+                        json!({"type": "tool_call", "id": c.id, "name": c.name, "delta": c.delta}),
+                    )
+                    .await;
                 }
 
                 Some(LlmEvent::ToolCall(tc)) => {
-                    emit(ctx, json!({"type": "tool_call_complete", "id": tc.id, "name": tc.name})).await;
+                    emit(
+                        ctx,
+                        json!({"type": "tool_call_complete", "id": tc.id, "name": tc.name}),
+                    )
+                    .await;
                     tool_calls_buf.push(tc);
                 }
 
@@ -459,7 +524,10 @@ async fn generation_loop(
                         warn!(conversation = %ctx.conversation_id, "treating benign tail error as done");
                         break;
                     }
-                    let _ = ctx.db.seal_streaming_message(streaming_msg_id, None, None, None).await;
+                    let _ = ctx
+                        .db
+                        .seal_streaming_message(streaming_msg_id, None, None, None)
+                        .await;
                     return Err(anyhow::anyhow!("{err_msg}"));
                 }
             }
@@ -485,12 +553,23 @@ async fn generation_loop(
         } else {
             serde_json::to_string(&tool_calls_buf).ok()
         };
-        let _ = ctx.db.seal_streaming_message(
-            streaming_msg_id,
-            if reply_buf.is_empty() { None } else { Some(&reply_buf) },
-            if reasoning_buf.is_empty() { None } else { Some(&reasoning_buf) },
-            tc_json.as_deref(),
-        ).await;
+        let _ = ctx
+            .db
+            .seal_streaming_message(
+                streaming_msg_id,
+                if reply_buf.is_empty() {
+                    None
+                } else {
+                    Some(&reply_buf)
+                },
+                if reasoning_buf.is_empty() {
+                    None
+                } else {
+                    Some(&reasoning_buf)
+                },
+                tc_json.as_deref(),
+            )
+            .await;
 
         // Kick off embedding for the sealed text (fire-and-forget).
         if !reply_buf.is_empty() {
@@ -498,8 +577,16 @@ async fn generation_loop(
         }
 
         let assistant_msg = Message::Assistant {
-            content: if reply_buf.is_empty() { None } else { Some(reply_buf.clone()) },
-            reasoning: if reasoning_buf.is_empty() { None } else { Some(reasoning_buf) },
+            content: if reply_buf.is_empty() {
+                None
+            } else {
+                Some(reply_buf.clone())
+            },
+            reasoning: if reasoning_buf.is_empty() {
+                None
+            } else {
+                Some(reasoning_buf)
+            },
             tool_calls: tool_calls_buf.clone(),
         };
         if !reply_buf.is_empty() || !tool_calls_buf.is_empty() {
@@ -651,15 +738,13 @@ async fn connect_mcps_from_db(ctx: &WorkerContext) -> Vec<(String, McpTool)> {
                     Err(e) => warn!("MCP: {name} failed to start: {e}"),
                 }
             }
-            crate::config::McpServerConfig::Http { name, url } => {
-                match McpTool::http(url).await {
-                    Ok(t) => {
-                        info!("MCP: {name} ready ({} tools)", t.raw_tools().len());
-                        all_tools.push((name.clone(), t));
-                    }
-                    Err(e) => warn!("MCP: {name} failed to start: {e}"),
+            crate::config::McpServerConfig::Http { name, url } => match McpTool::http(url).await {
+                Ok(t) => {
+                    info!("MCP: {name} ready ({} tools)", t.raw_tools().len());
+                    all_tools.push((name.clone(), t));
                 }
-            }
+                Err(e) => warn!("MCP: {name} failed to start: {e}"),
+            },
         }
     }
 
@@ -719,8 +804,11 @@ async fn connect_mcps_from_db(ctx: &WorkerContext) -> Vec<(String, McpTool)> {
                     &args_ref,
                 );
                 let args_wrapped_ref: Vec<&str> = args_wrapped.iter().map(String::as_str).collect();
-                match timeout(Duration::from_secs(300), McpTool::stdio(&cmd, &args_wrapped_ref))
-                    .await
+                match timeout(
+                    Duration::from_secs(300),
+                    McpTool::stdio(&cmd, &args_wrapped_ref),
+                )
+                .await
                 {
                     Ok(Ok(t)) => t,
                     Ok(Err(e)) => {
@@ -792,13 +880,11 @@ pub(crate) async fn emit(ctx: &WorkerContext, payload: Value) {
     }
 
     // Reliable path: persist to DB (trigger fires pg_notify with "job_id:event_id").
-    if let Err(e) = sqlx::query(
-        "INSERT INTO generation_events (job_id, payload) VALUES ($1, $2)",
-    )
-    .bind(ctx.job_id)
-    .bind(&payload_str)
-    .execute(&ctx.pool)
-    .await
+    if let Err(e) = sqlx::query("INSERT INTO generation_events (job_id, payload) VALUES ($1, $2)")
+        .bind(ctx.job_id)
+        .bind(&payload_str)
+        .execute(&ctx.pool)
+        .await
     {
         error!(job = %ctx.job_id, "failed to emit event: {e}");
     }
@@ -822,9 +908,9 @@ async fn check_stop_reason(pool: &PgPool, job_id: Uuid) -> Option<StopReason> {
             .await
             .unwrap_or(None);
     match status.as_deref() {
-        Some("aborted")     => Some(StopReason::Aborted),
+        Some("aborted") => Some(StopReason::Aborted),
         Some("interrupted") => Some(StopReason::Interrupted),
-        _                   => None,
+        _ => None,
     }
 }
 

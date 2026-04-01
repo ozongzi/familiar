@@ -7,7 +7,10 @@ use serde_json::json;
 
 pub struct SpawnSpell {
     pub cheap_model: ModelConfig,
-    pub subagent_prompt: Option<String>,
+    /// Pre-rendered system prompt for fresh-mode subagents.
+    pub fresh_prompt: String,
+    /// Pre-rendered system prompt for fork-mode subagents.
+    pub fork_prompt: String,
     pub tools: Arc<dyn Tool>,
     /// Conversation history for fork mode — agent inherits full context.
     pub history: Vec<Message>,
@@ -43,18 +46,24 @@ impl Tool for SpawnSpell {
     ) {
         let _ = description;
 
-        let model_name = if reasoner == Some(true) && self.cheap_model.provider == Provider::DeepSeek {
-            "deepseek-reasoner".to_owned()
-        } else {
-            self.cheap_model.name.clone()
-        };
-
-        let mut request = self.cheap_model.to_request().model(model_name);
-        if let Some(prompt) = &self.subagent_prompt {
-            request = request.system_prompt(prompt.clone());
-        }
+        let model_name =
+            if reasoner == Some(true) && self.cheap_model.provider == Provider::DeepSeek {
+                "deepseek-reasoner".to_owned()
+            } else {
+                self.cheap_model.name.clone()
+            };
 
         let is_fork = fork.unwrap_or(false);
+        let subagent_prompt = if is_fork {
+            self.fork_prompt.clone()
+        } else {
+            self.fresh_prompt.clone()
+        };
+        let mut request = self
+            .cheap_model
+            .to_request()
+            .model(model_name)
+            .system_prompt(subagent_prompt);
         let history = if is_fork {
             // Fork: inherit conversation history, append the directive as the final user turn
             let mut h = self.history.clone();

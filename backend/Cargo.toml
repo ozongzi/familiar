@@ -63,3 +63,4 @@ chrono = { version = "0.4.44", features = ["serde"] }
 zip = "2"
 walkdir = "2"
 dashmap = "6"
+tera = "1"
