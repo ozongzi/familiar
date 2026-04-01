@@ -107,6 +107,22 @@ export function ChatPage() {
   const lastUserBubbleRef = useRef<HTMLDivElement>(null);
   const lastBubbleRef = useRef<HTMLDivElement>(null);
 
+  // When a new user bubble appears during connecting/streaming, scroll it to top
+  const lastUserBubbleKey = (() => {
+    for (let i = bubbles.length - 1; i >= 0; i--) {
+      if (bubbles[i].role === "user") return bubbles[i].key;
+    }
+    return null;
+  })();
+
+  useEffect(() => {
+    if (status !== "connecting" && status !== "streaming") return;
+    requestAnimationFrame(() =>
+      lastUserBubbleRef.current?.scrollIntoView({ block: "start", behavior: "instant" })
+    );
+   
+  }, [lastUserBubbleKey, status]);
+
   // ── Load history when switching to a real conversation ─────────────────
   useEffect(() => {
     if (!activeId || activeId === DRAFT_ID || !token) {
@@ -132,11 +148,12 @@ export function ChatPage() {
           setHistory(msgs);
           setHistoryLoading(false);
           reattach(activeId, token);
-          // Scroll to bottom after history renders
-          requestAnimationFrame(() => {
-            const el = messagesRef.current;
-            if (el) el.scrollTop = el.scrollHeight;
-          });
+          // Scroll last bubble into view after history renders (double rAF for React flush)
+          requestAnimationFrame(() =>
+            requestAnimationFrame(() =>
+              lastBubbleRef.current?.scrollIntoView({ block: "end", behavior: "instant" })
+            )
+          );
         }
       } catch {
         if (!cancelled) {
@@ -234,11 +251,6 @@ export function ChatPage() {
   const handleSend = useCallback(
     (text: string, images?: string[]) => {
       send(text, images);
-      requestAnimationFrame(() =>
-        requestAnimationFrame(() =>
-          lastUserBubbleRef.current?.scrollIntoView({ block: "start", behavior: "instant" })
-        )
-      );
     },
     [send],
   );
@@ -428,6 +440,11 @@ export function ChatPage() {
             <div className={styles.errorBanner} role="alert">
               ⚠️ {errorMsg}
             </div>
+          )}
+
+          {/* Spacer only during streaming so user message can scroll to top */}
+          {(status === "streaming" || status === "connecting") && (
+            <div style={{ minHeight: "100vh", flexShrink: 0 }} aria-hidden="true" />
           )}
 
         </div>

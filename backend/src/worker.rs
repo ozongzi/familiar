@@ -397,6 +397,7 @@ async fn generation_loop(
             .clone()
             .messages(messages.clone())
             .tools(tool_defs.clone());
+        let t_llm = std::time::Instant::now();
         let mut stream = match req.stream(http).await {
             Ok(s) => s,
             Err(e) => {
@@ -407,12 +408,14 @@ async fn generation_loop(
                 return Err(anyhow::anyhow!("LLM stream failed: {e}"));
             }
         };
+        info!(ms = t_llm.elapsed().as_millis(), "⏱ LLM stream connected");
 
         let mut reply_buf = String::new();
         let mut reasoning_buf = String::new();
         let mut tool_calls_buf: Vec<agentix::ToolCall> = Vec::new();
         let mut usage = UsageStats::default();
         let mut token_count: u32 = 0;
+        let mut ttft_logged = false;
 
         // ── Consume stream ────────────────────────────────────────────────
         loop {
@@ -446,6 +449,10 @@ async fn generation_loop(
                 None | Some(LlmEvent::Done) => break,
 
                 Some(LlmEvent::Token(token)) => {
+                    if !ttft_logged {
+                        ttft_logged = true;
+                        info!(ms = t_llm.elapsed().as_millis(), "⏱ TTFT (first token)");
+                    }
                     reply_buf.push_str(&token);
                     emit(ctx, json!({"type": "token", "content": token})).await;
                     // Batch DB update every 10 tokens to reduce MVCC overhead.

@@ -50,15 +50,6 @@ build-sandbox:
 		echo "✓ sandbox image built and pushed"; \
 	fi
 
-# ── Deploy: legacy (musl binary + scp) ───────────────────────────────────────
-deploy: all build-sandbox
-	scp $(BIN) $(HOST):/usr/local/bin/familiar.new
-	ssh $(HOST) "mv /usr/local/bin/familiar.new /usr/local/bin/familiar"
-	ssh $(HOST) "mkdir -p /srv/familiar/frontend/dist"
-	rsync -av --delete frontend/dist/ $(HOST):/srv/familiar/frontend/dist
-	ssh $(HOST) "systemctl restart familiar"
-	@echo "✓ deployed"
-
 # ── Deploy: local build → rsync → docker compose up (no build on server) ──────
 # 1. Cross-compile backend locally
 # 2. Build frontend locally
