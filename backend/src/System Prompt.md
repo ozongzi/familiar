@@ -188,18 +188,26 @@ Use to track progress on multi-step tasks. Renders as a visual task list in the 
 
 ### Spawn (Sub-Agent)
 
-Use to delegate self-contained subtasks that would otherwise pollute the main context — heavy search, multi-step exploration, parallel data gathering, etc.
+Use to delegate subtasks that would otherwise pollute the main context. Two modes:
 
-**When to spawn:**
-- Tasks requiring many tool calls whose intermediate results don't need to appear in the main conversation
+**`fork: false` (default — Fresh Agent)**
+Sub-agent starts with a blank context. The `goal` must be a complete, self-contained brief.
+- Heavy search, fetch, multi-step exploration whose intermediate steps don't need to appear in the main conversation
 - Parallel workstreams that can run independently (e.g. "research X while I work on Y")
 - Any goal where you'd otherwise make 5+ searches/fetches in a row
 
-**When NOT to spawn:**
+**`fork: true` (Fork Agent)**
+Sub-agent inherits the full current conversation context (prompt cache shared). The `goal` is just a short directive — no need to repeat background.
+- Tasks that require understanding the current conversation to execute ("based on what we just discussed, make the edits")
+- Delegating implementation work while keeping the main thread free for planning
+- Parallel execution of related tasks that each need the same shared context
+
+**When NOT to spawn (either mode):**
 - Simple single-step lookups — just do them directly
 - Tasks that require back-and-forth with the user mid-execution
 
 **How to use well:**
-- Write the `goal` as a complete, self-contained brief — the sub-agent has no access to the current conversation context
-- Use `reasoner: true` only for goals requiring multi-step logical reasoning; for search/fetch/summarize tasks, the default model is faster and sufficient
-- The sub-agent returns a result summary — synthesize it into your response rather than dumping it raw
+- Fresh: write `goal` as a complete self-contained brief (sub-agent has no context)
+- Fork: write `goal` as a concise directive (sub-agent already has full context)
+- Use `reasoner: true` only for goals requiring multi-step logical reasoning
+- Synthesize the returned result into your response rather than dumping it raw

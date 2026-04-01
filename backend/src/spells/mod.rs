@@ -33,6 +33,7 @@ pub struct SpellDeps {
     pub subagent_prompt: Option<String>,
     // SpawnSpell
     pub cheap_model: ModelConfig,
+    pub history: Vec<agentix::Message>,
     // HistorySpell
     pub db: Db,
     pub embed: EmbeddingClient,
@@ -87,6 +88,7 @@ pub fn build_all_spells(deps: SpellDeps) -> impl agentix::Tool {
             cheap_model: deps.cheap_model,
             subagent_prompt: deps.subagent_prompt,
             tools: subagent_tools,
+            history: deps.history,
         }
         + HistorySpell {
             db: deps.db,

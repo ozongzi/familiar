@@ -2,29 +2,43 @@ use std::sync::Arc;
 
 use crate::config::{ModelConfig, Provider};
 
-use agentix::{AgentEvent, Message, Tool, ToolOutput, tool};
+use agentix::{AgentEvent, Message, Tool, ToolOutput, UserContent, tool};
 use serde_json::json;
 
 pub struct SpawnSpell {
     pub cheap_model: ModelConfig,
     pub subagent_prompt: Option<String>,
     pub tools: Arc<dyn Tool>,
+    /// Conversation history for fork mode — agent inherits full context.
+    pub history: Vec<Message>,
 }
 
 #[tool]
 impl Tool for SpawnSpell {
-    /// 启动独立子 Agent 完成子目标，使用 DeepSeek 模型，子 Agent 有独立上下文，跑完返回结果摘要。
-    /// 适合大量搜索 / fetch / 探索但不希望污染主上下文的任务（如 Search Agent）。
-    /// 子 Agent 拥有与主 Agent 相同的工具集（file / shell / search / a2a + 所有 MCP）。
+    /// 启动子 Agent 完成子目标。有两种模式：
+    ///
+    /// **fresh 模式**（默认）：子 Agent 拥有全新空白上下文，从 goal 出发开始执行。
+    /// 适合：与当前对话无关的独立任务、大量搜索/fetch/探索、不希望污染主上下文的中间过程。
+    /// 使用时：goal 必须是完整自洽的 brief，因为子 Agent 看不到当前对话内容。
+    ///
+    /// **fork 模式**（fork=true）：子 Agent 继承当前完整对话上下文（prompt cache 共享）。
+    /// 适合：需要理解当前对话状态才能执行的任务（如：「根据我们刚才讨论的修改方案，执行文件编辑」）。
+    /// 使用时：directive 只需简短指令，不需要重述背景（子 Agent 已有全部上下文）。
+    ///
+    /// **什么时候用 fork vs fresh：**
+    /// - fork：「继续/执行/基于上面的…」类任务，子 Agent 需要看到对话历史才能理解任务
+    /// - fresh：独立的搜索、调研、文件处理，任务可以用一段文字完整描述
     ///
     /// description: 本次操作意图（供 UI 渲染，可不填）
-    /// goal: 子 Agent 的目标，尽量具体
-    /// reasoner: 可选，默认为 false 若为 true 则使用 deepseek-reasoner 模型，适合需要复杂推理的子目标，否则使用 deepseek-chat 模型，适合一般对话和工具调用的子目标
+    /// goal: fresh 模式下的完整任务目标；fork 模式下为简短指令（子 Agent 已有上下文）
+    /// fork: 若为 true，子 Agent 继承当前对话上下文（默认 false）
+    /// reasoner: 若为 true 则使用 deepseek-reasoner，适合复杂推理任务（默认 false）
     #[streaming]
     fn spawn(
         &self,
         description: Option<String>,
         goal: String,
+        fork: Option<bool>,
         reasoner: Option<bool>,
     ) {
         let _ = description;
@@ -40,8 +54,18 @@ impl Tool for SpawnSpell {
             request = request.system_prompt(prompt.clone());
         }
 
+        let is_fork = fork.unwrap_or(false);
+        let history = if is_fork {
+            // Fork: inherit conversation history, append the directive as the final user turn
+            let mut h = self.history.clone();
+            h.push(Message::User(vec![UserContent::Text { text: goal }]));
+            h
+        } else {
+            // Fresh: blank context, goal is the only message
+            vec![Message::User(vec![UserContent::Text { text: goal }])]
+        };
+
         let http = reqwest::Client::new();
-        let history = vec![Message::User(vec![agentix::UserContent::Text { text: goal }])];
         let tools = Arc::clone(&self.tools);
 
         async_stream::stream! {

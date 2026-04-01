@@ -255,7 +255,8 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
     // ── Build ToolBundle (spells + MCPs + tunnel) ─────────────────────────
     let spell_deps = SpellDeps {
         subagent_prompt: global_cfg.subagent_prompt(),
-        cheap_model: cheap_cfg,
+        cheap_model: cheap_cfg.clone(),
+        history: messages.clone(),
         db: ctx.db.clone(),
         embed: EmbeddingClient::new(
             global_cfg.embedding.api_key.clone(),
@@ -292,14 +293,21 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
         }
     }
 
+    // ── Load existing compact summary → inject into system prompt ─────────
+    if let Some(summary) = crate::compact::load_compact_summary(&ctx.pool, ctx.conversation_id).await {
+        let section = crate::compact::compact_summary_to_system_section(&summary);
+        let existing = request.system_message.clone().unwrap_or_default();
+        request = request.system_prompt(existing + &section);
+    }
+
     // ── Run the LLM ↔ tool-call loop ─────────────────────────────────────
     let http = reqwest::Client::new();
-    generation_loop(ctx, &http, &request, messages, &bundle).await
+    generation_loop(ctx, &http, &request, messages, &bundle, cheap_cfg).await
 }
 
 // ── Generation loop ───────────────────────────────────────────────────────────
 
-const HISTORY_TOKEN_BUDGET: usize = 25_000;
+const HISTORY_TOKEN_BUDGET: usize = crate::compact::HISTORY_TOKEN_BUDGET;
 
 async fn generation_loop(
     ctx: &WorkerContext,
@@ -307,6 +315,7 @@ async fn generation_loop(
     base_request: &Request,
     mut messages: Vec<Message>,
     tools: &ToolBundle,
+    cheap_model: ModelConfig,
 ) -> anyhow::Result<()> {
     let tool_defs: Vec<ToolDefinition> = tools.raw_tools();
 
@@ -318,11 +327,33 @@ async fn generation_loop(
             return Ok(());
         }
 
-        // ── Truncate history to token budget ──────────────────────────────
-        let before = messages.len();
-        agentix::truncate_to_token_budget(&mut messages, HISTORY_TOKEN_BUDGET);
-        if messages.len() < before {
-            info!(conversation = %ctx.conversation_id, dropped = before - messages.len(), kept = messages.len(), "history truncated");
+        // ── Auto-compact before truncation ────────────────────────────────
+        if crate::compact::should_compact(&messages) {
+            if let Some(summary) = crate::compact::try_compact(ctx, &messages, &cheap_model, http).await {
+                // Replace entire history with a single summary user message
+                // so the next turn starts fresh with full context window.
+                messages = vec![Message::User(vec![agentix::UserContent::Text {
+                    text: format!(
+                        "This session is being continued from a previous conversation that ran out of context. \
+                        The summary below covers the earlier portion of the conversation.\n\n{summary}"
+                    ),
+                }])];
+                info!(conversation = %ctx.conversation_id, "history replaced with compact summary");
+            } else {
+                // Compact failed — fall back to truncation
+                let before = messages.len();
+                agentix::truncate_to_token_budget(&mut messages, HISTORY_TOKEN_BUDGET);
+                if messages.len() < before {
+                    info!(conversation = %ctx.conversation_id, dropped = before - messages.len(), kept = messages.len(), "history truncated (compact fallback)");
+                }
+            }
+        } else {
+            // ── Truncate history to token budget ──────────────────────────────
+            let before = messages.len();
+            agentix::truncate_to_token_budget(&mut messages, HISTORY_TOKEN_BUDGET);
+            if messages.len() < before {
+                info!(conversation = %ctx.conversation_id, dropped = before - messages.len(), kept = messages.len(), "history truncated");
+            }
         }
 
         // ── Open streaming message row in DB ──────────────────────────────
@@ -741,7 +772,7 @@ fn embed_message_async(ctx: &WorkerContext, row_id: i64, content: String) {
 /// Token events skip the DB INSERT and go directly via pg_notify for low latency.
 /// Structural events (tool_call, done, error, aborted, usage, …) are persisted to
 /// generation_events for reliable replay, then notified.
-async fn emit(ctx: &WorkerContext, payload: Value) {
+pub(crate) async fn emit(ctx: &WorkerContext, payload: Value) {
     let payload_str = payload.to_string();
     let event_type = payload.get("type").and_then(|v| v.as_str()).unwrap_or("");
 

@@ -8,6 +8,7 @@ mod sandbox;
 mod spells;
 mod state;
 mod web;
+mod compact;
 mod worker;
 
 use std::sync::Arc;
