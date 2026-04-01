@@ -181,10 +181,9 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
         crate::spells::load_memories_for_prompt(&ctx.pool, ctx.user_id, ctx.conversation_id).await;
     let has_memory = mem_section.is_some();
 
-    // Compact summary
+    // Compact summary — injected as first user message, not into system prompt
     let compact_summary =
         crate::compact::load_compact_summary(&ctx.pool, ctx.conversation_id).await;
-    let has_compact = compact_summary.is_some();
 
     // ── Build base system prompt via PromptEngine or custom override ───────
     let mut system_prompt: String = if let Some(ref custom) = custom_system_prompt {
@@ -193,8 +192,6 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
     } else {
         let raw = prompt_engine.build_main(
             has_memory,
-            has_compact,
-            compact_summary.as_deref().unwrap_or(""),
             &current_time,
         );
         crate::prompt_template::render_prompt(&raw, &[("USER_NAME", &user_name)])
@@ -205,10 +202,6 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
     if custom_system_prompt.is_some() {
         if let Some(mem) = &mem_section {
             system_prompt.push_str(mem);
-        }
-        if let Some(summary) = &compact_summary {
-            let section = crate::compact::compact_summary_to_system_section(summary);
-            system_prompt.push_str(&section);
         }
     }
 
@@ -260,11 +253,11 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
     }
 
     // ── Build Request ─────────────────────────────────────────────────────
-    let mut request = frontier_cfg.to_request().system_prompt(system_prompt);
+    let request = frontier_cfg.to_request().system_prompt(system_prompt);
 
     // ── Load history from DB ──────────────────────────────────────────────
     let t_restore = std::time::Instant::now();
-    let messages = match ctx.db.restore(ctx.conversation_id).await {
+    let mut messages = match ctx.db.restore(ctx.conversation_id).await {
         Ok(h) => {
             let h = sanitize_history(h);
             info!(conversation = %ctx.conversation_id, messages = h.len(), ms = t_restore.elapsed().as_millis(), "⏱ restore history");
@@ -328,14 +321,12 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
         }
     }
 
-    // ── Load existing compact summary → inject into system prompt ─────────
-    if let Some(summary) =
-        crate::compact::load_compact_summary(&ctx.pool, ctx.conversation_id).await
-    {
-        let section = crate::compact::compact_summary_to_system_section(&summary);
-        let mut existing = request.system_message.clone().unwrap_or_default();
-        existing.push_str(&section);
-        request = request.system_prompt(existing);
+    // ── Prepend compact summary as first user message ─────────────────────
+    if let Some(ref summary) = compact_summary {
+        let section = crate::compact::compact_summary_to_user_message(summary);
+        messages.insert(0, agentix::Message::User(vec![agentix::UserContent::Text {
+            text: section,
+        }]));
     }
 
     // ── Run the LLM ↔ tool-call loop ─────────────────────────────────────

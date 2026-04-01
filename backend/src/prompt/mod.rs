@@ -4,28 +4,19 @@ use tera::{Context, Tera};
 
 const MAIN_BASE: &str = include_str!("templates/main_base.md");
 const MAIN_MEMORY: &str = include_str!("templates/main_memory.md");
-const MAIN_COMPACT: &str = include_str!("templates/main_compact.md");
 const SUB_BASE: &str = include_str!("templates/sub_base.md");
 const SUB_FRESH: &str = include_str!("templates/sub_fresh.md");
 const SUB_FORK: &str = include_str!("templates/sub_fork.md");
 
 // ── Main prompt template ──────────────────────────────────────────────────────
 //
-// Variables: current_date, has_memory, has_compact, compact_summary,
-//            tpl_memory, tpl_compact
+// Variables: base, has_memory, tpl_memory
 const MAIN_TEMPLATE: &str = r#"{{ base }}
 {% if has_memory %}
 
 ---
 
 {{ tpl_memory }}
-{% endif %}
-{% if has_compact %}
-
----
-
-{{ tpl_compact }}
-{{ compact_summary }}
 {% endif %}"#;
 
 // ── Subagent prompt template ──────────────────────────────────────────────────
@@ -61,24 +52,17 @@ impl PromptEngine {
     /// Build the main agent system prompt.
     ///
     /// - `has_memory`: whether there are stored memories to inject
-    /// - `has_compact`: whether a compact summary exists for this conversation
-    /// - `compact_summary`: the summary text (only used when `has_compact`)
     /// - `current_date`: today's date string
     pub fn build_main(
         &self,
         has_memory: bool,
-        has_compact: bool,
-        compact_summary: &str,
         current_time: &str,
     ) -> String {
         let base = MAIN_BASE.replace("{{ current_time }}", current_time);
         let mut ctx = Context::new();
         ctx.insert("base", &base);
         ctx.insert("has_memory", &has_memory);
-        ctx.insert("has_compact", &has_compact);
-        ctx.insert("compact_summary", compact_summary);
         ctx.insert("tpl_memory", MAIN_MEMORY);
-        ctx.insert("tpl_compact", MAIN_COMPACT);
 
         self.tera.render("main", &ctx).unwrap_or_else(|e| {
             tracing::warn!("main prompt template error: {e}");

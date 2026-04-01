@@ -177,7 +177,7 @@ fn collapse_blank_lines(s: &str) -> String {
 
 /// Wrap a stored summary for injection as the opening user message of a new
 /// context window.  Mirrors CC's `getCompactUserSummaryMessage`.
-pub fn compact_summary_to_system_section(summary: &str) -> String {
+pub fn compact_summary_to_user_message(summary: &str) -> String {
     format!(
         "\n\n## 对话摘要（早期上下文已压缩）\n\
 本对话从一个已达到上下文上限的先前会话延续。以下摘要涵盖了早期对话部分。\n\
