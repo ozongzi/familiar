@@ -30,12 +30,11 @@ const COMPACT_MAX_OUTPUT_TOKENS: u32 = 8_000;
 
 // ── Compact prompt ────────────────────────────────────────────────────────────
 
-const NO_TOOLS_PREAMBLE: &str = "CRITICAL: Respond with TEXT ONLY. Do NOT call any tools.\n\
+const NO_TOOLS_PREAMBLE: &str = "CRITICAL: Respond with a single JSON object ONLY. No markdown fences, no prose outside the JSON.\n\
 \n\
-- Do NOT use any tools whatsoever.\n\
-- You already have all the context you need in the conversation above.\n\
-- Tool calls will be REJECTED and will waste your only turn — you will fail the task.\n\
-- Your entire response must be plain text: an <analysis> block followed by a <summary> block.\n\
+- Do NOT call any tools.\n\
+- Your entire response must be exactly one JSON object with two keys: \"analysis\" and \"summary\".\n\
+- Example: {\"analysis\": \"...\", \"summary\": \"...\"}\n\
 \n";
 
 const COMPACT_PROMPT: &str = "Your task is to create a detailed summary of the conversation so far, \
@@ -93,15 +92,26 @@ be verbatim to ensure there's no drift in task interpretation.\n\
 Please provide your summary based on the conversation so far, following this structure and \
 ensuring precision and thoroughness in your response.\n";
 
-const NO_TOOLS_TRAILER: &str = "\n\nREMINDER: Do NOT call any tools. Respond with plain text only — \
-an <analysis> block followed by a <summary> block. \
-Tool calls will be rejected and you will fail the task.";
+const NO_TOOLS_TRAILER: &str = "\n\nREMINDER: Output ONLY a JSON object {\"analysis\": \"...\", \"summary\": \"...\"}. \
+No tool calls. No markdown. No text outside the JSON object.";
 
 fn build_compact_system_prompt() -> String {
     format!("{NO_TOOLS_PREAMBLE}{COMPACT_PROMPT}{NO_TOOLS_TRAILER}")
 }
 
 // ── Summary formatting ────────────────────────────────────────────────────────
+
+/// Parse a JSON compact response `{"analysis": "...", "summary": "..."}` and return the summary.
+fn parse_compact_json(raw: &str) -> Option<String> {
+    let text = raw.trim();
+    let text = text.strip_prefix("```json").unwrap_or(text);
+    let text = text.strip_prefix("```").unwrap_or(text);
+    let text = text.strip_suffix("```").unwrap_or(text).trim();
+    let v: serde_json::Value = serde_json::from_str(text).ok()?;
+    let summary = v["summary"].as_str()?.trim().to_string();
+    if summary.is_empty() { return None; }
+    Some(format!("Summary:\n{summary}"))
+}
 
 /// Strip the `<analysis>` scratchpad and unwrap `<summary>` tags.
 /// Mirrors CC's `formatCompactSummary`.
@@ -297,7 +307,7 @@ pub async fn try_compact(
         return None;
     }
 
-    let formatted = format_compact_summary(&raw);
+    let formatted = parse_compact_json(&raw).unwrap_or_else(|| format_compact_summary(&raw));
 
     // Persist to DB
     let _ = sqlx::query(
