@@ -361,15 +361,11 @@ async fn generation_loop(
             if let Some(summary) =
                 crate::compact::try_compact(ctx, &messages, &cheap_model, http).await
             {
-                // Replace entire history with a single summary user message
-                // so the next turn starts fresh with full context window.
-                messages = vec![Message::User(vec![agentix::UserContent::Text {
-                    text: format!(
-                        "This session is being continued from a previous conversation that ran out of context. \
-                        The summary below covers the earlier portion of the conversation.\n\n{summary}"
-                    ),
-                }])];
-                info!(conversation = %ctx.conversation_id, "history replaced with compact summary");
+                // Replace history: keep real user messages (up to 20k tokens)
+                // + summary as final user message. Mirrors Codex's approach.
+                let kept = messages.len();
+                messages = crate::compact::build_compacted_history(&messages, &summary);
+                info!(conversation = %ctx.conversation_id, before = kept, after = messages.len(), "history compacted");
             } else {
                 // Compact failed — fall back to truncation
                 let before = messages.len();

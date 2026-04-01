@@ -188,6 +188,80 @@ pub fn compact_summary_to_user_message(summary: &str) -> String {
     )
 }
 
+// ── Post-compact history reconstruction ──────────────────────────────────────
+
+const COMPACT_USER_MESSAGE_MAX_TOKENS: usize = 20_000;
+
+/// Returns true if this user message is itself a compact summary (to avoid
+/// accumulating nested summaries across multiple compactions).
+fn is_summary_message(msg: &str) -> bool {
+    msg.contains("## 对话摘要（早期上下文已压缩）")
+}
+
+/// Build the replacement history after compaction, mirroring Codex's approach:
+/// - Keep real user messages (up to `COMPACT_USER_MESSAGE_MAX_TOKENS` total,
+///   newest first), skipping any previous summary messages.
+/// - Append the new summary as the final user message.
+///
+/// This preserves the user's intent even if the summary is imperfect.
+pub fn build_compacted_history(messages: &[Message], summary: &str) -> Vec<Message> {
+    let mut user_msgs: Vec<&str> = messages
+        .iter()
+        .filter_map(|m| match m {
+            Message::User(parts) => {
+                let text = parts.iter().find_map(|p| {
+                    if let agentix::UserContent::Text { text } = p {
+                        Some(text.as_str())
+                    } else {
+                        None
+                    }
+                })?;
+                if is_summary_message(text) { None } else { Some(text) }
+            }
+            _ => None,
+        })
+        .collect();
+
+    let mut selected: Vec<&str> = Vec::new();
+    let mut remaining = COMPACT_USER_MESSAGE_MAX_TOKENS;
+    for msg in user_msgs.iter().rev() {
+        if remaining == 0 {
+            break;
+        }
+        let tokens = msg.len() / 4;
+        if tokens <= remaining {
+            selected.push(msg);
+            remaining = remaining.saturating_sub(tokens);
+        } else {
+            let char_limit = remaining * 4;
+            let truncated_end = msg
+                .char_indices()
+                .nth(char_limit)
+                .map(|(i, _)| i)
+                .unwrap_or(msg.len());
+            // We can't push a truncated &str borrowing from a temp — skip if too big
+            let _ = truncated_end;
+            break;
+        }
+    }
+    selected.reverse();
+
+    let mut new_history: Vec<Message> = selected
+        .into_iter()
+        .map(|text| {
+            Message::User(vec![agentix::UserContent::Text {
+                text: text.to_string(),
+            }])
+        })
+        .collect();
+
+    new_history.push(Message::User(vec![agentix::UserContent::Text {
+        text: compact_summary_to_user_message(summary),
+    }]));
+
+    new_history
+}
+
 // ── Rough token estimation ────────────────────────────────────────────────────
 
 /// Very rough UTF-8 char / 4 token estimate — good enough for threshold checks.
