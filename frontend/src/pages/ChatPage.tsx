@@ -105,23 +105,13 @@ export function ChatPage() {
 
   const messagesRef = useRef<HTMLDivElement>(null);
   const lastUserBubbleRef = useRef<HTMLDivElement>(null);
+  const lastBubbleRef = useRef<HTMLDivElement>(null);
 
-  const scrollToBottom = useCallback(() => {
-    const el = messagesRef.current;
-    if (!el) return;
-    el.scrollTop = el.scrollHeight;
-  }, []);
-
-  // Scroll latest user bubble to top of viewport so reply generates below
-  const scrollLastUserToTop = useCallback(() => {
-    lastUserBubbleRef.current?.scrollIntoView({ block: "start", behavior: "instant" });
-  }, []);
-
-  // ── Scroll to bottom on history load / conversation switch ────────────────
+  // ── On conversation switch: scroll so the last message is visible ─────────
   useEffect(() => {
     if (status === "streaming" || status === "connecting") return;
-    scrollToBottom();
-  }, [activeId, status, scrollToBottom]);
+    lastBubbleRef.current?.scrollIntoView({ block: "end", behavior: "instant" });
+  }, [activeId, status]);
 
   // ── Load history when switching to a real conversation ─────────────────
   useEffect(() => {
@@ -245,10 +235,11 @@ export function ChatPage() {
   const handleSend = useCallback(
     (text: string, images?: string[]) => {
       send(text, images);
-      // Scroll after React flushes the new user bubble into DOM
-      requestAnimationFrame(() => scrollLastUserToTop());
+      requestAnimationFrame(() =>
+        lastUserBubbleRef.current?.scrollIntoView({ block: "start", behavior: "instant" })
+      );
     },
-    [send, scrollLastUserToTop],
+    [send],
   );
 
   const handleInterrupt = useCallback(
@@ -410,11 +401,18 @@ export function ChatPage() {
           )}
 
           {bubbles.map((bubble, i) => {
+            const isLast = i === bubbles.length - 1;
             const isLastUser =
               bubble.role === "user" &&
               !bubbles.slice(i + 1).some((b) => b.role === "user");
             return (
-              <div key={bubble.key} ref={isLastUser ? lastUserBubbleRef : undefined}>
+              <div
+                key={bubble.key}
+                ref={(el) => {
+                  if (isLast) lastBubbleRef.current = el;
+                  if (isLastUser) lastUserBubbleRef.current = el;
+                }}
+              >
                 <MessageBubble
                   bubble={bubble}
                   onAnswer={answerQuestion}
@@ -430,9 +428,6 @@ export function ChatPage() {
               ⚠️ {errorMsg}
             </div>
           )}
-
-          {/* Spacer so the last user message can scroll to the top */}
-          <div style={{ minHeight: "100vh" }} aria-hidden="true" />
 
         </div>
         </div>
