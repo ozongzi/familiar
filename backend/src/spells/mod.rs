@@ -2,6 +2,7 @@ mod history_spell;
 mod manage_mcp_spell;
 mod memory_spell;
 mod plan_spell;
+mod sandbox_spell;
 mod skill_spell;
 mod sourcegraph_spell;
 mod spawn_spell;
@@ -13,6 +14,7 @@ use memory_spell::MemorySpell;
 pub use memory_spell::consolidate_conversation_memories;
 pub use memory_spell::load_memories_for_prompt;
 use plan_spell::PlanSpell;
+use sandbox_spell::SandboxSpell;
 use skill_spell::SkillSpell;
 use sourcegraph_spell::search_code;
 use tavily_spell::TavilySpell;
@@ -91,6 +93,10 @@ pub fn build_all_spells(deps: SpellDeps) -> impl agentix::Tool {
     let bundle = SkillSpell {
         pool: deps.pool.clone(),
         user_id: deps.user_id,
+    } + SandboxSpell {
+        sandbox: deps.sandbox.clone(),
+        user_id: deps.user_id,
+        conversation_id: deps.conversation_id,
     } + UiSpells {
         user_id: deps.user_id,
         conversation_id: deps.conversation_id,
