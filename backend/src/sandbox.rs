@@ -73,7 +73,7 @@ impl SandboxManager {
                         "/workspace",
                         "--entrypoint",
                         "tail",
-                        "autocheck-mcp:latest",
+                        "familiar-sandbox:latest",
                         "-f",
                         "/dev/null",
                     ])
