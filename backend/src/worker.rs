@@ -863,7 +863,8 @@ async fn persist_msg(ctx: &WorkerContext, msg: &Message) {
 
 // ── History sanitization (moved from state.rs) ────────────────────────────────
 
-/// Remove tool_calls from assistant messages that have no matching ToolResult.
+/// Remove tool_calls from assistant messages that have no matching ToolResult,
+/// and remove ToolResult messages that have no matching tool_call in history.
 pub(crate) fn sanitize_history(messages: Vec<Message>) -> Vec<Message> {
     use std::collections::HashSet;
 
@@ -876,6 +877,19 @@ pub(crate) fn sanitize_history(messages: Vec<Message>) -> Vec<Message> {
                 None
             }
         })
+        .collect();
+
+    // Collect all tool_call ids that appear in assistant messages.
+    let called: HashSet<&str> = messages
+        .iter()
+        .filter_map(|m| {
+            if let Message::Assistant { tool_calls, .. } = m {
+                Some(tool_calls.iter().map(|tc| tc.id.as_str()))
+            } else {
+                None
+            }
+        })
+        .flatten()
         .collect();
 
     let mut result: Vec<Message> = Vec::with_capacity(messages.len());
@@ -905,6 +919,8 @@ pub(crate) fn sanitize_history(messages: Vec<Message>) -> Vec<Message> {
                     });
                 }
             }
+            // Drop orphaned tool results (no matching tool_call in history).
+            Message::ToolResult { call_id, .. } if !called.contains(call_id.as_str()) => {}
             other => result.push(other.clone()),
         }
     }

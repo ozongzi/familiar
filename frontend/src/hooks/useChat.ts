@@ -533,41 +533,48 @@ export function useChat(
           });
           return false;
         }
-        setBubbles((prev) => {
-          const exists = prev.some(
-            (b) => b.key === `tool-${event.id}` && b.kind === "tool",
-          );
-          if (exists) {
-            return prev.map((b) => {
-              if (b.kind === "tool" && b.key === `tool-${event.id}` && b.name === "visualize") {
-                const rawArgs = (b._rawArgs ?? "") + event.delta;
-                const parsed = extractWidgetCode(tryParseWidgetArgs(rawArgs));
-                const streamed = parsed ?? extractStreamingWidgetCode(rawArgs);
-                return { ...b, _rawArgs: rawArgs, widgetCode: streamed ?? b.widgetCode };
-              }
-              if (b.key !== `tool-${event.id}` || b.kind !== "tool") return b;
-              const newArgsRaw = b.argsRaw + event.delta;
-              const desc = extractDescription(newArgsRaw);
-              return { ...b, argsRaw: newArgsRaw, description: desc ?? b.description };
-            });
-          }
+        const toolExists = (() => {
+          let found = false;
+          setBubbles((prev) => {
+            found = prev.some((b) => b.key === `tool-${event.id}` && b.kind === "tool");
+            if (found) {
+              return prev.map((b) => {
+                if (b.kind === "tool" && b.key === `tool-${event.id}` && b.name === "visualize") {
+                  const rawArgs = (b._rawArgs ?? "") + event.delta;
+                  const parsed = extractWidgetCode(tryParseWidgetArgs(rawArgs));
+                  const streamed = parsed ?? extractStreamingWidgetCode(rawArgs);
+                  return { ...b, _rawArgs: rawArgs, widgetCode: streamed ?? b.widgetCode };
+                }
+                if (b.key !== `tool-${event.id}` || b.kind !== "tool") return b;
+                const newArgsRaw = b.argsRaw + event.delta;
+                const desc = extractDescription(newArgsRaw);
+                return { ...b, argsRaw: newArgsRaw, description: desc ?? b.description };
+              });
+            }
+            return prev;
+          });
+          return found;
+        })();
+        if (!toolExists) {
           sealActiveText();
-          const toolBubble: ToolBubble = {
-            kind: "tool",
-            key: `tool-${event.id}`,
-            role: "tool",
-            name: event.name,
-            description: extractDescription(event.delta) ?? "",
-            argsRaw: event.delta,
-            result: null,
-            pending: true,
-            ...(event.name === "visualize" ? {
-              widgetCode: extractStreamingWidgetCode(event.delta) ?? "",
-              _rawArgs: event.delta,
-            } : {}),
-          };
-          return [...prev, toolBubble];
-        });
+          setBubbles((prev) => {
+            const toolBubble: ToolBubble = {
+              kind: "tool",
+              key: `tool-${event.id}`,
+              role: "tool",
+              name: event.name,
+              description: extractDescription(event.delta) ?? "",
+              argsRaw: event.delta,
+              result: null,
+              pending: true,
+              ...(event.name === "visualize" ? {
+                widgetCode: extractStreamingWidgetCode(event.delta) ?? "",
+                _rawArgs: event.delta,
+              } : {}),
+            };
+            return [...prev, toolBubble];
+          });
+        }
       } else if (event.type === "tool_progress") {
         setBubbles((prev) =>
           prev.map((b) =>
