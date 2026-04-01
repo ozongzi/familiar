@@ -7,7 +7,7 @@ services:
     ports:
       - "8080:8080"
     environment:
-      - DATABASE_URL=postgres://familiar:${POSTGRES_PASSWORD}@postgres:5432/familiar
+      - DATABASE_URL=postgres://familiar:familiar@postgres:5432/familiar
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./frontend/dist:/app/frontend/dist:ro
@@ -21,7 +21,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: familiar
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_PASSWORD: familiar
       POSTGRES_DB: familiar
     volumes:
       - pgdata:/var/lib/postgresql/data
