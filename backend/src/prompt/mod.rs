@@ -69,9 +69,9 @@ impl PromptEngine {
         has_memory: bool,
         has_compact: bool,
         compact_summary: &str,
-        current_date: &str,
+        current_time: &str,
     ) -> String {
-        let base = MAIN_BASE.replace("{{ current_date }}", current_date);
+        let base = MAIN_BASE.replace("{{ current_time }}", current_time);
         let mut ctx = Context::new();
         ctx.insert("base", &base);
         ctx.insert("has_memory", &has_memory);
@@ -89,7 +89,7 @@ impl PromptEngine {
     /// Build the subagent system prompt.
     ///
     /// - `fork`: `true` = fork mode (inherited context), `false` = fresh mode
-    pub fn build_subagent(&self, fork: bool, _current_date: &str) -> String {
+    pub fn build_subagent(&self, fork: bool, _current_time: &str) -> String {
         let mode = if fork { "fork" } else { "fresh" };
         let mut ctx = Context::new();
         ctx.insert("base", SUB_BASE);

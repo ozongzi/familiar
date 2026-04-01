@@ -104,7 +104,7 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
     // User may supply a fully custom system prompt that bypasses PromptEngine.
     let custom_system_prompt: Option<String> = user_settings.and_then(|(_, p)| p);
 
-    let current_date = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    let current_time = chrono::Utc::now().to_rfc3339();
     // Tera is Send+Sync, so PromptEngine can live across .await points.
     let prompt_engine = crate::prompt::PromptEngine::new();
 
@@ -195,7 +195,7 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
             has_memory,
             has_compact,
             compact_summary.as_deref().unwrap_or(""),
-            &current_date,
+            &current_time,
         );
         crate::prompt_template::render_prompt(&raw, &[("USER_NAME", &user_name)])
     };
@@ -289,7 +289,7 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
     // ── Build ToolBundle (spells + MCPs + tunnel) ─────────────────────────
     let spell_deps = SpellDeps {
         prompt_engine: crate::prompt::PromptEngine::new(),
-        current_date: current_date.clone(),
+        current_date: current_time.clone(),
         cheap_model: cheap_cfg.clone(),
         history: messages.clone(),
         db: ctx.db.clone(),
