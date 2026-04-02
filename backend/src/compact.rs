@@ -1,12 +1,12 @@
-//! Conversation compaction — CC-style summary generation.
+//! Conversation compaction — summary generation.
 //!
 //! When conversation history approaches the token budget, `try_compact` is
-//! called.  It sends the full history to a cheap model with a structured
-//! summary prompt (9-section CC format), strips the `<analysis>` scratchpad,
-//! stores the formatted summary in `conversations.compact_summary`, and
-//! returns the formatted text so the caller can inject it into the system
-//! prompt.  The original message history is NOT truncated here — that happens
-//! in `generation_loop` via `truncate_to_token_budget` as before.
+//! called.  It sends the full history to the cheap model with a plain-markdown
+//! summary prompt (no XML, no JSON — avoids DeepSeek function-call hallucination),
+//! stores the formatted summary in `conversations.compact_summary`, and returns
+//! the text so the caller can inject it as the first user message.
+//! The original message history is NOT truncated here — that happens in
+//! `generation_loop` via `truncate_to_token_budget` as before.
 
 use agentix::{LlmEvent, Message, UserContent};
 use futures::StreamExt;
@@ -19,7 +19,6 @@ use crate::worker::WorkerContext;
 // ── Token thresholds ──────────────────────────────────────────────────────────
 
 /// Fraction of HISTORY_TOKEN_BUDGET at which we trigger compaction.
-/// At 80 % of 25 k = 20 k tokens we compact.
 const COMPACT_TRIGGER_FRACTION: f64 = 0.80;
 pub const HISTORY_TOKEN_BUDGET: usize = 25_000;
 const COMPACT_TRIGGER_TOKENS: usize =
@@ -30,70 +29,59 @@ const COMPACT_MAX_OUTPUT_TOKENS: u32 = 8_000;
 
 // ── Compact prompt ────────────────────────────────────────────────────────────
 
-const NO_TOOLS_PREAMBLE: &str = "CRITICAL: Respond with a single JSON object ONLY. No markdown fences, no prose outside the JSON.\n\
-\n\
-- Do NOT call any tools.\n\
-- Your entire response must be exactly one JSON object with two keys: \"analysis\" and \"summary\".\n\
-- Example: {\"analysis\": \"...\", \"summary\": \"...\"}\n\
-\n";
+/// Preamble placed FIRST to suppress tool calls on DeepSeek and other models
+/// that hallucinate function calls when they see long context + XML tags.
+const NO_TOOLS_PREAMBLE: &str = "CRITICAL: Respond with TEXT ONLY. Do NOT call any tools or functions.\n\
+Do NOT use <function_calls>, <tool_use>, or any similar syntax.\n\
+Do NOT output JSON or XML. Output plain Markdown only.\n\
+Tool calls will be ignored and you will fail the task.\n\n";
 
 const COMPACT_PROMPT: &str = "Your task is to create a detailed summary of the conversation so far, \
 paying close attention to the user's explicit requests and your previous actions.\n\
 This summary should be thorough in capturing technical details, code patterns, and architectural \
 decisions that would be essential for continuing development work without losing context.\n\
 \n\
-Before providing your final summary, wrap your analysis in <analysis> tags to organize your \
-thoughts and ensure you've covered all necessary points. In your analysis process:\n\
+Your summary MUST follow this exact Markdown structure:\n\
 \n\
-1. Chronologically analyze each message and section of the conversation. For each section \
-thoroughly identify:\n\
-   - The user's explicit requests and intents\n\
-   - Your approach to addressing the user's requests\n\
-   - Key decisions, technical concepts and code patterns\n\
-   - Specific details like:\n\
-     - file names\n\
-     - full code snippets\n\
-     - function signatures\n\
-     - file edits\n\
-   - Errors that you ran into and how you fixed them\n\
-   - Pay special attention to specific user feedback that you received, especially if the user \
-told you to do something differently.\n\
-2. Double-check for technical accuracy and completeness, addressing each required element \
-thoroughly.\n\
+## 1. Primary Request and Intent\n\
+[Capture all of the user's explicit requests and intents in detail]\n\
 \n\
-Your summary should include the following sections:\n\
+## 2. Key Technical Concepts\n\
+[List all important technical concepts, technologies, and frameworks discussed]\n\
 \n\
-1. Primary Request and Intent: Capture all of the user's explicit requests and intents in detail\n\
-2. Key Technical Concepts: List all important technical concepts, technologies, and frameworks \
-discussed.\n\
-3. Files and Code Sections: Enumerate specific files and code sections examined, modified, or \
-created. Pay special attention to the most recent messages and include full code snippets where \
-applicable and include a summary of why this file read or edit is important.\n\
-4. Errors and fixes: List all errors that you ran into, and how you fixed them. Pay special \
-attention to specific user feedback that you received, especially if the user told you to do \
-something differently.\n\
-5. Problem Solving: Document problems solved and any ongoing troubleshooting efforts.\n\
-6. All user messages: List ALL user messages that are not tool results. These are critical for \
-understanding the users' feedback and changing intent.\n\
-7. Pending Tasks: Outline any pending tasks that you have explicitly been asked to work on.\n\
-8. Current Work: Describe in detail precisely what was being worked on immediately before this \
-summary request, paying special attention to the most recent messages from both user and \
-assistant. Include file names and code snippets where applicable.\n\
-9. Optional Next Step: List the next step that you will take that is related to the most recent \
-work you were doing. IMPORTANT: ensure that this step is DIRECTLY in line with the user's most \
-recent explicit requests, and the task you were working on immediately before this summary \
-request. If your last task was concluded, then only list next steps if they are explicitly in \
-line with the users request. Do not start on tangential requests or really old requests that \
-were already completed without confirming with the user first.\n\
-                       If there is a next step, include direct quotes from the most recent \
-conversation showing exactly what task you were working on and where you left off. This should \
-be verbatim to ensure there's no drift in task interpretation.\n\
+## 3. Files and Code Sections\n\
+[Enumerate specific files and code sections examined, modified, or created.\n\
+Include full code snippets where applicable and explain why each is important.]\n\
 \n\
-Please provide your summary based on the conversation so far, following this structure and \
-ensuring precision and thoroughness in your response.\n";
+## 4. Errors and Fixes\n\
+[List all errors encountered and how they were fixed.\n\
+Pay special attention to user feedback, especially if the user told you to do something differently.]\n\
+\n\
+## 5. Problem Solving\n\
+[Document problems solved and any ongoing troubleshooting efforts]\n\
+\n\
+## 6. All User Messages\n\
+[List ALL user messages that are not tool results. These are critical for understanding\n\
+the user's feedback and changing intent.]\n\
+\n\
+## 7. Pending Tasks\n\
+[Outline any pending tasks you have explicitly been asked to work on]\n\
+\n\
+## 8. Current Work\n\
+[Describe in detail precisely what was being worked on immediately before this summary request,\n\
+paying special attention to the most recent messages. Include file names and code snippets.]\n\
+\n\
+## 9. Optional Next Step\n\
+[The next step directly in line with the user's most recent explicit request.\n\
+Include direct quotes from the most recent conversation showing exactly what task you were\n\
+working on and where you left off. If the last task was concluded, only list next steps\n\
+explicitly requested by the user.]\n\
+\n\
+Please provide your summary based on the conversation so far, following this structure exactly.\n\
+Output only the Markdown summary — no preamble, no commentary, no tool calls.\n";
 
-const NO_TOOLS_TRAILER: &str = "\n\nREMINDER: Output ONLY a JSON object {\"analysis\": \"...\", \"summary\": \"...\"}. \
-No tool calls. No markdown. No text outside the JSON object.";
+const NO_TOOLS_TRAILER: &str = "\n\nREMINDER: Output ONLY the Markdown summary with the 9 sections above. \
+No tool calls. No JSON. No XML. No text before section 1.";
 
 fn build_compact_system_prompt() -> String {
     format!("{NO_TOOLS_PREAMBLE}{COMPACT_PROMPT}{NO_TOOLS_TRAILER}")
@@ -101,60 +89,53 @@ fn build_compact_system_prompt() -> String {
 
 // ── Summary formatting ────────────────────────────────────────────────────────
 
-/// Parse a JSON compact response `{"analysis": "...", "summary": "..."}` and return the summary.
-fn parse_compact_json(raw: &str) -> Option<String> {
-    let text = raw.trim();
-    let text = text.strip_prefix("```json").unwrap_or(text);
-    let text = text.strip_prefix("```").unwrap_or(text);
-    let text = text.strip_suffix("```").unwrap_or(text).trim();
-    let v: serde_json::Value = serde_json::from_str(text).ok()?;
-    let summary = v["summary"].as_str()?.trim().to_string();
-    if summary.is_empty() { return None; }
-    Some(format!("Summary:\n{summary}"))
-}
-
-/// Strip the `<analysis>` scratchpad and unwrap `<summary>` tags.
-/// Mirrors CC's `formatCompactSummary`.
+/// Minimal cleanup: strip any accidental tool-call leakage, collapse excess blank lines.
+/// Since we now ask for pure Markdown, there's nothing to parse — output is the summary.
 pub fn format_compact_summary(raw: &str) -> String {
-    // Strip <analysis>…</analysis> (simple state-machine, no regex dep)
-    let stripped = strip_xml_tag(raw, "analysis");
-
-    // Extract <summary>…</summary> content
-    let formatted = if let Some(content) = extract_xml_tag(&stripped, "summary") {
-        format!("Summary:\n{}", content.trim())
-    } else {
-        stripped.trim().to_string()
-    };
+    // Remove any function_call / tool_use blocks the model might have hallucinated
+    let cleaned = strip_tool_call_blocks(raw);
 
     // Collapse 3+ consecutive newlines to 2
-    collapse_blank_lines(&formatted)
+    let collapsed = collapse_blank_lines(&cleaned);
+
+    // Ensure it starts with "Summary:\n" for consistency with injection wrapper
+    let trimmed = collapsed.trim();
+    if trimmed.starts_with("## 1.") || trimmed.starts_with("# Summary") {
+        format!("Summary:\n{trimmed}")
+    } else if trimmed.starts_with("Summary:") {
+        trimmed.to_string()
+    } else {
+        format!("Summary:\n{trimmed}")
+    }
 }
 
-fn strip_xml_tag(s: &str, tag: &str) -> String {
-    let open = format!("<{tag}>");
-    let close = format!("</{tag}>");
+/// Strip `<function_calls>…</function_calls>` and DeepSeek DSML blocks if the
+/// model hallucinated them despite instructions.
+fn strip_tool_call_blocks(s: &str) -> String {
     let mut result = s.to_string();
-    loop {
-        if let Some(start) = result.find(&open) {
-            if let Some(rel_end) = result[start..].find(&close) {
-                let end = start + rel_end + close.len();
-                result.replace_range(start..end, "");
+    for tag in &["function_calls", "tool_use", "tool_call"] {
+        let open = format!("<{tag}");
+        let close = format!("</{tag}>");
+        loop {
+            if let Some(start) = result.find(&open) {
+                if let Some(rel_end) = result[start..].find(&close) {
+                    let end = start + rel_end + close.len();
+                    result.replace_range(start..end, "");
+                } else {
+                    // Unclosed tag — strip from open to end
+                    result.truncate(start);
+                    break;
+                }
             } else {
                 break;
             }
-        } else {
-            break;
         }
     }
+    // Strip DeepSeek DSML marker and anything after it
+    if let Some(pos) = result.find("<｜DSML｜") {
+        result.truncate(pos);
+    }
     result
-}
-
-fn extract_xml_tag<'a>(s: &'a str, tag: &str) -> Option<&'a str> {
-    let open = format!("<{tag}>");
-    let close = format!("</{tag}>");
-    let start = s.find(&open)? + open.len();
-    let end = s[start..].find(&close).map(|i| start + i)?;
-    Some(&s[start..end])
 }
 
 fn collapse_blank_lines(s: &str) -> String {
@@ -176,10 +157,10 @@ fn collapse_blank_lines(s: &str) -> String {
 }
 
 /// Wrap a stored summary for injection as the opening user message of a new
-/// context window.  Mirrors CC's `getCompactUserSummaryMessage`.
+/// context window.
 pub fn compact_summary_to_user_message(summary: &str) -> String {
     format!(
-        "\n\n## 对话摘要（早期上下文已压缩）\n\
+        "## 对话摘要（早期上下文已压缩）\n\
 本对话从一个已达到上下文上限的先前会话延续。以下摘要涵盖了早期对话部分。\n\
 \n\
 {summary}\n\
@@ -188,83 +169,8 @@ pub fn compact_summary_to_user_message(summary: &str) -> String {
     )
 }
 
-// ── Post-compact history reconstruction ──────────────────────────────────────
-
-const COMPACT_USER_MESSAGE_MAX_TOKENS: usize = 20_000;
-
-/// Returns true if this user message is itself a compact summary (to avoid
-/// accumulating nested summaries across multiple compactions).
-fn is_summary_message(msg: &str) -> bool {
-    msg.contains("## 对话摘要（早期上下文已压缩）")
-}
-
-/// Build the replacement history after compaction, mirroring Codex's approach:
-/// - Keep real user messages (up to `COMPACT_USER_MESSAGE_MAX_TOKENS` total,
-///   newest first), skipping any previous summary messages.
-/// - Append the new summary as the final user message.
-///
-/// This preserves the user's intent even if the summary is imperfect.
-pub fn build_compacted_history(messages: &[Message], summary: &str) -> Vec<Message> {
-    let mut user_msgs: Vec<&str> = messages
-        .iter()
-        .filter_map(|m| match m {
-            Message::User(parts) => {
-                let text = parts.iter().find_map(|p| {
-                    if let agentix::UserContent::Text { text } = p {
-                        Some(text.as_str())
-                    } else {
-                        None
-                    }
-                })?;
-                if is_summary_message(text) { None } else { Some(text) }
-            }
-            _ => None,
-        })
-        .collect();
-
-    let mut selected: Vec<&str> = Vec::new();
-    let mut remaining = COMPACT_USER_MESSAGE_MAX_TOKENS;
-    for msg in user_msgs.iter().rev() {
-        if remaining == 0 {
-            break;
-        }
-        let tokens = msg.len() / 4;
-        if tokens <= remaining {
-            selected.push(msg);
-            remaining = remaining.saturating_sub(tokens);
-        } else {
-            let char_limit = remaining * 4;
-            let truncated_end = msg
-                .char_indices()
-                .nth(char_limit)
-                .map(|(i, _)| i)
-                .unwrap_or(msg.len());
-            // We can't push a truncated &str borrowing from a temp — skip if too big
-            let _ = truncated_end;
-            break;
-        }
-    }
-    selected.reverse();
-
-    let mut new_history: Vec<Message> = selected
-        .into_iter()
-        .map(|text| {
-            Message::User(vec![agentix::UserContent::Text {
-                text: text.to_string(),
-            }])
-        })
-        .collect();
-
-    new_history.push(Message::User(vec![agentix::UserContent::Text {
-        text: compact_summary_to_user_message(summary),
-    }]));
-
-    new_history
-}
-
 // ── Rough token estimation ────────────────────────────────────────────────────
 
-/// Very rough UTF-8 char / 4 token estimate — good enough for threshold checks.
 fn rough_token_count(messages: &[Message]) -> usize {
     messages.iter().fold(0usize, |acc, m| {
         let text = match m {
@@ -293,13 +199,11 @@ fn rough_token_count(messages: &[Message]) -> usize {
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
-/// Check whether messages are above the compact trigger threshold.
 pub fn should_compact(messages: &[Message]) -> bool {
     rough_token_count(messages) >= COMPACT_TRIGGER_TOKENS
 }
 
-/// Strip images from messages before sending for compaction (saves tokens,
-/// avoids hitting compact model's own context limit).
+/// Strip images from messages before sending for compaction.
 fn strip_images(messages: &[Message]) -> Vec<Message> {
     messages
         .iter()
@@ -322,15 +226,15 @@ fn strip_images(messages: &[Message]) -> Vec<Message> {
 }
 
 /// Run compaction:
-/// 1. Sends full history to cheap model with compact system prompt.
-/// 2. Formats the raw output (strips `<analysis>`).
+/// 1. Sends full history to cheap model with compact system prompt (plain Markdown,
+///    no XML/JSON to avoid DeepSeek function-call hallucination).
+/// 2. Strips any accidental tool-call leakage from the output.
 /// 3. Persists the summary in `conversations.compact_summary`.
 /// 4. Emits a `{"type":"compact","summary":"..."}` SSE event.
-/// 5. Returns the formatted summary so the caller can inject it into the
-///    system prompt for this generation turn.
+/// 5. Returns the formatted summary so the caller can inject it as the first
+///    user message for the next generation turn.
 ///
-/// On any failure the function logs a warning and returns `None` — the caller
-/// falls back to plain truncation.
+/// On any failure logs a warning and returns `None` — caller falls back to truncation.
 pub async fn try_compact(
     ctx: &WorkerContext,
     messages: &[Message],
@@ -376,12 +280,22 @@ pub async fn try_compact(
         return None;
     }
 
-    if raw.contains("<function_calls>") || raw.contains("<｜DSML｜") {
-        warn!(conversation = %ctx.conversation_id, "compact output looks like a tool call, discarding");
+    // If despite instructions the model output only tool calls, discard
+    let looks_like_only_tool_calls = {
+        let stripped = strip_tool_call_blocks(&raw);
+        stripped.trim().is_empty()
+    };
+    if looks_like_only_tool_calls {
+        warn!(conversation = %ctx.conversation_id, "compact output was entirely tool calls, discarding");
         return None;
     }
 
-    let formatted = parse_compact_json(&raw).unwrap_or_else(|| format_compact_summary(&raw));
+    let formatted = format_compact_summary(&raw);
+
+    if formatted.trim().is_empty() || formatted == "Summary:" {
+        warn!(conversation = %ctx.conversation_id, "compact produced empty summary after formatting");
+        return None;
+    }
 
     // Persist to DB
     let _ = sqlx::query(

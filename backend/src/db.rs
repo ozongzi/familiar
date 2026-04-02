@@ -12,8 +12,8 @@
 //! - Embeddings are stored as pgvector `vector(1536)` and queried with
 //!   cosine distance operator `<=>`.
 //! - FTS uses PostgreSQL's built-in `tsvector` / `tsquery` via `@@`.
-//! - On restore, we find the latest summary row and load only
-//!   [that summary + everything after it] to keep the in-memory history bounded.
+//! - Summary is stored in conversations.compact_summary, not in messages.
+//!   restore() returns all real messages; the worker prepends the summary.
 
 use pgvector::Vector;
 use sqlx::PgPool;
@@ -34,7 +34,6 @@ pub struct MessageRow {
     pub spell_casts: Option<String>,
     pub spell_cast_id: Option<String>,
     pub reasoning: Option<String>,
-    pub is_summary: bool,
     pub created_at: i64,
     pub parent_id: Option<i64>,
     pub streaming: bool,
@@ -72,8 +71,8 @@ impl Db {
             r#"
             INSERT INTO messages
                 (conversation_id, role, content, reasoning, spell_casts, spell_cast_id,
-                 name, is_summary, created_at, streaming, job_id, parent_id)
-            VALUES ($1, 'assistant', '', '', NULL, NULL, NULL, false, $2, true, $3, $4)
+                 name, created_at, streaming, job_id, parent_id)
+            VALUES ($1, 'assistant', '', '', NULL, NULL, NULL, $2, true, $3, $4)
             RETURNING id
             "#,
         )
@@ -191,7 +190,6 @@ impl Db {
                 None,
             ),
         };
-        let is_summary = false;
         let now = unix_now();
 
         let mut tx = self.pool.begin().await?;
@@ -207,8 +205,8 @@ impl Db {
             r#"
             INSERT INTO messages
                 (conversation_id, role, name, content, spell_casts, spell_cast_id,
-                 reasoning, is_summary, created_at, embedding, parent_id, streaming, job_id)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, false, NULL)
+                 reasoning, created_at, embedding, parent_id, streaming, job_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, false, NULL)
             RETURNING id
             "#,
         )
@@ -219,7 +217,6 @@ impl Db {
         .bind(&tool_calls_json)
         .bind(&tool_call_id)
         .bind(&reasoning)
-        .bind(is_summary)
         .bind(now)
         .bind(&embedding)
         .bind(parent_id)
@@ -260,30 +257,23 @@ impl Db {
             r#"
             WITH RECURSIVE branch AS (
                 SELECT m.id, m.conversation_id, m.role, m.name, m.content,
-                       m.spell_casts, m.spell_cast_id, m.reasoning, m.is_summary,
+                       m.spell_casts, m.spell_cast_id, m.reasoning,
                        m.created_at, m.parent_id, m.streaming, m.job_id
                 FROM messages m
                 JOIN conversations c ON c.id = $1
                 WHERE m.id = c.active_message_id
                 UNION ALL
                 SELECT m.id, m.conversation_id, m.role, m.name, m.content,
-                       m.spell_casts, m.spell_cast_id, m.reasoning, m.is_summary,
+                       m.spell_casts, m.spell_cast_id, m.reasoning,
                        m.created_at, m.parent_id, m.streaming, m.job_id
                 FROM messages m
                 JOIN branch b ON m.id = b.parent_id
-            ),
-            summary_cutoff AS (
-                SELECT COALESCE(
-                    (SELECT id FROM branch WHERE is_summary = true ORDER BY id DESC LIMIT 1),
-                    0
-                ) AS since_id
             )
             SELECT id, conversation_id, role, name, content,
-                   spell_casts, spell_cast_id, reasoning, is_summary, created_at, parent_id,
+                   spell_casts, spell_cast_id, reasoning, created_at, parent_id,
                    streaming, job_id
-            FROM branch, summary_cutoff
-            WHERE id >= since_id
-              AND streaming = false
+            FROM branch
+            WHERE streaming = false
               AND NOT (role = 'assistant'
                        AND (content IS NULL OR content = '')
                        AND spell_casts IS NULL)
@@ -306,7 +296,7 @@ impl Db {
         let rows: Vec<MessageRow> = sqlx::query_as(
             r#"
             SELECT id, conversation_id, role, name, content,
-                   spell_casts, spell_cast_id, reasoning, is_summary, created_at,
+                   spell_casts, spell_cast_id, reasoning, created_at,
                    parent_id, streaming, job_id
             FROM messages
             WHERE conversation_id = $1
@@ -333,7 +323,7 @@ impl Db {
         let rows: Vec<(MessageRow, f32)> = sqlx::query_as(
             r#"
             SELECT id, conversation_id, role, name, content,
-                   spell_casts, spell_cast_id, reasoning, is_summary, created_at,
+                   spell_casts, spell_cast_id, reasoning, created_at,
                    parent_id, streaming, job_id,
                    (1 - (embedding <=> $2))::float4 AS similarity
             FROM messages
@@ -360,7 +350,6 @@ impl Db {
                     spell_casts: r.spell_casts,
                     spell_cast_id: r.spell_cast_id,
                     reasoning: r.reasoning,
-                    is_summary: r.is_summary,
                     created_at: r.created_at,
                     parent_id: r.parent_id,
                     streaming: r.streaming,
@@ -379,20 +368,20 @@ impl Db {
             r#"
             WITH RECURSIVE branch AS (
                 SELECT m.id, m.conversation_id, m.role, m.name, m.content,
-                       m.spell_casts, m.spell_cast_id, m.reasoning, m.is_summary,
+                       m.spell_casts, m.spell_cast_id, m.reasoning,
                        m.created_at, m.parent_id, m.streaming, m.job_id
                 FROM messages m
                 JOIN conversations c ON c.id = $1
                 WHERE m.id = c.active_message_id
                 UNION ALL
                 SELECT m.id, m.conversation_id, m.role, m.name, m.content,
-                       m.spell_casts, m.spell_cast_id, m.reasoning, m.is_summary,
+                       m.spell_casts, m.spell_cast_id, m.reasoning,
                        m.created_at, m.parent_id, m.streaming, m.job_id
                 FROM messages m
                 JOIN branch b ON m.id = b.parent_id
             )
             SELECT id, conversation_id, role, name, content,
-                   spell_casts, spell_cast_id, reasoning, is_summary, created_at, parent_id,
+                   spell_casts, spell_cast_id, reasoning, created_at, parent_id,
                    streaming, job_id
             FROM branch
             ORDER BY id ASC
@@ -418,7 +407,6 @@ struct SemanticRow {
     spell_casts: Option<String>,
     spell_cast_id: Option<String>,
     reasoning: Option<String>,
-    is_summary: bool,
     created_at: i64,
     parent_id: Option<i64>,
     streaming: bool,

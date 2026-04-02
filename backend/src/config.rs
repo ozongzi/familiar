@@ -266,7 +266,7 @@ impl Config {
         Ok(())
     }
 
-    pub fn system_prompt(&self) -> Option<String> {
-        self.server.system_prompt.clone()
-    }
+    // pub fn system_prompt(&self) -> Option<String> {
+    //     self.server.system_prompt.clone()
+    // }
 }

@@ -59,7 +59,7 @@ impl Tool for SpawnSpell {
         } else {
             self.fresh_prompt.clone()
         };
-        let mut request = self
+        let request = self
             .cheap_model
             .to_request()
             .model(model_name)

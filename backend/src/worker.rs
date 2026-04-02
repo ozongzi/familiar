@@ -322,6 +322,8 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
     }
 
     // ── Prepend compact summary as first user message ─────────────────────
+    // Summary lives in conversations.compact_summary, never in messages table.
+    // Always prepend unconditionally — no sentinel message, no duplicate check needed.
     if let Some(ref summary) = compact_summary {
         let section = crate::compact::compact_summary_to_user_message(summary);
         messages.insert(0, agentix::Message::User(vec![agentix::UserContent::Text {
@@ -358,29 +360,16 @@ async fn generation_loop(
 
         // ── Auto-compact before truncation ────────────────────────────────
         if crate::compact::should_compact(&messages) {
-            if let Some(summary) =
-                crate::compact::try_compact(ctx, &messages, &cheap_model, http).await
-            {
-                // Replace history: keep real user messages (up to 20k tokens)
-                // + summary as final user message. Mirrors Codex's approach.
-                let kept = messages.len();
-                messages = crate::compact::build_compacted_history(&messages, &summary);
-                info!(conversation = %ctx.conversation_id, before = kept, after = messages.len(), "history compacted");
-            } else {
-                // Compact failed — fall back to truncation
-                let before = messages.len();
-                agentix::truncate_to_token_budget(&mut messages, HISTORY_TOKEN_BUDGET);
-                if messages.len() < before {
-                    info!(conversation = %ctx.conversation_id, dropped = before - messages.len(), kept = messages.len(), "history truncated (compact fallback)");
-                }
-            }
-        } else {
-            // ── Truncate history to token budget ──────────────────────────────
-            let before = messages.len();
-            agentix::truncate_to_token_budget(&mut messages, HISTORY_TOKEN_BUDGET);
-            if messages.len() < before {
-                info!(conversation = %ctx.conversation_id, dropped = before - messages.len(), kept = messages.len(), "history truncated");
-            }
+            // Fire-and-forget: summary is persisted to conversations.compact_summary.
+            // The next worker invocation will load it and prepend it automatically.
+            // No history rebuild needed here — just truncate to budget as usual.
+            let _ = crate::compact::try_compact(ctx, &messages, &cheap_model, http).await;
+        }
+        // ── Truncate history to token budget ──────────────────────────────
+        let before = messages.len();
+        agentix::truncate_to_token_budget(&mut messages, HISTORY_TOKEN_BUDGET);
+        if messages.len() < before {
+            info!(conversation = %ctx.conversation_id, dropped = before - messages.len(), kept = messages.len(), "history truncated");
         }
 
         // ── Open streaming message row in DB ──────────────────────────────

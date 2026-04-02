@@ -311,12 +311,12 @@ fn find_root(start: &Path, markers: &[&str]) -> Option<PathBuf> {
     }
 }
 
-fn path_env_with_cargo() -> String {
-    let current = std::env::var("PATH").unwrap_or_default();
-    let cargo_bin = std::env::var("HOME").map(|h| format!("{h}/.cargo/bin")).unwrap_or_default();
-    if cargo_bin.is_empty() || current.contains(&cargo_bin) { current }
-    else { format!("{cargo_bin}:{current}") }
-}
+// fn path_env_with_cargo() -> String {
+//     let current = std::env::var("PATH").unwrap_or_default();
+//     let cargo_bin = std::env::var("HOME").map(|h| format!("{h}/.cargo/bin")).unwrap_or_default();
+//     if cargo_bin.is_empty() || current.contains(&cargo_bin) { current }
+//     else { format!("{cargo_bin}:{current}") }
+// }
 
 fn parse_rust_diagnostics(stderr: &str, crate_root: &Path) -> Vec<Value> {
     let mut diags: Vec<Value> = Vec::new();
@@ -541,6 +541,25 @@ pub struct SandboxSpell {
     pub conversation_id: Uuid,
 }
 
+impl SandboxSpell {
+    /// Translate a `/workspace/...` path (as seen inside the sandbox container)
+    /// to its equivalent absolute host path inside the conversation directory.
+    /// Paths that do not start with `/workspace` are returned unchanged.
+    fn resolve_path(&self, path: &str) -> String {
+        if let Some(rest) = path.strip_prefix("/workspace") {
+            let conv_dir = self.sandbox.get_conversation_dir(self.user_id, self.conversation_id);
+            let rest = rest.trim_start_matches('/');
+            if rest.is_empty() {
+                conv_dir.to_string_lossy().into_owned()
+            } else {
+                conv_dir.join(rest).to_string_lossy().into_owned()
+            }
+        } else {
+            path.to_owned()
+        }
+    }
+}
+
 #[tool]
 impl agentix::Tool for SandboxSpell {
     /// Read, search, explore, or summarize files and directories.
@@ -564,6 +583,7 @@ impl agentix::Tool for SandboxSpell {
         extract_symbol: Option<String>,
         max_depth: Option<usize>,
     ) -> Value {
+        let path = self.resolve_path(&path);
         do_read(&path, start_line, end_line, outline_only, extract_symbol, max_depth, search_regex, context_lines).await
     }
 
@@ -573,7 +593,7 @@ impl agentix::Tool for SandboxSpell {
         let mut results = Vec::new();
         for item in &reads {
             let path = match item["path"].as_str() {
-                Some(p) => p.to_string(),
+                Some(p) => self.resolve_path(p),
                 None => { results.push(json!({ "error": "missing path" })); continue; }
             };
             results.push(do_read(
@@ -607,6 +627,7 @@ impl agentix::Tool for SandboxSpell {
         append: Option<bool>,
         shebang: Option<String>,
     ) -> Value {
+        let path = self.resolve_path(&path);
         let mut result = do_write(&path, new_string, old_string, count, append, shebang).await;
         if result.get("error").is_none() {
             if let Some(ac) = run_autocheck_in_container(&self.sandbox, self.user_id, self.conversation_id, &path).await {
