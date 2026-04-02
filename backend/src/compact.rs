@@ -20,7 +20,7 @@ use crate::worker::WorkerContext;
 
 /// Fraction of HISTORY_TOKEN_BUDGET at which we trigger compaction.
 const COMPACT_TRIGGER_FRACTION: f64 = 0.80;
-pub const HISTORY_TOKEN_BUDGET: usize = 25_000;
+pub const HISTORY_TOKEN_BUDGET: usize = 64_000;
 const COMPACT_TRIGGER_TOKENS: usize =
     (HISTORY_TOKEN_BUDGET as f64 * COMPACT_TRIGGER_FRACTION) as usize;
 
@@ -169,38 +169,11 @@ pub fn compact_summary_to_user_message(summary: &str) -> String {
     )
 }
 
-// ── Rough token estimation ────────────────────────────────────────────────────
-
-fn rough_token_count(messages: &[Message]) -> usize {
-    messages.iter().fold(0usize, |acc, m| {
-        let text = match m {
-            Message::User(parts) => parts.iter().fold(String::new(), |mut s, p| {
-                if let UserContent::Text { text } = p {
-                    s.push_str(text);
-                }
-                s
-            }),
-            Message::Assistant {
-                content,
-                tool_calls,
-                ..
-            } => {
-                let mut s = content.clone().unwrap_or_default();
-                for tc in tool_calls {
-                    s.push_str(&tc.arguments);
-                }
-                s
-            }
-            Message::ToolResult { content, .. } => content.clone(),
-        };
-        acc + text.len() / 4
-    })
-}
-
 // ── Public API ────────────────────────────────────────────────────────────────
 
 pub fn should_compact(messages: &[Message]) -> bool {
-    rough_token_count(messages) >= COMPACT_TRIGGER_TOKENS
+    let tokens: usize = messages.iter().map(|m| m.estimate_tokens()).sum();
+    tokens >= COMPACT_TRIGGER_TOKENS
 }
 
 /// Strip images from messages before sending for compaction.
