@@ -8,6 +8,9 @@ services:
       - "3000:3000"
     environment:
       - DATABASE_URL=postgres://familiar:familiar@postgres:5432/familiar
+      - GITHUB_CLIENT_ID
+      - GITHUB_CLIENT_SECRET
+      - GITHUB_REDIRECT_URI
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./frontend/dist:/app/frontend/dist:ro
