@@ -588,7 +588,7 @@ impl agentix::Tool for SandboxSpell {
     }
 
     /// Read multiple files or directories in one call to reduce round-trips.
-    /// Each item has the same fields as the `read` tool: path (required), start_line, end_line, search_regex, context_lines, outline_only, extract_symbol, max_depth
+    /// reads: array of read operations; each item has: path (required), start_line, end_line, search_regex, context_lines, outline_only, extract_symbol, max_depth
     async fn multiread(&self, reads: Vec<Value>) -> Value {
         let mut results = Vec::new();
         for item in &reads {
@@ -638,7 +638,7 @@ impl agentix::Tool for SandboxSpell {
     }
 
     /// Write multiple files in one call, then run checks for all affected projects.
-    /// Each item has the same fields as the `write` tool: path (required), new_string (required), old_string, count, append, shebang
+    /// writes: array of write operations; each item has: path (required), new_string (required), old_string, count, append, shebang
     async fn multiwrite(&self, writes: Vec<Value>) -> Value {
         let mut results = Vec::new();
         let mut affected: HashSet<(PathBuf, String)> = HashSet::new();

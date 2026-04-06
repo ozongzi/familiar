@@ -130,6 +130,7 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
                     .as_object()
                     .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
                     .unwrap_or_default(),
+                max_tokens: None,
             }
         }
 
@@ -531,6 +532,15 @@ async fn generation_loop(
         }
 
         // ── Seal the streaming message with final content ─────────────────
+        // Drop any tool calls whose arguments are not a complete, valid JSON object.
+        // This guards against truncated streams where agentix's finalize() emits
+        // a PartialToolCall with incomplete JSON (e.g. `{"writes": `), which would
+        // cause Anthropic to reject subsequent requests with HTTP 400.
+        tool_calls_buf.retain(|tc| {
+            serde_json::from_str::<serde_json::Value>(&tc.arguments)
+                .map(|v| v.is_object())
+                .unwrap_or(false)
+        });
         let tc_json = if tool_calls_buf.is_empty() {
             None
         } else {

@@ -4,6 +4,7 @@ pub mod conversations;
 pub mod files;
 pub mod github_oauth;
 pub mod history;
+pub mod invite_codes;
 pub mod mcps;
 pub mod models;
 pub mod sessions;
@@ -92,6 +93,11 @@ pub fn create_router(state: AppState, allowed_origin: Option<&str>) -> Router {
             "/api/auth/github/callback",
             get(github_oauth::github_callback),
         )
+        .route("/api/auth/register", post(invite_codes::register_with_invite))
+        // ── Invite Codes (admin) ──────────────────────────────────────────────
+        .route("/api/admin/invite-codes", get(invite_codes::list_invite_codes))
+        .route("/api/admin/invite-codes", post(invite_codes::create_invite_code))
+        .route("/api/admin/invite-codes/{code}", delete(invite_codes::delete_invite_code))
         // ── Users ─────────────────────────────────────────────────────────────
         .route("/api/users/me", get(get_me))
         .route("/api/users/me/profile", put(update_profile))

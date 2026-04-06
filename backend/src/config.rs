@@ -36,14 +36,21 @@ pub struct ModelConfig {
     pub provider: Provider,
     #[serde(default)]
     pub extra_body: HashMap<String, Value>,
+    #[serde(default)]
+    pub max_tokens: Option<u32>,
 }
 
 impl ModelConfig {
     /// Build an [`agentix::Request`] pre-filled with provider, key, base URL, and model.
     pub fn to_request(&self) -> agentix::Request {
-        agentix::Request::new(self.provider, &self.api_key)
+        let req = agentix::Request::new(self.provider, &self.api_key)
             .base_url(&self.api_base)
-            .model(&self.name)
+            .model(&self.name);
+        if let Some(mt) = self.max_tokens {
+            req.max_tokens(mt)
+        } else {
+            req
+        }
     }
 }
 
@@ -117,6 +124,7 @@ impl Default for Config {
             name: "deepseek-chat".to_string(),
             provider: Provider::DeepSeek,
             extra_body: HashMap::new(),
+            max_tokens: None,
         };
 
         Self {

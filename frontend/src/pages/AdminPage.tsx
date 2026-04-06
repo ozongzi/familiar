@@ -6,6 +6,7 @@ import { AdminConfig } from "../components/AdminConfig";
 import { AppSkillsPanel } from "../components/SkillsPanel";
 import { AdminModelsPanel } from "../components/AdminModelsPanel";
 import { AdminOverview } from "../components/AdminOverview";
+import { InviteCodesPanel } from "../components/InviteCodesPanel";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../store/auth.shared";
 
@@ -14,6 +15,7 @@ export type AdminView =
   | "config"
   | "models"
   | "users"
+  | "invites"
   | "skills"
   | "audit";
 
@@ -22,6 +24,7 @@ const NAV: { id: AdminView; label: string }[] = [
   { id: "models",   label: "全局模型" },
   { id: "config",   label: "系统配置" },
   { id: "users",    label: "用户管理" },
+  { id: "invites",  label: "邀请码" },
   { id: "skills",   label: "默认技能" },
   { id: "audit",    label: "审计日志" },
 ];
@@ -56,6 +59,7 @@ export function AdminPage() {
         {view === "models"   && <AdminModelsPanel token={token ?? ""} />}
         {view === "config"   && <AdminConfig />}
         {view === "users"    && <UserManagement />}
+        {view === "invites"  && <InviteCodesPanel />}
         {view === "skills"   && <AppSkillsPanel token={token ?? ""} />}
         {view === "audit"    && <AuditLogView />}
       </main>

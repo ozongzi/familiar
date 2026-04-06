@@ -433,6 +433,26 @@ pub fn row_to_message(row: MessageRow) -> Message {
                 .as_deref()
                 .and_then(|s| serde_json::from_str(s).ok())
                 .unwrap_or_default();
+            // Anthropic requires tool_use.input to be a JSON object.
+            // Guard against two cases that cause HTTP 400 on replay:
+            //   1. Truncated/invalid JSON (stream cut off mid-write) → parse fails
+            //   2. LLM generated a bare array instead of {"param": [...]}
+            let tool_calls = tool_calls
+                .into_iter()
+                .map(|mut tc| {
+                    let fixed = match serde_json::from_str::<serde_json::Value>(&tc.arguments) {
+                        Ok(val) if val.is_object() => return tc, // already valid
+                        Ok(val) => match tc.name.as_str() {
+                            "multiwrite" if val.is_array() => serde_json::json!({ "writes": val }),
+                            "multiread" if val.is_array() => serde_json::json!({ "reads": val }),
+                            _ => serde_json::json!({}),
+                        },
+                        Err(_) => serde_json::json!({}), // truncated / invalid JSON
+                    };
+                    tc.arguments = serde_json::to_string(&fixed).unwrap_or_else(|_| "{}".to_string());
+                    tc
+                })
+                .collect();
             Message::Assistant {
                 content: row.content,
                 reasoning: row.reasoning,

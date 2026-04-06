@@ -160,3 +160,29 @@ export function updateGlobalMcp(
 export function deleteGlobalMcp(id: string, token: string): Promise<{ ok: boolean }> {
   return del<{ ok: boolean }>(`/api/admin/mcps/${id}`, token);
 }
+
+// ─── Invite Codes ─────────────────────────────────────────────────────────────
+
+export interface InviteCode {
+  code: string;
+  created_by: string;
+  used_by: string | null;
+  used_at: string | null;
+  expires_at: string | null;
+  created_at: string;
+}
+
+export function listInviteCodes(token: string): Promise<InviteCode[]> {
+  return get<InviteCode[]>("/api/admin/invite-codes", token);
+}
+
+export function createInviteCode(
+  expires_in_days: number | null,
+  token: string,
+): Promise<InviteCode> {
+  return post<InviteCode>("/api/admin/invite-codes", { expires_in_days }, token);
+}
+
+export function deleteInviteCode(code: string, token: string): Promise<{ ok: boolean }> {
+  return del<{ ok: boolean }>(`/api/admin/invite-codes/${code}`, token);
+}

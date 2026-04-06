@@ -96,7 +96,7 @@ pub async fn github_callback(
             .await?;
         id
     } else {
-        let invite_code = generate_invite_code();
+        let invite_code = gen_invite_code();
         let name = login.to_string();
         let inserted = sqlx::query_scalar::<_, uuid::Uuid>(
             "INSERT INTO users (name, github_id, display_name, invite_code) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING RETURNING id",
@@ -118,7 +118,7 @@ pub async fn github_callback(
             .bind(format!("{}_gh", name))
             .bind(&github_id)
             .bind(display_name)
-            .bind(generate_invite_code())
+            .bind(gen_invite_code())
             .fetch_one(&state.pool)
             .await
             .map_err(|e| AppError::internal(&e.to_string()))?
@@ -186,7 +186,7 @@ fn generate_token() -> String {
     s
 }
 
-fn generate_invite_code() -> String {
+pub fn gen_invite_code() -> String {
     use std::fmt::Write;
     let mut bytes = [0u8; 5];
     getrandom::getrandom(&mut bytes).expect("getrandom failed");
