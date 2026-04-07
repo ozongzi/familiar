@@ -63,8 +63,8 @@ deploy: build build-client
 	rsync -av backend/Dockerfile         $(HOST):$(REMOTE_DIR)/backend/
 	rsync -av backend/familiar           $(HOST):$(REMOTE_DIR)/backend/
 	rsync -av backend/migrations/        $(HOST):$(REMOTE_DIR)/backend/migrations/
+	ssh $(HOST) "mkdir -p $(REMOTE_DIR)/docker/sandbox $(REMOTE_DIR)/artifacts"
 	rsync -av docker/sandbox/            $(HOST):$(REMOTE_DIR)/docker/sandbox/
-	ssh $(HOST) "mkdir -p $(REMOTE_DIR)/artifacts"
 	ssh $(HOST) "cd $(REMOTE_DIR) && docker compose up -d --build"
 	rm -f backend/familiar
 	@echo "✓ deployed"
