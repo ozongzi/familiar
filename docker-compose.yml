@@ -11,13 +11,16 @@ services:
       - GITHUB_CLIENT_ID
       - GITHUB_CLIENT_SECRET
       - GITHUB_REDIRECT_URI
+      - HOST_ARTIFACTS_PATH=${HOST_ARTIFACTS_PATH:-${PWD}/artifacts}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./frontend/dist:/app/frontend/dist:ro
-      - artifacts:/app/artifacts
+      - ${HOST_ARTIFACTS_PATH:-./artifacts}:/app/artifacts
     depends_on:
       postgres:
         condition: service_healthy
+      sandbox-builder:
+        condition: service_completed_successfully
 
   postgres:
     image: pgvector/pgvector:pg17
@@ -39,9 +42,7 @@ services:
       context: docker/sandbox
       dockerfile: Dockerfile
     image: familiar-sandbox:latest
-    profiles: ["build-sandbox"]
     command: echo "familiar-sandbox image built"
 
 volumes:
   pgdata:
-  artifacts:

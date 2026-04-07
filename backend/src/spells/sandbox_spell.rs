@@ -558,6 +558,36 @@ impl SandboxSpell {
             path.to_owned()
         }
     }
+
+    /// Reverse of resolve_path: translate an absolute host path back to the
+    /// `/workspace/...` form that the agent and sandbox container understand.
+    /// Paths outside the conversation directory are returned unchanged.
+    fn unresolve_path(&self, host_path: &str) -> String {
+        let conv_dir = self.sandbox.get_conversation_dir(self.user_id, self.conversation_id);
+        let conv_str = conv_dir.to_string_lossy();
+        if let Some(rest) = host_path.strip_prefix(conv_str.as_ref()) {
+            let rest = rest.trim_start_matches('/');
+            if rest.is_empty() {
+                "/workspace".to_owned()
+            } else {
+                format!("/workspace/{rest}")
+            }
+        } else {
+            host_path.to_owned()
+        }
+    }
+
+    /// Rewrite any path-valued fields in a tool result JSON from host paths
+    /// back to `/workspace/...` paths.
+    fn fixup_result_paths(&self, mut result: Value) -> Value {
+        for key in &["written", "replaced", "inserted_after", "appended", "path"] {
+            if let Some(Value::String(s)) = result.get(*key) {
+                let fixed = self.unresolve_path(s);
+                result[key] = Value::String(fixed);
+            }
+        }
+        result
+    }
 }
 
 #[tool]
@@ -584,7 +614,8 @@ impl agentix::Tool for SandboxSpell {
         max_depth: Option<usize>,
     ) -> Value {
         let path = self.resolve_path(&path);
-        do_read(&path, start_line, end_line, outline_only, extract_symbol, max_depth, search_regex, context_lines).await
+        let result = do_read(&path, start_line, end_line, outline_only, extract_symbol, max_depth, search_regex, context_lines).await;
+        self.fixup_result_paths(result)
     }
 
     /// Read multiple files or directories in one call to reduce round-trips.
@@ -596,7 +627,7 @@ impl agentix::Tool for SandboxSpell {
                 Some(p) => self.resolve_path(p),
                 None => { results.push(json!({ "error": "missing path" })); continue; }
             };
-            results.push(do_read(
+            results.push(self.fixup_result_paths(do_read(
                 &path,
                 item["start_line"].as_u64().map(|n| n as usize),
                 item["end_line"].as_u64().map(|n| n as usize),
@@ -605,7 +636,7 @@ impl agentix::Tool for SandboxSpell {
                 item["max_depth"].as_u64().map(|n| n as usize),
                 item["search_regex"].as_str().map(str::to_string),
                 item["context_lines"].as_u64().map(|n| n as usize),
-            ).await);
+            ).await));
         }
         json!({ "results": results })
     }
@@ -630,6 +661,7 @@ impl agentix::Tool for SandboxSpell {
         let path = self.resolve_path(&path);
         let mut result = do_write(&path, new_string, old_string, count, append, shebang).await;
         if result.get("error").is_none() {
+            result = self.fixup_result_paths(result);
             if let Some(ac) = run_autocheck_in_container(&self.sandbox, self.user_id, self.conversation_id, &path).await {
                 result["autocheck"] = ac;
             }
@@ -658,6 +690,7 @@ impl agentix::Tool for SandboxSpell {
                 item["shebang"].as_str().map(str::to_string),
             ).await;
             let failed = write_result.get("error").is_some();
+            let write_result = if failed { write_result } else { self.fixup_result_paths(write_result) };
             results.push(write_result);
             if failed { failures.push(path.clone()); continue; }
             let p = Path::new(&path);
