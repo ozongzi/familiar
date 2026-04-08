@@ -154,6 +154,7 @@ export interface ToolBubble {
   pending: boolean;
   spawnEvents?: SpawnEvent[];
   widgetCode?: string;
+  widgetLoadingMessages?: string[];
   _rawArgs?: string;
   progressLines?: string[];
 }

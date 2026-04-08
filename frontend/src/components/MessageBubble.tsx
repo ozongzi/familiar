@@ -87,43 +87,31 @@ function WidgetChatBubble({ bubble }: { bubble: ToolBubble }) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [height, setHeight] = useState(200);
   const [visible, setVisible] = useState(false);
+  const [msgIdx, setMsgIdx] = useState(0);
 
-  // Track how much of the srcdoc we've already written into the iframe
-  const writtenLenRef = useRef(0);
-  const docOpenedRef = useRef(false);
+  const loadingMsgs = bubble.widgetLoadingMessages?.length
+    ? bubble.widgetLoadingMessages
+    : ["生成中…"];
 
   const srcdoc = useMemo(
-    () => (bubble.widgetCode ? buildWidgetSrcdoc(bubble.widgetCode) : ""),
-    [bubble.widgetCode],
+    () => (!bubble.pending && bubble.widgetCode ? buildWidgetSrcdoc(bubble.widgetCode) : ""),
+    [bubble.pending, bubble.widgetCode],
   );
 
-  // Incrementally write new content into the iframe without rebuilding it
   useEffect(() => {
     const iframe = iframeRef.current;
     if (!iframe || !srcdoc) return;
+    iframe.srcdoc = srcdoc;
+    setTimeout(() => setVisible(true), 50);
+  }, [srcdoc]);
 
-    const doc = iframe.contentDocument;
-    if (!doc) return;
+  useEffect(() => {
+    if (!bubble.pending) return;
+    const t = setInterval(() => setMsgIdx((i) => (i + 1) % loadingMsgs.length), 2200);
+    return () => clearInterval(t);
+  }, [bubble.pending, loadingMsgs.length]);
 
-    if (!docOpenedRef.current) {
-      doc.open();
-      docOpenedRef.current = true;
-      setTimeout(() => setVisible(true), 30);
-    }
-
-    const delta = srcdoc.slice(writtenLenRef.current);
-    if (delta) {
-      doc.write(delta);
-      writtenLenRef.current = srcdoc.length;
-    }
-
-    // Only close (which triggers script execution) when streaming is done
-    if (!bubble.pending) {
-      doc.close();
-    }
-  }, [srcdoc, bubble.pending]);
-
-  // Height: postMessage + RAF poll
+  // Height tracking: postMessage from widget + RAF poll fallback
   useEffect(() => {
     const iframe = iframeRef.current;
     if (!iframe) return;
@@ -164,23 +152,26 @@ function WidgetChatBubble({ bubble }: { bubble: ToolBubble }) {
     };
   }, []);
 
-  if (!srcdoc) return null;
+  if (!bubble.pending && !srcdoc) return null;
 
   return (
     <div className={styles.row} style={{ justifyContent: "flex-start" }}>
-      <div
-        className={styles.widgetBubble}
-        style={{
-          opacity: visible ? 1 : 0,
-          transform: visible ? "translateY(0)" : "translateY(6px)",
-          transition: "opacity 0.25s ease, transform 0.25s ease",
-        }}
-      >
+      <div className={styles.widgetBubble}>
+        {bubble.pending && (
+          <div className={styles.widgetLoading}>
+            <span className={styles.widgetLoadingDot} />
+            <span key={msgIdx} className={styles.widgetLoadingText}>{loadingMsgs[msgIdx]}</span>
+          </div>
+        )}
         <iframe
           ref={iframeRef}
           sandbox="allow-scripts allow-same-origin"
           className={styles.widgetIframe}
-          style={{ height }}
+          style={{
+            height,
+            opacity: visible ? 1 : 0,
+            transition: "opacity 0.25s ease",
+          }}
           title="widget"
         />
       </div>

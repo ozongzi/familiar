@@ -94,12 +94,33 @@ impl Tool for UiSpells {
     }
 
     /// 在对话中内嵌渲染一个交互式 widget（图表、可视化、计算器等）。
-    /// 适合用来展示数据图表、复利计算器、流程图等视觉内容。
+    /// 适合需要交互、动画、或复杂数据可视化的场景（滑块、点击、Chart.js、D3 等）。
+    /// 不需要交互时请优先用 diagram 工具，速度更快。
     ///
+    /// title: snake_case 标识符，唯一标识这个 widget（如 q4_revenue_chart）
+    /// loading_messages: 1-4 条 loading 提示语，streaming 期间循环展示（如 ["绘制坐标轴...", "填充数据..."]）
     /// widget_code: 完整的 HTML 代码片段（可使用 Chart.js、D3 等 CDN 库）。
     ///   不要包含 <!DOCTYPE>、<html>、<head>、<body> 标签，直接写内容。
     ///   可使用 CSS 变量：--text-primary、--bg-surface、--accent 等与 familiar 主题一致。
-    async fn visualize(&self, widget_code: String) -> serde_json::Value {
+    async fn visualize(
+        &self,
+        title: Option<String>,
+        loading_messages: Option<Vec<String>>,
+        widget_code: String,
+    ) -> serde_json::Value {
+        let _ = (title, loading_messages);
+        json!({ "status": "success" })
+    }
+
+    /// 在对话中内嵌渲染一个 Mermaid 图表（流程图、时序图、ER 图、甘特图等）。
+    /// 适合不需要交互的静态图表，生成速度极快。
+    /// 需要交互或复杂动画时请用 visualize 工具。
+    ///
+    /// 支持的图表类型：flowchart、sequenceDiagram、classDiagram、erDiagram、
+    ///   gantt、pie、gitgraph、mindmap、timeline 等所有 Mermaid 语法。
+    /// code: 合法的 Mermaid 图表代码，不要包含 markdown 代码块标记。
+    async fn diagram(&self, code: String) -> serde_json::Value {
+        let _ = code;
         json!({ "status": "success" })
     }
 }

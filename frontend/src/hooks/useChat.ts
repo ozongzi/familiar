@@ -52,7 +52,15 @@ function extractStreamingWidgetCode(raw: string): string | null {
     if (ch === "\\") {
       if (i + 1 < rest.length) {
         const next = rest[i + 1];
-        const escapes: Record<string, string> = { '"': '"', "\\": "\\", "/": "/", b: "\b", f: "\f", n: "\n", r: "\r", t: "\t" };
+        const escapes: Record<string, string> = { '"': '"', "\\": "\\", "/": "/", "'": "'", b: "\b", f: "\f", n: "\n", r: "\r", t: "\t" };
+        if (next === "u" && i + 5 < rest.length) {
+          const hex = rest.slice(i + 2, i + 6);
+          if (/^[0-9a-fA-F]{4}$/.test(hex)) {
+            value += String.fromCharCode(parseInt(hex, 16));
+            i += 6;
+            continue;
+          }
+        }
         value += escapes[next] ?? next;
         i += 2;
       } else break;
@@ -64,6 +72,30 @@ function extractStreamingWidgetCode(raw: string): string | null {
     }
   }
   return value.length > 0 ? value : null;
+}
+
+// Extract loading_messages array from partial JSON args during streaming.
+// Returns the array of strings if the key + at least one complete string is present.
+function extractLoadingMessages(raw: string): string[] | null {
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    if (Array.isArray(parsed.loading_messages)) {
+      return (parsed.loading_messages as unknown[]).filter((m): m is string => typeof m === "string");
+    }
+  } catch {
+    // Partial JSON — try a simple regex scan for the first few completed strings
+    const m = raw.match(/"loading_messages"\s*:\s*\[((?:[^\]]*?"[^"]*"[^\]]*?)+)/);
+    if (!m) return null;
+    const inner = m[1];
+    const items: string[] = [];
+    const re = /"((?:[^"\\]|\\.)*)"/g;
+    let hit: RegExpExecArray | null;
+    while ((hit = re.exec(inner)) !== null) {
+      try { items.push(JSON.parse(`"${hit[1]}"`)); } catch { items.push(hit[1]); }
+    }
+    return items.length > 0 ? items : null;
+  }
+  return null;
 }
 
 function tryParseWidgetArgs(raw: string): unknown {
@@ -544,7 +576,8 @@ export function useChat(
                 const rawArgs = (b._rawArgs ?? "") + event.delta;
                 const parsed = extractWidgetCode(tryParseWidgetArgs(rawArgs));
                 const streamed = parsed ?? extractStreamingWidgetCode(rawArgs);
-                return { ...b, _rawArgs: rawArgs, widgetCode: streamed ?? b.widgetCode };
+                const loadingMsgs = b.widgetLoadingMessages ?? extractLoadingMessages(rawArgs) ?? undefined;
+                return { ...b, _rawArgs: rawArgs, widgetCode: streamed ?? b.widgetCode, widgetLoadingMessages: loadingMsgs };
               }
               const newArgsRaw = b.argsRaw + event.delta;
               const desc = extractDescription(newArgsRaw);
@@ -566,6 +599,7 @@ export function useChat(
               pending: true,
               ...(event.name === "visualize" ? {
                 widgetCode: extractStreamingWidgetCode(event.delta) ?? "",
+                widgetLoadingMessages: extractLoadingMessages(event.delta) ?? undefined,
                 _rawArgs: event.delta,
               } : {}),
             };
@@ -599,17 +633,20 @@ export function useChat(
 
         // visualize tool → 把 widgetCode 写进 ToolBubble
         if (event.name === "visualize") {
-          const widgetCode = extractWidgetCode(event.result);
-          if (widgetCode) {
-            setBubbles((prev) =>
-              prev.map((b) =>
-                b.key === `tool-${event.id}` && b.kind === "tool"
-                  ? { ...b, result: event.result, pending: false, widgetCode }
-                  : b,
-              ),
-            );
-            return false;
-          }
+          setBubbles((prev) =>
+            prev.map((b) => {
+              if (b.key !== `tool-${event.id}` || b.kind !== "tool") return b;
+              const rawArgs = b._rawArgs ?? b.argsRaw;
+              console.log("[visualize] tool_result, rawArgs length:", rawArgs.length, "first 200:", rawArgs.slice(0, 200));
+              const widgetCode =
+                extractWidgetCode(event.result) ??
+                extractWidgetCode(tryParseWidgetArgs(rawArgs)) ??
+                b.widgetCode;
+              console.log("[visualize] widgetCode length:", widgetCode?.length ?? 0);
+              return { ...b, result: event.result, pending: false, ...(widgetCode ? { widgetCode } : {}) };
+            }),
+          );
+          return false;
         }
 
         setBubbles((prev) =>
