@@ -593,6 +593,11 @@ function ToolCallBubble({
     return <WidgetChatBubble bubble={bubble} />;
   }
 
+  // ── diagram → Mermaid 渲染 ─────────────────────────────────────
+  if (bubble.name === "diagram") {
+    return <DiagramBubble bubble={bubble} />;
+  }
+
   // ── bash / write → 专用渲染 ──────────────────────────────────────────────
   const BASH_TOOLS = new Set(["bash", "execute", "execute_command"]);
   const WRITE_TOOLS = new Set([
@@ -840,6 +845,55 @@ function ToolCallBubble({
               <ObjectFieldsView data={bubble.result} label="结果" />
             )}
           </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Diagram bubble (Mermaid) ────────────────────────────────────────────────────────────
+
+function DiagramBubble({ bubble }: { bubble: ToolBubble }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [svg, setSvg] = useState<string>("");
+  const [error, setError] = useState<string>("");
+
+  useEffect(() => {
+    if (!bubble.diagramCode || bubble.pending) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        // Dynamically import mermaid to avoid bloating the initial bundle
+        const mermaid = (await import("mermaid")).default;
+        mermaid.initialize({ startOnLoad: false, theme: "neutral" });
+        const id = `mermaid-${bubble.key.replace(/[^a-z0-9]/gi, "-")}`;
+        const { svg: rendered } = await mermaid.render(id, bubble.diagramCode!);
+        if (!cancelled) setSvg(rendered);
+      } catch (e) {
+        if (!cancelled) setError(String(e));
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [bubble.diagramCode, bubble.pending, bubble.key]);
+
+  return (
+    <div className={styles.row} style={{ justifyContent: "flex-start" }}>
+      <div className={styles.widgetBubble} style={{ padding: "16px 20px" }}>
+        {bubble.pending && (
+          <div className={styles.widgetLoading}>
+            <span className={styles.widgetLoadingDot} />
+            <span className={styles.widgetLoadingText}>生成图表…</span>
+          </div>
+        )}
+        {!bubble.pending && error && (
+          <pre style={{ fontSize: "0.8em", color: "var(--danger)", margin: 0 }}>{error}</pre>
+        )}
+        {!bubble.pending && svg && (
+          <div
+            ref={containerRef}
+            style={{ animation: "fadeInUp 0.25s ease both" }}
+            dangerouslySetInnerHTML={{ __html: svg }}
+          />
         )}
       </div>
     </div>

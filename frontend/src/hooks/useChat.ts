@@ -601,6 +601,9 @@ export function useChat(
                 widgetCode: extractStreamingWidgetCode(event.delta) ?? "",
                 widgetLoadingMessages: extractLoadingMessages(event.delta) ?? undefined,
                 _rawArgs: event.delta,
+              } : event.name === "diagram" ? {
+                diagramCode: "",
+                _rawArgs: event.delta,
               } : {}),
             };
             return [...prev, toolBubble];
@@ -637,13 +640,28 @@ export function useChat(
             prev.map((b) => {
               if (b.key !== `tool-${event.id}` || b.kind !== "tool") return b;
               const rawArgs = b._rawArgs ?? b.argsRaw;
-              console.log("[visualize] tool_result, rawArgs length:", rawArgs.length, "first 200:", rawArgs.slice(0, 200));
               const widgetCode =
                 extractWidgetCode(event.result) ??
                 extractWidgetCode(tryParseWidgetArgs(rawArgs)) ??
                 b.widgetCode;
-              console.log("[visualize] widgetCode length:", widgetCode?.length ?? 0);
               return { ...b, result: event.result, pending: false, ...(widgetCode ? { widgetCode } : {}) };
+            }),
+          );
+          return false;
+        }
+
+        // diagram tool → 把 code 写进 ToolBubble
+        if (event.name === "diagram") {
+          setBubbles((prev) =>
+            prev.map((b) => {
+              if (b.key !== `tool-${event.id}` || b.kind !== "tool") return b;
+              const rawArgs = b._rawArgs ?? b.argsRaw;
+              let diagramCode: string | undefined;
+              try {
+                const parsed = JSON.parse(rawArgs) as Record<string, unknown>;
+                if (typeof parsed.code === "string") diagramCode = parsed.code;
+              } catch { /* ignore */ }
+              return { ...b, result: event.result, pending: false, ...(diagramCode ? { diagramCode } : {}) };
             }),
           );
           return false;

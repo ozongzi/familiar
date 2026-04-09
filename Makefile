@@ -22,7 +22,7 @@ build-tauri: prepare-tauri
 
 # ── Frontend (web) ────────────────────────────────────────────────────────────
 build-client:
-	cd frontend && bun install --frozen-lockfile && bun run build
+	cd frontend && bun install && bun run build
 
 # Start frontend dev server (proxies /api and /ws to localhost:3000)
 dev-client:
