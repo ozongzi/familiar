@@ -191,19 +191,13 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
         // User has provided a fully custom system prompt — use it as-is.
         crate::prompt_template::render_prompt(&custom, &[("USER_NAME", &user_name)])
     } else {
-        let raw = prompt_engine.build_main(
-            has_memory,
-            &current_time,
-        );
+        let raw = prompt_engine.build_main(has_memory, &current_time);
         crate::prompt_template::render_prompt(&raw, &[("USER_NAME", &user_name)])
     };
 
-    // ── Append memory section (if not already handled by PromptEngine) ────
-    // When using a custom prompt, PromptEngine did not inject memories.
-    if custom_system_prompt.is_some() {
-        if let Some(mem) = &mem_section {
-            system_prompt.push_str(mem);
-        }
+    // ── Append memory section ────────────────────────────────────────────
+    if let Some(mem) = &mem_section {
+        system_prompt.push_str(mem);
     }
 
     // ── Append skills ─────────────────────────────────────────────────────
@@ -327,9 +321,10 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
     // Always prepend unconditionally — no sentinel message, no duplicate check needed.
     if let Some(ref summary) = compact_summary {
         let section = crate::compact::compact_summary_to_user_message(summary);
-        messages.insert(0, agentix::Message::User(vec![agentix::UserContent::Text {
-            text: section,
-        }]));
+        messages.insert(
+            0,
+            agentix::Message::User(vec![agentix::UserContent::Text { text: section }]),
+        );
     }
 
     // ── Run the LLM ↔ tool-call loop ─────────────────────────────────────
