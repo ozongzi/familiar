@@ -542,21 +542,48 @@ pub struct SandboxSpell {
 }
 
 impl SandboxSpell {
-    /// Translate a `/workspace/...` path (as seen inside the sandbox container)
-    /// to its equivalent absolute host path inside the conversation directory.
-    /// Paths that do not start with `/workspace` are returned unchanged.
-    fn resolve_path(&self, path: &str) -> String {
-        if let Some(rest) = path.strip_prefix("/workspace") {
-            let conv_dir = self.sandbox.get_conversation_dir(self.user_id, self.conversation_id);
+    /// Translate a `/workspace/...` path to an absolute host path, with security checks:
+    /// - Non-/workspace absolute paths are rejected (container-only paths)
+    /// - Path traversal (e.g. /workspace/../etc/passwd) is rejected
+    fn resolve_path(&self, path: &str) -> Result<String, Value> {
+        // Reject absolute paths outside /workspace
+        if Path::new(path).is_absolute() && !path.starts_with("/workspace") {
+            return Err(json!({ "error": format!("path '{path}' is outside /workspace. Use the bash tool instead (e.g. cat {path})") }));
+        }
+
+        let conv_dir = self.sandbox.get_conversation_dir(self.user_id, self.conversation_id);
+        let resolved = if let Some(rest) = path.strip_prefix("/workspace") {
             let rest = rest.trim_start_matches('/');
             if rest.is_empty() {
-                conv_dir.to_string_lossy().into_owned()
+                conv_dir.clone()
             } else {
-                conv_dir.join(rest).to_string_lossy().into_owned()
+                conv_dir.join(rest)
             }
         } else {
-            path.to_owned()
+            conv_dir.join(path)
+        };
+
+        // Normalize away any .. without touching the filesystem
+        let mut normalized = PathBuf::new();
+        for component in resolved.components() {
+            match component {
+                std::path::Component::ParentDir => { normalized.pop(); }
+                std::path::Component::CurDir => {}
+                c => normalized.push(c),
+            }
         }
+
+        // After normalization, must still be inside conv_dir
+        if !normalized.starts_with(&conv_dir) {
+            return Err(json!({ "error": format!("path '{path}' resolves outside /workspace (path traversal denied)") }));
+        }
+
+        Ok(normalized.to_string_lossy().into_owned())
+    }
+
+    /// Returns Err if the path is not under /workspace (i.e. not accessible on the host).
+    fn require_workspace_path(&self, path: &str) -> Result<String, Value> {
+        self.resolve_path(path)
     }
 
     /// Reverse of resolve_path: translate an absolute host path back to the
@@ -613,7 +640,10 @@ impl agentix::Tool for SandboxSpell {
         extract_symbol: Option<String>,
         max_depth: Option<usize>,
     ) -> Value {
-        let path = self.resolve_path(&path);
+        let path = match self.require_workspace_path(&path) {
+            Ok(p) => p,
+            Err(e) => return e,
+        };
         let result = do_read(&path, start_line, end_line, outline_only, extract_symbol, max_depth, search_regex, context_lines).await;
         self.fixup_result_paths(result)
     }
@@ -624,7 +654,10 @@ impl agentix::Tool for SandboxSpell {
         let mut results = Vec::new();
         for item in &reads {
             let path = match item["path"].as_str() {
-                Some(p) => self.resolve_path(p),
+                Some(p) => match self.require_workspace_path(p) {
+                    Ok(resolved) => resolved,
+                    Err(e) => { results.push(e); continue; }
+                },
                 None => { results.push(json!({ "error": "missing path" })); continue; }
             };
             results.push(self.fixup_result_paths(do_read(
@@ -658,7 +691,10 @@ impl agentix::Tool for SandboxSpell {
         append: Option<bool>,
         shebang: Option<String>,
     ) -> Value {
-        let path = self.resolve_path(&path);
+        let path = match self.require_workspace_path(&path) {
+            Ok(p) => p,
+            Err(e) => return e,
+        };
         let mut result = do_write(&path, new_string, old_string, count, append, shebang).await;
         if result.get("error").is_none() {
             result = self.fixup_result_paths(result);
@@ -678,7 +714,10 @@ impl agentix::Tool for SandboxSpell {
 
         for item in &writes {
             let path = match item["path"].as_str() {
-                Some(p) => p.to_string(),
+                Some(p) => match self.require_workspace_path(p) {
+                    Ok(resolved) => resolved,
+                    Err(e) => { results.push(e); failures.push(p.to_string()); continue; }
+                },
                 None => { results.push(json!({ "error": "missing path" })); failures.push("<unknown>".into()); continue; }
             };
             let write_result = do_write(
