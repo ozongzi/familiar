@@ -103,11 +103,11 @@ impl Tool for SpawnSpell {
                     AgentEvent::ToolProgress { id, name, progress } => yield ToolOutput::Progress(
                         json!({"type": "tool_progress", "id": id, "name": name, "progress": progress, "source": "spawn"}).to_string()
                     ),
-                    AgentEvent::ToolResult { id, name, content } => yield ToolOutput::Progress(
+                    AgentEvent::ToolResult { id, name, ref content } => yield ToolOutput::Progress(
                         json!({"type": "tool_result", "id": id, "name": name, "result": content, "source": "spawn"}).to_string()
                     ),
                     AgentEvent::Error(e) => {
-                        yield ToolOutput::Result(json!({ "error": format!("子 Agent 错误: {e}") }));
+                        yield ToolOutput::Result(vec![agentix::Content::text(format!("{{\"error\":\"子 Agent 错误: {e}\"}}"))]);
                         return;
                     }
                     AgentEvent::Warning(_) | AgentEvent::Usage(_) | AgentEvent::Done(_) => {}
@@ -115,9 +115,9 @@ impl Tool for SpawnSpell {
             }
 
             if result.is_empty() {
-                yield ToolOutput::Result(json!({ "error": "子 Agent 未返回任何结果" }));
+                yield ToolOutput::Result(vec![agentix::Content::text("{\"error\":\"子 Agent 未返回任何结果\"}")]);
             } else {
-                yield ToolOutput::Result(json!({ "result": result }));
+                yield ToolOutput::Result(vec![agentix::Content::text(json!({ "result": result }).to_string())]);
             }
         }
     }

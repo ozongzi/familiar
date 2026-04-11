@@ -597,7 +597,7 @@ async fn generation_loop(
             .await;
 
             let mut tool_stream = tools.call(&tc.name, args).await;
-            let mut result_val = json!(null);
+            let mut result_val: Vec<agentix::Content> = Vec::new();
             let mut aborted_during_tool = false;
 
             // Poll for abort every 500 ms concurrently with the tool stream.
@@ -655,14 +655,21 @@ async fn generation_loop(
             // Persist and emit tool result
             let tool_result_msg = Message::ToolResult {
                 call_id: tc.id.clone(),
-                content: result_val.to_string(),
+                content: result_val.clone(),
             };
             persist_msg(ctx, &tool_result_msg).await;
             messages.push(tool_result_msg);
 
+            // For SSE emit and __ask__ check, get the text content as a Value
+            let result_json: Value = result_val.iter()
+                .find_map(|p| if let agentix::Content::Text { text } = p {
+                    serde_json::from_str(text).ok()
+                } else { None })
+                .unwrap_or(Value::Null);
+
             emit(
                 ctx,
-                json!({"type": "tool_result", "id": tc.id, "name": tc.name, "result": result_val}),
+                json!({"type": "tool_result", "id": tc.id, "name": tc.name, "result": result_json}),
             )
             .await;
 
@@ -670,14 +677,14 @@ async fn generation_loop(
             // The user's answer will arrive as a new message, starting a new generation job.
             // We return Ok(()) here — the outer run_worker will emit {"type":"done"} and
             // set the job status to "done" uniformly.
-            if result_val.get("__ask__").and_then(|v| v.as_bool()) == Some(true) {
+            if result_json.get("__ask__").and_then(|v| v.as_bool()) == Some(true) {
                 emit(
                     ctx,
                     json!({
                         "type": "ask",
-                        "question": result_val.get("question").and_then(|v| v.as_str()).unwrap_or(""),
-                        "description": result_val.get("description"),
-                        "options": result_val.get("options"),
+                        "question": result_json.get("question").and_then(|v| v.as_str()).unwrap_or(""),
+                        "description": result_json.get("description"),
+                        "options": result_json.get("options"),
                     }),
                 )
                 .await;

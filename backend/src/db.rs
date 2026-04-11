@@ -184,7 +184,7 @@ impl Db {
             }
             Message::ToolResult { call_id, content } => (
                 "tool",
-                Some(content.clone()),
+                Some(serde_json::to_string(content).unwrap_or_default()),
                 None,
                 Some(call_id.clone()),
                 None,
@@ -425,7 +425,11 @@ pub fn row_to_message(row: MessageRow) -> Message {
     match row.role.as_str() {
         "tool" => Message::ToolResult {
             call_id: row.spell_cast_id.unwrap_or_default(),
-            content: row.content.unwrap_or_default(),
+            content: {
+                        let s = row.content.unwrap_or_default();
+                        serde_json::from_str(&s)
+                            .unwrap_or_else(|_| vec![agentix::Content::text(s)])
+                    },
         },
         "assistant" => {
             let tool_calls: Vec<AgentToolCall> = row

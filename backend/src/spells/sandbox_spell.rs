@@ -796,7 +796,7 @@ impl agentix::Tool for SandboxSpell {
             while let Some(item) = stream.next().await {
                 match item {
                     BashOutput::Line(l) => yield ToolOutput::Progress(l),
-                    BashOutput::Done(r) => yield ToolOutput::Result(r),
+                    BashOutput::Done(r) => yield ToolOutput::Result(vec![agentix::Content::text(serde_json::to_string(&r).unwrap_or_default())]),
                 }
             }
         }
