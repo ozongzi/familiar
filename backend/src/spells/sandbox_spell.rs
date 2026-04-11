@@ -103,6 +103,7 @@ fn add_line_numbers(content: &str, start_line: usize) -> String {
         .collect::<Vec<_>>().join("\n")
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn do_read(
     path: &str,
     start_line: Option<usize>,
