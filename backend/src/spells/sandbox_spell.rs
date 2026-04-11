@@ -258,11 +258,9 @@ async fn do_write(
 
     if let Some(parent) = Path::new(path).parent()
         && !parent.as_os_str().is_empty()
-    {
-        if let Err(e) = std::fs::create_dir_all(parent) {
+        && let Err(e) = std::fs::create_dir_all(parent) {
             return json!({ "error": format!("mkdir failed: {e}") });
         }
-    }
     if let Err(e) = std::fs::write(path, &new_string) {
         return json!({ "error": format!("write failed: {e}") });
     }
@@ -335,12 +333,11 @@ fn parse_rust_diagnostics(stderr: &str, crate_root: &Path) -> Vec<Value> {
             let loc = lines[j].trim();
             if let Some(rest) = loc.strip_prefix("--> ") {
                 let p: Vec<&str> = rest.splitn(3, ':').collect();
-                if p.len() >= 2 {
-                    if let Ok(row) = p[1].parse::<usize>() {
+                if p.len() >= 2
+                    && let Ok(row) = p[1].parse::<usize>() {
                         let col = p.get(2).and_then(|s| s.parse().ok()).unwrap_or(1);
                         location = Some((p[0].to_string(), row, col));
                     }
-                }
                 break;
             }
             if lines[j].starts_with("error") || lines[j].starts_with("warning") { break; }
@@ -747,11 +744,9 @@ impl agentix::Tool for SandboxSpell {
                 .filter(|(r, _)| r.get("error").is_none())
                 .filter_map(|(_, w)| w["path"].as_str())
                 .find(|p| Path::new(p).starts_with(root))
-            {
-                if let Some(ac) = run_autocheck_in_container(&self.sandbox, self.user_id, self.conversation_id, first_path).await {
+                && let Some(ac) = run_autocheck_in_container(&self.sandbox, self.user_id, self.conversation_id, first_path).await {
                     autochecks.push(ac);
                 }
-            }
         }
 
         json!({ "results": results, "failed_paths": failures, "autochecks": autochecks })

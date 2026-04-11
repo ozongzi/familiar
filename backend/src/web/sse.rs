@@ -288,7 +288,7 @@ pub async fn sse_handler(
                             let event_json = &event_json[1..]; // skip ':'
                             let notif_job: Option<Uuid> = job_str.parse().ok();
                             if notif_job == Some(job_id) && !event_json.is_empty() {
-                                yield Ok(Event::default().data(event_json.to_string()));
+                                yield Ok(Event::default().data(event_json));
                             }
                         }
                         continue;

@@ -189,7 +189,7 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
     // ── Build base system prompt via PromptEngine or custom override ───────
     let mut system_prompt: String = if let Some(ref custom) = custom_system_prompt {
         // User has provided a fully custom system prompt — use it as-is.
-        crate::prompt_template::render_prompt(&custom, &[("USER_NAME", &user_name)])
+        crate::prompt_template::render_prompt(custom, &[("USER_NAME", &user_name)])
     } else {
         let raw = prompt_engine.build_main(has_memory, &current_time);
         crate::prompt_template::render_prompt(&raw, &[("USER_NAME", &user_name)])
@@ -442,7 +442,7 @@ async fn generation_loop(
                     emit(ctx, json!({"type": "token", "content": token})).await;
                     // Batch DB update every 10 tokens to reduce MVCC overhead.
                     token_count += 1;
-                    if token_count % 10 == 0 {
+                    if token_count.is_multiple_of(10) {
                         let _ = ctx
                             .db
                             .update_streaming_content(streaming_msg_id, &reply_buf, &reasoning_buf)

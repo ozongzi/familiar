@@ -129,11 +129,10 @@ pub async fn register_with_invite(
     use sqlx::Row;
     let expires_at: Option<chrono::DateTime<chrono::Utc>> =
         code_row.try_get("expires_at").unwrap_or(None);
-    if let Some(exp) = expires_at {
-        if exp < chrono::Utc::now() {
+    if let Some(exp) = expires_at
+        && exp < chrono::Utc::now() {
             return Err(AppError::bad_request("邀请码已过期"));
         }
-    }
 
     // Validate username
     let name = req.name.trim().to_string();

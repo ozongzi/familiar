@@ -28,7 +28,7 @@ impl Tool for PlanSpell {
             Err(e) => return json!({ "error": format!("无效的计划格式: {e}") }),
         };
 
-        let plan_json = match serde_json::to_value(&steps
+        let plan_json = match serde_json::to_value(steps
             .iter()
             .map(|s| json!({ "id": s.id, "content": s.content, "status": s.status, "priority": s.priority }))
             .collect::<Vec<_>>())
