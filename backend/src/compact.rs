@@ -116,18 +116,13 @@ fn strip_tool_call_blocks(s: &str) -> String {
     for tag in &["function_calls", "tool_use", "tool_call"] {
         let open = format!("<{tag}");
         let close = format!("</{tag}>");
-        #[allow(clippy::while_let_loop)]
-        loop {
-            if let Some(start) = result.find(&open) {
-                if let Some(rel_end) = result[start..].find(&close) {
-                    let end = start + rel_end + close.len();
-                    result.replace_range(start..end, "");
-                } else {
-                    // Unclosed tag — strip from open to end
-                    result.truncate(start);
-                    break;
-                }
+        while let Some(start) = result.find(&open) {
+            if let Some(rel_end) = result[start..].find(&close) {
+                let end = start + rel_end + close.len();
+                result.replace_range(start..end, "");
             } else {
+                // Unclosed tag — strip from open to end
+                result.truncate(start);
                 break;
             }
         }
