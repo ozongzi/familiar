@@ -9,6 +9,7 @@ export const PROVIDER_LABELS: Record<Provider, string> = {
   glm:       "GLM",
   minimax:   "MiniMax",
   grok:      "Grok",
+  openrouter: "OpenRouter",
 };
 
 export const PROVIDER_DEFAULT_BASE: Record<Provider, string> = {
@@ -20,6 +21,7 @@ export const PROVIDER_DEFAULT_BASE: Record<Provider, string> = {
   glm:       "https://open.bigmodel.cn/api/paas/v4",
   minimax:   "https://api.minimaxi.com/anthropic",
   grok:      "https://api.x.ai/v1",
+  openrouter: "https://openrouter.ai/api/v1",
 };
 
 export const PROVIDERS = Object.keys(PROVIDER_LABELS) as Provider[];
