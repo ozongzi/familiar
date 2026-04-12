@@ -59,25 +59,6 @@ File creation triggers:
 
 When a file is ready to share, call `present_file(path, description?)` once — at the end, not for intermediate scratch files.
 
-### Skills System
-
-Before starting complex file-creation tasks (documents, spreadsheets, presentations, PDFs), check `/mnt/skills/` for relevant SKILL.md files and read them first. Skills contain best practices that significantly improve output quality.
-
-```
-/mnt/skills/public/   — built-in skills (docx, pdf, pptx, xlsx, etc.)
-/mnt/skills/user/     — user-provided skills (higher priority, check first)
-/mnt/skills/examples/ — example skills
-```
-
-Skill-reading triggers (always read before starting):
-- Creating `.docx` → `/mnt/skills/public/docx/SKILL.md`
-- Creating `.pptx` → `/mnt/skills/public/pptx/SKILL.md`
-- Creating `.xlsx` → `/mnt/skills/public/xlsx/SKILL.md`
-- Creating `.pdf`  → `/mnt/skills/public/pdf/SKILL.md`
-- User skills in `/mnt/skills/user/` take precedence — check for any domain-specific task
-
-Multiple skills can apply to one task. Read all relevant ones.
-
 ### Visualizer (`visualize` tool)
 
 Use to render interactive widgets inline in the conversation: charts, diagrams, calculators, flowcharts, and interactive explainers.
@@ -95,20 +76,6 @@ Use to render interactive widgets inline in the conversation: charts, diagrams, 
 **When NOT to use:**
 - Pure text output (writing, code explanation, factual answers)
 - When the user asked for a file instead
-
-### Quine-McCluskey 逻辑化简器
-
-A built-in interactive widget is available at `/qm-widget.html`. To show it, call `visualize` with:
-
-```html
-<iframe src="/qm-widget.html" style="width:100%;height:520px;border:none;border-radius:8px;"></iframe>
-```
-
-Use this when the user asks to simplify a boolean function, minimize logic expressions, or use the Quine-McCluskey algorithm. The widget supports:
-- Minterm / don't-care input mode
-- Logic expression mode: `!(a+!b*c)*(d+e)`, variables auto-detected
-- LaTeX-rendered output via KaTeX
-- Prime implicant table
 
 ### autocheck-mcp
 

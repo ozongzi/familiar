@@ -148,14 +148,15 @@
     align-items: center;
     justify-content: space-between;
     gap: 4px;
-    padding: 0 10px 0 14px;
+    padding: 0 10px 0 12px;
     height: 38px;
-    border-radius: var(--radius-md);
     cursor: pointer;
     transition: background var(--transition);
     outline: none;
     user-select: none;
     flex-shrink: 0;
+    border-left: 2px solid transparent;
+    border-radius: 0;
 }
 
 .item:hover {
@@ -167,7 +168,8 @@
 }
 
 .itemActive {
-    background: #f0eee6 !important;
+    background: rgba(201, 100, 66, 0.06) !important;
+    border-left-color: var(--danger) !important;
 }
 
 .itemActive .convName {

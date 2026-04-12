@@ -333,9 +333,12 @@ export function useChat(
     }
 
     const history: ChatBubble[] = [];
+    const consumedMsgIds = new Set<number>();
 
-    for (const m of msgs) {
+    for (let mi = 0; mi < msgs.length; mi++) {
+      const m = msgs[mi];
       if (m.role === "system" || m.role === "tool") continue;
+      if (consumedMsgIds.has(m.id)) continue;
 
       if (m.role === "assistant" && m.tool_calls) {
         type RawToolCall = {
@@ -364,7 +367,28 @@ export function useChat(
         for (const tc of calls) {
           const { id, name, arguments: argsRaw = "" } = tc;
           if (!id || !name) continue;
-          const result = toolResultMap.get(id) ?? null;
+          let result = toolResultMap.get(id) ?? null;
+
+          // `ask` 工具不存 tool result——用户的回答是作为下一条 user 消息存的。
+          // 从后续消息中找到那条回答，把它嵌进 result，并标记为已消费（不再渲染成独立气泡）。
+          if (name === "ask" && result === null) {
+            for (let j = mi + 1; j < msgs.length; j++) {
+              const next = msgs[j];
+              if (next.role !== "user") continue;
+              const c = next.content;
+              if (!c || !c.trim()) continue;
+              // 跳过文件上传和多模态消息——它们不是文字回答。
+              let isFileUpload = false;
+              try {
+                const p = JSON.parse(c) as Record<string, unknown>;
+                if (p.__type === "file_upload") isFileUpload = true;
+              } catch { /* not JSON */ }
+              if (isFileUpload || c.startsWith("__multimodal__:")) break;
+              result = { answer: c };
+              consumedMsgIds.add(next.id);
+              break;
+            }
+          }
 
           // visualize → 恢复 widgetCode 到 ToolBubble
           const widgetCode = name === "visualize" && result !== null
