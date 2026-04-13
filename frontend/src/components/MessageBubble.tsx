@@ -20,6 +20,11 @@ const BASE = () => getServerBase();
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+/** Strip the server-injected timestamp prefix "[YYYY-MM-DD HH:MM UTC] " from user messages. */
+function stripTimestamp(text: string): string {
+  return text.replace(/^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC\] /, "");
+}
+
 interface Props {
   bubble: ChatBubble;
   onAnswer?: (text: string) => void;
@@ -206,7 +211,7 @@ function TextChatBubble({
   };
 
   const startEdit = () => {
-    setEditText(bubble.content);
+    setEditText(stripTimestamp(bubble.content));
     setEditing(true);
     setTimeout(() => { editRef.current?.focus(); editRef.current?.select(); }, 0);
   };
@@ -287,7 +292,7 @@ function TextChatBubble({
               </div>
             ) : (
               <>
-                {bubble.content && <p className={styles.userText}>{bubble.content}</p>}
+                {bubble.content && <p className={styles.userText}>{stripTimestamp(bubble.content)}</p>}
               </>
             )}
           </>
