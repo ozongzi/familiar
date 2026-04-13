@@ -264,6 +264,9 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
         }
     };
 
+    // ── Resolve image references in file_upload messages ───────────────────
+    resolve_image_uploads(&mut messages, &ctx.sandbox, ctx.user_id, ctx.conversation_id).await;
+
     // ── Connect MCPs from DB ──────────────────────────────────────────────
     let t_mcp = std::time::Instant::now();
     let mcp_tools = connect_mcps_from_db(ctx).await;
@@ -1037,4 +1040,51 @@ pub(crate) fn sanitize_history(messages: Vec<Message>) -> Vec<Message> {
         }
     }
     result
+}
+
+/// Scan user messages for `file_upload` references with an image mime type.
+/// For each one, read the file from the sandbox and append a `UserContent::Image`
+/// part so the LLM can see the image via multimodal, without storing base64 in the DB.
+async fn resolve_image_uploads(
+    messages: &mut [Message],
+    sandbox: &SandboxManager,
+    user_id: Uuid,
+    conversation_id: Uuid,
+) {
+    use agentix::{ImageContent, ImageData, UserContent};
+    use base64::Engine;
+
+    let conv_dir = sandbox.get_conversation_dir(user_id, conversation_id);
+
+    for msg in messages.iter_mut() {
+        let Message::User(parts) = msg else { continue };
+
+        let mut images_to_add: Vec<UserContent> = Vec::new();
+        for part in parts.iter() {
+            let UserContent::Text { text } = part else { continue };
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(text) else { continue };
+            if v.get("__type").and_then(|t| t.as_str()) != Some("file_upload") {
+                continue;
+            }
+            let Some(mime) = v.get("mime").and_then(|m| m.as_str()) else { continue };
+            if !mime.starts_with("image/") {
+                continue;
+            }
+            let Some(filename) = v.get("filename").and_then(|f| f.as_str()) else { continue };
+            let path = conv_dir.join(filename);
+            match tokio::fs::read(&path).await {
+                Ok(data) => {
+                    let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                    images_to_add.push(UserContent::Image(ImageContent {
+                        data: ImageData::Base64(b64),
+                        mime_type: mime.to_string(),
+                    }));
+                }
+                Err(e) => {
+                    tracing::warn!(?path, "failed to read image for multimodal: {e}");
+                }
+            }
+        }
+        parts.extend(images_to_add);
+    }
 }
