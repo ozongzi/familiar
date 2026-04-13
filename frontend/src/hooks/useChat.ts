@@ -324,7 +324,29 @@ export function useChat(
       if (m.role === "tool" && m.tool_call_id && m.content) {
         let parsed: unknown = m.content;
         try {
-          parsed = JSON.parse(m.content);
+          const outer = JSON.parse(m.content);
+          // The backend stores tool results as Vec<agentix::Content>, serialized as
+          // [{type:"text",text:"<json>"}]. Unwrap to get the actual result value.
+          if (Array.isArray(outer)) {
+            const textBlock = (outer as unknown[]).find(
+              (b): b is { type: string; text: string } =>
+                b !== null &&
+                typeof b === "object" &&
+                (b as Record<string, unknown>).type === "text" &&
+                typeof (b as Record<string, unknown>).text === "string",
+            );
+            if (textBlock) {
+              try {
+                parsed = JSON.parse(textBlock.text);
+              } catch {
+                parsed = textBlock.text;
+              }
+            } else {
+              parsed = outer;
+            }
+          } else {
+            parsed = outer;
+          }
         } catch {
           /* leave as string */
         }
@@ -369,9 +391,16 @@ export function useChat(
           if (!id || !name) continue;
           let result = toolResultMap.get(id) ?? null;
 
-          // `ask` 工具不存 tool result——用户的回答是作为下一条 user 消息存的。
-          // 从后续消息中找到那条回答，把它嵌进 result，并标记为已消费（不再渲染成独立气泡）。
-          if (name === "ask" && result === null) {
+          // `ask` 工具将 { __ask__: true, ... } 作为 tool result 存入 DB。
+          // 用户的真实回答是作为下一条 user 消息存的。
+          // 检测到 __ask__ 标记（或 result 为 null）时，找到那条回答，嵌入为 { answer: ... }，
+          // 并标记该 user 消息已消费（不再渲染成独立气泡）。
+          const isAskMarker =
+            result !== null &&
+            typeof result === "object" &&
+            (result as Record<string, unknown>).__ask__ === true;
+          if (name === "ask" && (result === null || isAskMarker)) {
+            result = null; // reset — will be set to { answer } if found
             for (let j = mi + 1; j < msgs.length; j++) {
               const next = msgs[j];
               if (next.role !== "user") continue;
@@ -926,7 +955,7 @@ export function useChat(
   // ─── Send ─────────────────────────────────────────────────────────────────
 
   const send = useCallback(
-    async (text: string, images: string[] = []) => {
+    async (text: string) => {
       if (!token) return;
       if (statusRef.current === "connecting") return;
 
@@ -1036,7 +1065,6 @@ export function useChat(
         content: text,
         reasoning: "",
         streaming: false,
-        images: images.length > 0 ? images : undefined,
       };
       setBubbles((prev) => [...prev, userBubble]);
       updateStatus("connecting");
@@ -1045,7 +1073,6 @@ export function useChat(
       let streamId: string;
       try {
         const body: Record<string, unknown> = { content: text };
-        if (images.length > 0) body.images = images;
         const res = await fetch(`${BASE()}/api/conversations/${convId}/messages`, {
           method: "POST",
           headers: {

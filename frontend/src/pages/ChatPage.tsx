@@ -249,8 +249,8 @@ export function ChatPage() {
   );
 
   const handleSend = useCallback(
-    (text: string, images?: string[]) => {
-      send(text, images);
+    (text: string) => {
+      send(text);
     },
     [send],
   );

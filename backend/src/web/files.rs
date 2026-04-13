@@ -453,10 +453,25 @@ pub async fn upload_file(
     })
     .to_string();
 
-    use agentix::Message;
-    let msg = Message::User(vec![agentix::UserContent::Text {
+    use agentix::{Message, UserContent};
+    let mut parts = vec![UserContent::Text {
         text: content_str.clone(),
-    }]);
+    }];
+
+    // If the file is an image, also include it as multimodal content
+    // so the LLM can actually "see" the image.
+    let mime = mime_from_filename(&file_name);
+    if mime.starts_with("image/") {
+        use agentix::{ImageContent, ImageData};
+        use base64::Engine;
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+        parts.push(UserContent::Image(ImageContent {
+            data: ImageData::Base64(b64),
+            mime_type: mime.to_string(),
+        }));
+    }
+
+    let msg = Message::User(parts);
     state.persist_message(conv_id, &msg);
 
     Ok((StatusCode::CREATED, Json(resp)))

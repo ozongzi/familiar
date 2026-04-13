@@ -14,7 +14,7 @@ interface UploadResult {
 }
 
 interface Props {
-  onSend: (text: string, images?: string[]) => void;
+  onSend: (text: string) => void;
   onInterrupt?: (text: string) => void;
   onAbort?: () => void;
   streaming?: boolean;
@@ -49,7 +49,6 @@ export function ChatInput({
   const [hasText, setHasText] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
-  const [pendingImages, setPendingImages] = useState<string[]>([]);
   const MAX_FILE_SIZE = 50 * 1024 * 1024;
 
   const resize = useCallback(() => {
@@ -116,21 +115,13 @@ export function ChatInput({
     const files: File[] = [];
     imageItems.forEach((item) => {
       const file = item.getAsFile();
-      if (!file) return;
-      files.push(file);
-      const reader = new FileReader();
-      reader.onload = (ev) => {
-        const dataUrl = ev.target?.result as string;
-        if (dataUrl) setPendingImages((prev) => [...prev, dataUrl]);
-      };
-      reader.readAsDataURL(file);
+      if (file) files.push(file);
     });
+    // Upload via /api/files — the backend now includes multimodal image data
+    // in the persisted message, so no need to also add to pendingImages.
     if (files.length > 0) uploadFiles(files).catch(console.error);
   }, [uploadFiles]);
 
-  const removeImage = useCallback((idx: number) => {
-    setPendingImages((prev) => prev.filter((_, i) => i !== idx));
-  }, []);
 
   const submit = useCallback(() => {
     const el = textareaRef.current;
@@ -147,13 +138,12 @@ export function ChatInput({
       }
       return;
     }
-    if (!text && pendingImages.length === 0) return;
-    onSend(text, pendingImages.length > 0 ? pendingImages : undefined);
+    if (!text) return;
+    onSend(text);
     el.value = "";
     el.style.height = "auto";
     setHasText(false);
-    setPendingImages([]);
-  }, [onSend, onInterrupt, onAbort, streaming, disabled, pendingImages]);
+  }, [onSend, onInterrupt, onAbort, streaming, disabled]);
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -178,14 +168,8 @@ export function ChatInput({
     const input = imageInputRef.current;
     if (!input || !input.files || input.files.length === 0) return;
     const files = Array.from(input.files);
-    files.forEach((file) => {
-      const reader = new FileReader();
-      reader.onload = (ev) => {
-        const dataUrl = ev.target?.result as string;
-        if (dataUrl) setPendingImages((prev) => [...prev, dataUrl]);
-      };
-      reader.readAsDataURL(file);
-    });
+    // Upload via /api/files — the backend now includes multimodal image data
+    // in the persisted message, so no need to also add to pendingImages.
     uploadFiles(files).catch(console.error);
     input.value = "";
   }, [uploadFiles]);
@@ -208,7 +192,7 @@ export function ChatInput({
   const isAbortMode = streaming && !hasText;
   const isInterruptMode = streaming && hasText;
   const isSendMode = !streaming;
-  const btnDisabled = disabled || (isSendMode && !hasText && pendingImages.length === 0);
+  const btnDisabled = disabled || (isSendMode && !hasText);
 
   return (
     <div ref={wrapperRef} className={styles.wrapper}>
@@ -229,18 +213,6 @@ export function ChatInput({
           onChange={handleImagePick}
           aria-label="选择图片"
         />
-
-        {/* 图片预览 */}
-        {pendingImages.length > 0 && (
-          <div className={styles.imagePreviews}>
-            {pendingImages.map((src, i) => (
-              <div key={i} className={styles.imagePreviewItem}>
-                <img src={src} className={styles.imagePreviewThumb} alt="" />
-                <button className={styles.imageRemoveBtn} onClick={() => removeImage(i)} title="移除">×</button>
-              </div>
-            ))}
-          </div>
-        )}
 
         {/* 上方：textarea */}
         <textarea
