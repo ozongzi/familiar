@@ -2,6 +2,8 @@ use agentix::tool;
 use sqlx::PgPool;
 use uuid::Uuid;
 
+use crate::prompt::BUNDLED_SKILLS;
+
 /// SkillSpell 支持先读取用户私有 skill，再回退到全局默认 skill（均存于数据库）。
 pub struct SkillSpell {
     pub pool: PgPool,
@@ -36,10 +38,16 @@ impl Tool for SkillSpell {
         .fetch_optional(&self.pool)
         .await;
 
-        match app_res {
-            Ok(Some(content)) => strip_frontmatter(&content),
-            _ => format!("error: skill '{name}' 不存在"),
+        if let Ok(Some(content)) = app_res {
+            return strip_frontmatter(&content);
         }
+
+        // Fall back to skills bundled in the binary.
+        if let Some((_, _, content)) = BUNDLED_SKILLS.iter().find(|(n, _, _)| *n == name) {
+            return strip_frontmatter(content);
+        }
+
+        format!("error: skill '{name}' 不存在")
     }
 }
 

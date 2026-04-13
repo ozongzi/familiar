@@ -1,5 +1,23 @@
 use tera::{Context, Tera};
 
+// ── Bundled app skills ────────────────────────────────────────────────────────
+
+const SKILL_VISUALIZER_ART: &str = include_str!("skills/visualizer-art.md");
+const SKILL_VISUALIZER_CHART: &str = include_str!("skills/visualizer-chart.md");
+const SKILL_VISUALIZER_CORE: &str = include_str!("skills/visualizer-core.md");
+const SKILL_VISUALIZER_DIAGRAM: &str = include_str!("skills/visualizer-diagram.md");
+const SKILL_VISUALIZER_UI: &str = include_str!("skills/visualizer-ui.md");
+
+/// Each entry: (name, description, raw_content_with_frontmatter).
+/// These are compiled into the binary and available without a database lookup.
+pub const BUNDLED_SKILLS: &[(&str, &str, &str)] = &[
+    ("visualizer-art",     "插画和生成艺术规范，包括有机形状、重复纹理、径向对称和自由色彩使用。与其他模块不同，此模块允许自定义颜色和渐变。", SKILL_VISUALIZER_ART),
+    ("visualizer-chart",   "数据图表规范，包括Chart.js配置、图例、数字格式化，以及D3 Choropleth地理地图的拓扑数据源和投影设置。", SKILL_VISUALIZER_CHART),
+    ("visualizer-core",    "可视化系统核心规则，包括何时使用可视化、流式渲染约束、CSS变量、颜色系统和暗色模式要求。每次使用可视化系统前必须先加载此模块。", SKILL_VISUALIZER_CORE),
+    ("visualizer-diagram", "SVG图表绘制规范，包括流程图、结构图和示意图三种类型的布局规则、节点样式、箭头标记和坐标计算。在绘制任何SVG图表前加载。", SKILL_VISUALIZER_DIAGRAM),
+    ("visualizer-ui",      "UI组件和界面原型规范，包括卡片、表单、数据记录、选项对比等布局模式和设计token。", SKILL_VISUALIZER_UI),
+];
+
 // ── Embedded templates ────────────────────────────────────────────────────────
 
 const MAIN_BASE: &str = include_str!("templates/main_base.md");
@@ -56,17 +74,15 @@ impl PromptEngine {
     pub fn build_main(
         &self,
         has_memory: bool,
-        current_time: &str,
     ) -> String {
-        let base = MAIN_BASE.replace("{{ current_time }}", current_time);
         let mut ctx = Context::new();
-        ctx.insert("base", &base);
+        ctx.insert("base", MAIN_BASE);
         ctx.insert("has_memory", &has_memory);
         ctx.insert("tpl_memory", MAIN_MEMORY);
 
         self.tera.render("main", &ctx).unwrap_or_else(|e| {
             tracing::warn!("main prompt template error: {e}");
-            base
+            MAIN_BASE.to_string()
         })
     }
 

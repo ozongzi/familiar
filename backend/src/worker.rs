@@ -191,7 +191,7 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
         // User has provided a fully custom system prompt — use it as-is.
         crate::prompt_template::render_prompt(custom, &[("USER_NAME", &user_name)])
     } else {
-        let raw = prompt_engine.build_main(has_memory, &current_time);
+        let raw = prompt_engine.build_main(has_memory);
         crate::prompt_template::render_prompt(&raw, &[("USER_NAME", &user_name)])
     };
 
@@ -201,11 +201,24 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
     }
 
     // ── Append skills ─────────────────────────────────────────────────────
+    // Start with bundled skills (compiled into the binary).
+    let mut skill_map: std::collections::HashMap<String, String> =
+        crate::prompt::BUNDLED_SKILLS
+            .iter()
+            .map(|(name, desc, _)| (name.to_string(), desc.to_string()))
+            .collect();
+
+    // DB app_skills override bundled (same name = DB wins).
     let app_skill_rows: Vec<(String, Option<String>)> =
         sqlx::query_as("SELECT name, description FROM app_skills ORDER BY name ASC")
             .fetch_all(&ctx.pool)
             .await
             .unwrap_or_default();
+    for (name, desc) in app_skill_rows {
+        skill_map.insert(name, desc.unwrap_or_default());
+    }
+
+    // User-private skills override everything.
     let user_skill_rows: Vec<(String, Option<String>)> = sqlx::query_as(
         "SELECT name, description FROM user_skills WHERE user_id = $1 ORDER BY name ASC",
     )
@@ -213,13 +226,18 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
     .fetch_all(&ctx.pool)
     .await
     .unwrap_or_default();
+    for (name, desc) in user_skill_rows {
+        skill_map.insert(name, desc.unwrap_or_default());
+    }
 
-    let mut skills: Vec<String> = app_skill_rows
+    let mut skills: Vec<String> = skill_map
         .into_iter()
-        .chain(user_skill_rows)
-        .map(|(name, desc)| match desc {
-            Some(d) => format!("- {name}: {d}"),
-            None => format!("- {name}"),
+        .map(|(name, desc)| {
+            if desc.is_empty() {
+                format!("- {name}")
+            } else {
+                format!("- {name}: {desc}")
+            }
         })
         .collect();
 

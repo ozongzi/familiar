@@ -136,9 +136,12 @@ pub async fn send_message_handler(
             })
             .collect();
         if !content.is_empty() {
-            parts.push(UserContent::Text {
-                text: content.clone(),
-            });
+            let stamped = format!(
+                "[{}] {}",
+                chrono::Utc::now().format("%Y-%m-%d %H:%M UTC"),
+                content
+            );
+            parts.push(UserContent::Text { text: stamped });
         }
         parts
     };
