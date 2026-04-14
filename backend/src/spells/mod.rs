@@ -1,22 +1,22 @@
+mod generate_image_spell;
 mod history_spell;
 mod manage_mcp_spell;
 mod memory_spell;
 mod plan_spell;
 mod sandbox_spell;
-mod siliconflow_spell;
 mod skill_spell;
 mod sourcegraph_spell;
 mod spawn_spell;
 mod tavily_spell;
 mod ui_spells;
 
+use generate_image_spell::GenerateImageSpell;
 use history_spell::HistorySpell;
 use memory_spell::MemorySpell;
 pub use memory_spell::consolidate_conversation_memories;
 pub use memory_spell::load_memories_for_prompt;
 use plan_spell::PlanSpell;
 use sandbox_spell::SandboxSpell;
-use siliconflow_spell::SiliconFlowSpell;
 use skill_spell::SkillSpell;
 use sourcegraph_spell::search_code;
 use tavily_spell::TavilySpell;
@@ -52,8 +52,9 @@ pub struct SpellDeps {
     pub mcp_catalog: Vec<McpCatalogEntry>,
     // TavilySpell
     pub tavily_api_key: Option<String>,
-    // SiliconFlowSpell
+    // GenerateImageSpell
     pub siliconflow_api_key: Option<String>,
+    pub fal_api_key: Option<String>,
     pub http: reqwest::Client,
 }
 
@@ -143,9 +144,10 @@ pub fn build_all_spells(deps: SpellDeps) -> impl agentix::Tool {
             http: deps.http.clone(),
         });
     }
-    if let Some(api_key) = deps.siliconflow_api_key {
-        tb.push(SiliconFlowSpell {
-            api_key,
+    if deps.siliconflow_api_key.is_some() || deps.fal_api_key.is_some() {
+        tb.push(GenerateImageSpell {
+            siliconflow_api_key: deps.siliconflow_api_key,
+            fal_api_key: deps.fal_api_key,
             http: deps.http.clone(),
             sandbox: deps.sandbox.clone(),
             user_id: deps.user_id,

@@ -17,6 +17,7 @@ pub struct Config {
     pub mcp_catalog: Vec<McpCatalogEntry>,
     pub tavily_api_key: Option<String>,
     pub siliconflow_api_key: Option<String>,
+    pub fal_api_key: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -103,6 +104,7 @@ struct AppConfigRow {
     mcp_catalog: Option<Value>,
     tavily_api_key: Option<String>,
     siliconflow_api_key: Option<String>,
+    fal_api_key: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -144,6 +146,7 @@ impl Default for Config {
             mcp_catalog: vec![],
             tavily_api_key: None,
             siliconflow_api_key: None,
+            fal_api_key: None,
         }
     }
 }
@@ -155,7 +158,7 @@ impl Config {
             SELECT
                 public_path, artifacts_path, cheap_model, embedding_model,
                 server_port, system_prompt, subagent_prompt, mcp_catalog,
-                tavily_api_key, siliconflow_api_key
+                tavily_api_key, siliconflow_api_key, fal_api_key
             FROM app_config WHERE id = true
             "#,
         )
@@ -189,6 +192,7 @@ impl Config {
             }
             cfg.tavily_api_key = r.tavily_api_key;
             cfg.siliconflow_api_key = r.siliconflow_api_key;
+            cfg.fal_api_key = r.fal_api_key;
         }
 
         // Load Global MCPs
@@ -249,10 +253,10 @@ impl Config {
             INSERT INTO app_config (
                 id, public_path, artifacts_path, cheap_model, embedding_model,
                 server_port, system_prompt, subagent_prompt, mcp_catalog,
-                tavily_api_key, siliconflow_api_key,
+                tavily_api_key, siliconflow_api_key, fal_api_key,
                 updated_at
             )
-            VALUES (true, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
+            VALUES (true, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
             ON CONFLICT (id) DO UPDATE SET
                 public_path = EXCLUDED.public_path,
                 artifacts_path = EXCLUDED.artifacts_path,
@@ -264,6 +268,7 @@ impl Config {
                 mcp_catalog = EXCLUDED.mcp_catalog,
                 tavily_api_key = EXCLUDED.tavily_api_key,
                 siliconflow_api_key = EXCLUDED.siliconflow_api_key,
+                fal_api_key = EXCLUDED.fal_api_key,
                 updated_at = NOW()
             "#,
         )
@@ -277,6 +282,7 @@ impl Config {
         .bind(serde_json::to_value(&cfg.mcp_catalog)?)
         .bind(&cfg.tavily_api_key)
         .bind(&cfg.siliconflow_api_key)
+        .bind(&cfg.fal_api_key)
         .execute(pool)
         .await?;
 

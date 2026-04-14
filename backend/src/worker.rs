@@ -311,6 +311,7 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
         mcp_catalog: global_cfg.mcp_catalog.clone(),
         tavily_api_key: global_cfg.tavily_api_key.clone(),
         siliconflow_api_key: global_cfg.siliconflow_api_key.clone(),
+        fal_api_key: global_cfg.fal_api_key.clone(),
         http: reqwest::Client::new(),
     };
 
