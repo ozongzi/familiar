@@ -455,11 +455,19 @@ pub async fn upload_file(
     })
     .to_string();
 
-    use agentix::{Message, UserContent};
-    let msg = Message::User(vec![UserContent::Text {
+    use agentix::{ImageContent, ImageData, Message, UserContent};
+    let mut parts = vec![UserContent::Text {
         text: content_str.clone(),
-    }]);
-    state.persist_message(conv_id, &msg);
+    }];
+    // For image uploads, append an Image part so the LLM can see the pixels.
+    // db.append() / db.restore() will handle the __sandbox__: ref transparently.
+    if mime.starts_with("image/") {
+        parts.push(UserContent::Image(ImageContent {
+            data: ImageData::Url(format!("__sandbox__:{}", unique_name)),
+            mime_type: mime.to_string(),
+        }));
+    }
+    state.persist_message(conv_id, user_id, &Message::User(parts));
 
     Ok((StatusCode::CREATED, Json(resp)))
 }

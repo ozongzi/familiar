@@ -154,7 +154,7 @@ pub async fn send_message_handler(
     let user_message_id = {
         use agentix::Message;
         let msg = Message::User(user_parts);
-        state.persist_message_async(conversation_id, msg).await
+        state.persist_message_async(conversation_id, auth.user_id, msg).await
     };
 
     // If there's already a running job, abort it first (interrupt semantics).
@@ -469,7 +469,7 @@ pub async fn stream_interrupt_handler(
         return Err(AppError::bad_request("中断内容不能为空"));
     }
 
-    let (conversation_id, _) = resolve_job(&state, stream_id, auth.user_id).await?;
+    let (conversation_id, user_id) = resolve_job(&state, stream_id, auth.user_id).await?;
 
     // ── 1. Seal the in-flight streaming message ───────────────────────────
     // The worker writes tokens live into messages.streaming=true; sealing it
@@ -491,6 +491,7 @@ pub async fn stream_interrupt_handler(
         state
             .persist_message_async(
                 conversation_id,
+                user_id,
                 Message::User(vec![UserContent::Text { text: content }]),
             )
             .await;
@@ -525,7 +526,7 @@ pub async fn stream_answer_handler(
         return Err(AppError::bad_request("回答内容不能为空"));
     }
 
-    let (conversation_id, _) = resolve_job(&state, stream_id, auth.user_id).await?;
+    let (conversation_id, user_id) = resolve_job(&state, stream_id, auth.user_id).await?;
 
     // Persist the user's answer as a new message.
     {
@@ -533,6 +534,7 @@ pub async fn stream_answer_handler(
         state
             .persist_message_async(
                 conversation_id,
+                user_id,
                 Message::User(vec![UserContent::Text { text: content }]),
             )
             .await;

@@ -15,11 +15,16 @@
 //! - Summary is stored in conversations.compact_summary, not in messages.
 //!   restore() returns all real messages; the worker prepends the summary.
 
+use std::sync::Arc;
+
+use base64::Engine as _;
 use pgvector::Vector;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use agentix::request::{Message, ToolCall as AgentToolCall, UserContent};
+use agentix::request::{ImageContent, ImageData, Message, ToolCall as AgentToolCall, UserContent};
+
+use crate::sandbox::SandboxManager;
 
 // ── Row type ──────────────────────────────────────────────────────────────────
 
@@ -45,11 +50,12 @@ pub struct MessageRow {
 #[derive(Clone)]
 pub struct Db {
     pub pool: PgPool,
+    sandbox: Arc<SandboxManager>,
 }
 
 impl Db {
-    pub fn new(pool: PgPool) -> Self {
-        Self { pool }
+    pub fn new(pool: PgPool, sandbox: Arc<SandboxManager>) -> Self {
+        Self { pool, sandbox }
     }
 
     pub async fn append_streaming(
@@ -137,6 +143,7 @@ impl Db {
     pub async fn append(
         &self,
         conversation_id: Uuid,
+        user_id: Uuid,
         msg: &Message,
         embedding: Option<Vector>,
     ) -> anyhow::Result<i64> {
@@ -150,7 +157,45 @@ impl Db {
             Message::User(parts) => {
                 let has_images = parts.iter().any(|p| matches!(p, UserContent::Image(_)));
                 let content = if has_images {
-                    let json = serde_json::to_string(parts).unwrap_or_default();
+                    // Save any inline base64 images to the sandbox and replace
+                    // with a __sandbox__:<filename> reference so the DB row
+                    // stays small.
+                    let mut new_parts: Vec<UserContent> = Vec::with_capacity(parts.len());
+                    let conv_dir = self.sandbox.get_conversation_dir(user_id, conversation_id);
+                    let _ = tokio::fs::create_dir_all(&conv_dir).await;
+                    for part in parts.iter() {
+                        match part {
+                            UserContent::Image(img) => {
+                                if let ImageData::Base64(b64) = &img.data {
+                                    let ext = ext_from_mime(&img.mime_type);
+                                    let filename =
+                                        format!("img-{}.{}", Uuid::new_v4(), ext);
+                                    let path = conv_dir.join(&filename);
+                                    match base64::engine::general_purpose::STANDARD
+                                        .decode(b64.as_bytes())
+                                    {
+                                        Ok(bytes)
+                                            if tokio::fs::write(&path, &bytes).await.is_ok() =>
+                                        {
+                                            new_parts.push(UserContent::Image(ImageContent {
+                                                data: ImageData::Url(format!(
+                                                    "__sandbox__:{}",
+                                                    filename
+                                                )),
+                                                mime_type: img.mime_type.clone(),
+                                            }));
+                                        }
+                                        // Fallback: keep inline if write fails
+                                        _ => new_parts.push(part.clone()),
+                                    }
+                                } else {
+                                    new_parts.push(part.clone());
+                                }
+                            }
+                            _ => new_parts.push(part.clone()),
+                        }
+                    }
+                    let json = serde_json::to_string(&new_parts).unwrap_or_default();
                     format!("__multimodal__:{json}")
                 } else {
                     parts
@@ -252,7 +297,11 @@ impl Db {
         Ok(())
     }
 
-    pub async fn restore(&self, conversation_id: Uuid) -> anyhow::Result<Vec<Message>> {
+    pub async fn restore(
+        &self,
+        conversation_id: Uuid,
+        user_id: Uuid,
+    ) -> anyhow::Result<Vec<Message>> {
         let rows: Vec<MessageRow> = sqlx::query_as(
             r#"
             WITH RECURSIVE branch AS (
@@ -284,7 +333,9 @@ impl Db {
         .fetch_all(&self.pool)
         .await?;
 
-        Ok(rows.into_iter().map(row_to_message).collect())
+        let mut messages: Vec<Message> = rows.into_iter().map(row_to_message).collect();
+        resolve_sandbox_images(&mut messages, &self.sandbox, user_id, conversation_id).await;
+        Ok(messages)
     }
 
     pub async fn fts_search(
@@ -481,4 +532,50 @@ pub fn row_to_message(row: MessageRow) -> Message {
 
 pub fn to_vector(v: Vec<f32>) -> Vector {
     Vector::from(v)
+}
+
+/// Map a MIME type to a short file extension for sandbox image files.
+fn ext_from_mime(mime: &str) -> &'static str {
+    match mime {
+        "image/jpeg" | "image/jpg" => "jpg",
+        "image/png" => "png",
+        "image/gif" => "gif",
+        "image/webp" => "webp",
+        _ => "bin",
+    }
+}
+
+/// Resolve `ImageData::Url("__sandbox__:<filename>")` references in messages
+/// loaded from the DB: read the file from the conversation sandbox directory
+/// and replace with `ImageData::Base64`.
+///
+/// Old messages that already store inline `ImageData::Base64` are left as-is.
+async fn resolve_sandbox_images(
+    messages: &mut Vec<Message>,
+    sandbox: &SandboxManager,
+    user_id: Uuid,
+    conversation_id: Uuid,
+) {
+    let conv_dir = sandbox.get_conversation_dir(user_id, conversation_id);
+
+    for msg in messages.iter_mut() {
+        let Message::User(parts) = msg else { continue };
+
+        // Pass 1: resolve __sandbox__: refs in existing Image parts.
+        for part in parts.iter_mut() {
+            let UserContent::Image(img) = part else { continue };
+            let ImageData::Url(url) = &img.data else { continue };
+            let Some(filename) = url.strip_prefix("__sandbox__:") else { continue };
+            let path = conv_dir.join(filename);
+            match tokio::fs::read(&path).await {
+                Ok(bytes) => {
+                    img.data = ImageData::Base64(
+                        base64::engine::general_purpose::STANDARD.encode(&bytes),
+                    );
+                }
+                Err(e) => tracing::warn!(?path, "sandbox image read failed: {e}"),
+            }
+        }
+
+    }
 }

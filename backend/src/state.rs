@@ -27,10 +27,10 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(cfg: &Config, pool: PgPool) -> Self {
-        let db = Db::new(pool.clone());
         let sandbox = Arc::new(crate::sandbox::SandboxManager::new(
             std::path::PathBuf::from(&cfg.artifacts_path),
         ));
+        let db = Db::new(pool.clone(), sandbox.clone());
         Self {
             public_path: cfg.public_path.clone(),
             artifacts_path: cfg.artifacts_path.clone(),
@@ -138,15 +138,20 @@ impl AppState {
     }
 
     /// Persist a message (fire-and-forget with embedding).
-    pub fn persist_message(&self, conversation_id: Uuid, msg: &Message) {
+    pub fn persist_message(&self, conversation_id: Uuid, user_id: Uuid, msg: &Message) {
         let state = self.clone();
         let msg = msg.clone();
         tokio::spawn(async move {
-            state.persist_message_async(conversation_id, msg).await;
+            state.persist_message_async(conversation_id, user_id, msg).await;
         });
     }
 
-    pub async fn persist_message_async(&self, conversation_id: Uuid, msg: Message) -> Option<i64> {
+    pub async fn persist_message_async(
+        &self,
+        conversation_id: Uuid,
+        user_id: Uuid,
+        msg: Message,
+    ) -> Option<i64> {
         use crate::db::to_vector;
         use crate::embedding::EmbeddingClient;
         use agentix::UserContent;
@@ -171,7 +176,7 @@ impl AppState {
             _ => None,
         };
 
-        let row_id = match db.append(conversation_id, &msg, None).await {
+        let row_id = match db.append(conversation_id, user_id, &msg, None).await {
             Ok(id) => id,
             Err(e) => {
                 tracing::error!("db append failed: {e}");
