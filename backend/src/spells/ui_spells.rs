@@ -14,57 +14,69 @@ pub struct UiSpells {
 impl Tool for UiSpells {
     /// 将文件展示给用户（在 UI 中渲染为一个类似 Claude 的文件卡片，支持预览和下载）。
     /// 适合展示生成的图表、导出的数据、或者需要用户重点关注的代码文件。
+    /// 只能展示 /workspace 下的文件；如果文件不在 /workspace/public 下，会自动复制过去。
     ///
     /// description: 本次展示的简短说明（例如："我为你生成了数据分析报告"）
-    /// path: 文件的完整路径（通常以 /workspace/ 开头）
+    /// path: 文件的完整路径（以 /workspace/ 开头）
     async fn present_file(&self, description: Option<String>, path: String) -> serde_json::Value {
         let _ = description;
         let q_path = std::path::PathBuf::from(&path);
-        let host_path = if q_path.starts_with("/workspace") {
-            let relative = q_path.strip_prefix("/workspace").unwrap();
-            self.sandbox
-                .get_conversation_dir(self.user_id, self.conversation_id)
-                .join(relative)
-        } else {
-            q_path
-        };
+        if !q_path.starts_with("/workspace") {
+            return json!({ "error": "path must be under /workspace" });
+        }
+        let conv_dir = self.sandbox.get_conversation_dir(self.user_id, self.conversation_id);
+        let public_dir = conv_dir.join("public");
+        let relative = q_path.strip_prefix("/workspace").unwrap();
+        let host_path = conv_dir.join(relative);
+
         let filename = host_path
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("file")
             .to_string();
+
         let meta = tokio::fs::metadata(&host_path).await;
-        let (host_path, filename, path) = if meta.as_ref().map(|m| m.is_dir()).unwrap_or(false) {
-            // Auto-zip the directory.
-            let zip_host_path = host_path.with_extension("zip");
-            let zip_filename = zip_host_path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("archive.zip")
-                .to_string();
+        let is_dir = meta.as_ref().map(|m| m.is_dir()).unwrap_or(false);
+
+        // Directories → zip into public/
+        if is_dir {
+            let zip_filename = format!("{}.zip", filename);
+            let zip_host_path = public_dir.join(&zip_filename);
+            let _ = tokio::fs::create_dir_all(&public_dir).await;
             if let Err(e) = zip_dir(&host_path, &zip_host_path) {
                 return json!({ "error": format!("打包失败: {e}") });
             }
-            let zip_path = if let Ok(rel) = zip_host_path.strip_prefix(
-                self.sandbox
-                    .get_conversation_dir(self.user_id, self.conversation_id),
-            ) {
-                format!("/workspace/{}", rel.display())
-            } else {
-                zip_host_path.to_string_lossy().to_string()
-            };
-            (zip_host_path, zip_filename, zip_path)
-        } else {
-            (host_path, filename, path)
-        };
-        let size = tokio::fs::metadata(&host_path)
-            .await
-            .map(|m| m.len())
-            .unwrap_or(0);
+            let size = tokio::fs::metadata(&zip_host_path).await.map(|m| m.len()).unwrap_or(0);
+            return json!({
+                "display": "file",
+                "filename": zip_filename,
+                "path": format!("/workspace/public/{}", zip_filename),
+                "size": size
+            });
+        }
+
+        // File already in public → use as-is
+        if q_path.starts_with("/workspace/public") {
+            let size = meta.map(|m| m.len()).unwrap_or(0);
+            return json!({
+                "display": "file",
+                "filename": filename,
+                "path": path,
+                "size": size
+            });
+        }
+
+        // File outside public → copy into public/
+        let _ = tokio::fs::create_dir_all(&public_dir).await;
+        let dest_host = public_dir.join(&filename);
+        if let Err(e) = tokio::fs::copy(&host_path, &dest_host).await {
+            return json!({ "error": format!("复制到 public 失败: {e}") });
+        }
+        let size = tokio::fs::metadata(&dest_host).await.map(|m| m.len()).unwrap_or(0);
         json!({
             "display": "file",
             "filename": filename,
-            "path": path,
+            "path": format!("/workspace/public/{}", filename),
             "size": size
         })
     }

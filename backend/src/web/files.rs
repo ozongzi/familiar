@@ -77,9 +77,9 @@ pub async fn download_file(
         return Err(AppError::not_found("文件不存在"));
     }
 
-    // Resolve to an absolute path — only /workspace-prefixed paths are accepted.
+    // Only /workspace/public paths are accessible via this endpoint.
     let q_path = std::path::PathBuf::from(&q.path);
-    if !q_path.starts_with("/workspace") {
+    if !q_path.starts_with("/workspace/public") {
         return Err(AppError::not_found("文件不存在"));
     }
     let relative = q_path.strip_prefix("/workspace").unwrap();
@@ -206,9 +206,9 @@ pub async fn preview_file(
         return Err(AppError::not_found("文件不存在"));
     }
 
-    // Only /workspace-prefixed paths are accepted.
+    // Only /workspace/public paths are accessible via this endpoint.
     let q_path = std::path::PathBuf::from(&q.path);
-    if !q_path.starts_with("/workspace") {
+    if !q_path.starts_with("/workspace/public") {
         return Err(AppError::not_found("文件不存在"));
     }
     let relative = q_path.strip_prefix("/workspace").unwrap();

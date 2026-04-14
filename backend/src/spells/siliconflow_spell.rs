@@ -40,7 +40,7 @@ fn ext_from_url(url: &str) -> &'static str {
 impl Tool for SiliconFlowSpell {
     /// Generate an image using SiliconFlow's image generation API.
     /// ⚠️ SFW only — the API has content moderation and will reject explicit/NSFW prompts.
-    /// Results are saved to the conversation sandbox and returned as viewable images.
+    /// Results are saved to /workspace/public and returned as viewable images visible to the user.
     ///
     /// Available models:
     ///   Kwai-Kolors/Kolors            high quality general-purpose (recommended)
@@ -110,7 +110,8 @@ impl Tool for SiliconFlowSpell {
 
         let conv_dir = self
             .sandbox
-            .get_conversation_dir(self.user_id, self.conversation_id);
+            .get_conversation_dir(self.user_id, self.conversation_id)
+            .join("public");
         let _ = tokio::fs::create_dir_all(&conv_dir).await;
 
         let mut results: Vec<Content> = Vec::new();
@@ -147,10 +148,10 @@ impl Tool for SiliconFlowSpell {
             }
 
             results.push(Content::Image(ImageContent {
-                data: ImageData::Url(format!("__sandbox__:{}", filename)),
+                data: ImageData::Url(format!("__sandbox__:public/{}", filename)),
                 mime_type: format!("image/{}", ext),
             }));
-            results.push(Content::text(format!("/workspace/{}", filename)));
+            results.push(Content::text(format!("/workspace/public/{}", filename)));
         }
 
         results
