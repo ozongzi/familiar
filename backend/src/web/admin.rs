@@ -654,33 +654,26 @@ pub async fn get_token_usage(
     State(state): State<AppState>,
     _auth: AuthUser,
 ) -> AppResult<Json<serde_json::Value>> {
-    let rows: Vec<(Option<serde_json::Value>,)> =
-        sqlx::query_as("SELECT token_usage FROM conversations WHERE token_usage IS NOT NULL")
-            .fetch_all(&state.pool)
-            .await?;
+    let row = sqlx::query(
+        r#"SELECT COALESCE(SUM(prompt_tokens), 0)::bigint          AS prompt_tokens,
+                  COALESCE(SUM(completion_tokens), 0)::bigint      AS completion_tokens,
+                  COALESCE(SUM(total_tokens), 0)::bigint           AS total_tokens,
+                  COALESCE(SUM(cache_read_tokens), 0)::bigint      AS cache_read_tokens,
+                  COALESCE(SUM(cache_creation_tokens), 0)::bigint  AS cache_creation_tokens,
+                  COUNT(*)::bigint                                  AS conversation_count
+           FROM token_usage_log"#,
+    )
+    .fetch_one(&state.pool)
+    .await?;
 
-    let mut prompt = 0i64;
-    let mut completion = 0i64;
-    let mut total = 0i64;
-    let mut count = 0i64;
-
-    for (usage,) in rows {
-        if let Some(u) = usage {
-            prompt += u.get("prompt_tokens").and_then(|v| v.as_i64()).unwrap_or(0);
-            completion += u
-                .get("completion_tokens")
-                .and_then(|v| v.as_i64())
-                .unwrap_or(0);
-            total += u.get("total_tokens").and_then(|v| v.as_i64()).unwrap_or(0);
-            count += 1;
-        }
-    }
-
+    use sqlx::Row;
     Ok(Json(serde_json::json!({
-        "prompt_tokens":      prompt,
-        "completion_tokens":  completion,
-        "total_tokens":       total,
-        "conversation_count": count,
+        "prompt_tokens":        row.get::<i64, _>("prompt_tokens"),
+        "completion_tokens":    row.get::<i64, _>("completion_tokens"),
+        "total_tokens":         row.get::<i64, _>("total_tokens"),
+        "cache_read_tokens":    row.get::<i64, _>("cache_read_tokens"),
+        "cache_creation_tokens":row.get::<i64, _>("cache_creation_tokens"),
+        "conversation_count":   row.get::<i64, _>("conversation_count"),
     })))
 }
 
@@ -691,12 +684,14 @@ pub async fn get_token_usage_by_user(
     let rows = sqlx::query(
         r#"
         SELECT u.id::text AS user_id, u.name AS username,
-               COUNT(c.id)::bigint AS conversation_count,
-               COALESCE(SUM((c.token_usage->>'prompt_tokens')::bigint), 0)::bigint     AS prompt_tokens,
-               COALESCE(SUM((c.token_usage->>'completion_tokens')::bigint), 0)::bigint AS completion_tokens,
-               COALESCE(SUM((c.token_usage->>'total_tokens')::bigint), 0)::bigint      AS total_tokens
+               COUNT(t.conversation_id)::bigint                         AS conversation_count,
+               COALESCE(SUM(t.prompt_tokens), 0)::bigint                AS prompt_tokens,
+               COALESCE(SUM(t.completion_tokens), 0)::bigint            AS completion_tokens,
+               COALESCE(SUM(t.total_tokens), 0)::bigint                 AS total_tokens,
+               COALESCE(SUM(t.cache_read_tokens), 0)::bigint            AS cache_read_tokens,
+               COALESCE(SUM(t.cache_creation_tokens), 0)::bigint        AS cache_creation_tokens
         FROM users u
-        LEFT JOIN conversations c ON c.user_id = u.id
+        LEFT JOIN token_usage_log t ON t.user_id = u.id
         GROUP BY u.id, u.name
         ORDER BY total_tokens DESC
         "#
@@ -709,12 +704,14 @@ pub async fn get_token_usage_by_user(
         .map(|r| {
             use sqlx::Row;
             serde_json::json!({
-                "user_id":            r.get::<String, _>("user_id"),
-                "username":           r.get::<String, _>("username"),
-                "conversation_count": r.get::<i64, _>("conversation_count"),
-                "prompt_tokens":      r.get::<i64, _>("prompt_tokens"),
-                "completion_tokens":  r.get::<i64, _>("completion_tokens"),
-                "total_tokens":       r.get::<i64, _>("total_tokens"),
+                "user_id":              r.get::<String, _>("user_id"),
+                "username":             r.get::<String, _>("username"),
+                "conversation_count":   r.get::<i64, _>("conversation_count"),
+                "prompt_tokens":        r.get::<i64, _>("prompt_tokens"),
+                "completion_tokens":    r.get::<i64, _>("completion_tokens"),
+                "total_tokens":         r.get::<i64, _>("total_tokens"),
+                "cache_read_tokens":    r.get::<i64, _>("cache_read_tokens"),
+                "cache_creation_tokens":r.get::<i64, _>("cache_creation_tokens"),
             })
         })
         .collect();
@@ -732,16 +729,16 @@ pub async fn get_token_usage_conversations(
     let rows = if user_id.is_empty() {
         sqlx::query(
             r#"
-            SELECT c.id::text AS conv_id, c.name AS conv_name,
+            SELECT t.conversation_id::text AS conv_id,
+                   COALESCE(t.conversation_name, '(deleted)') AS conv_name,
                    u.name AS username,
-                   c.created_at::text AS created_at,
-                   COALESCE((c.token_usage->>'prompt_tokens')::bigint, 0)     AS prompt_tokens,
-                   COALESCE((c.token_usage->>'completion_tokens')::bigint, 0) AS completion_tokens,
-                   COALESCE((c.token_usage->>'total_tokens')::bigint, 0)      AS total_tokens
-            FROM conversations c
-            JOIN users u ON u.id = c.user_id
-            WHERE COALESCE((c.token_usage->>'total_tokens')::bigint, 0) > 0
-            ORDER BY c.created_at DESC
+                   TO_TIMESTAMP(t.recorded_at)::text AS created_at,
+                   t.prompt_tokens, t.completion_tokens, t.total_tokens,
+                   t.cache_read_tokens, t.cache_creation_tokens
+            FROM token_usage_log t
+            JOIN users u ON u.id = t.user_id
+            WHERE t.total_tokens > 0
+            ORDER BY t.recorded_at DESC
             LIMIT 200
             "#,
         )
@@ -750,17 +747,17 @@ pub async fn get_token_usage_conversations(
     } else {
         sqlx::query(
             r#"
-            SELECT c.id::text AS conv_id, c.name AS conv_name,
+            SELECT t.conversation_id::text AS conv_id,
+                   COALESCE(t.conversation_name, '(deleted)') AS conv_name,
                    u.name AS username,
-                   c.created_at::text AS created_at,
-                   COALESCE((c.token_usage->>'prompt_tokens')::bigint, 0)     AS prompt_tokens,
-                   COALESCE((c.token_usage->>'completion_tokens')::bigint, 0) AS completion_tokens,
-                   COALESCE((c.token_usage->>'total_tokens')::bigint, 0)      AS total_tokens
-            FROM conversations c
-            JOIN users u ON u.id = c.user_id
-            WHERE c.user_id = $1::uuid
-              AND COALESCE((c.token_usage->>'total_tokens')::bigint, 0) > 0
-            ORDER BY c.created_at DESC
+                   TO_TIMESTAMP(t.recorded_at)::text AS created_at,
+                   t.prompt_tokens, t.completion_tokens, t.total_tokens,
+                   t.cache_read_tokens, t.cache_creation_tokens
+            FROM token_usage_log t
+            JOIN users u ON u.id = t.user_id
+            WHERE t.user_id = $1::uuid
+              AND t.total_tokens > 0
+            ORDER BY t.recorded_at DESC
             LIMIT 200
             "#,
         )
@@ -774,13 +771,15 @@ pub async fn get_token_usage_conversations(
         .map(|r| {
             use sqlx::Row;
             serde_json::json!({
-                "conv_id":           r.get::<String, _>("conv_id"),
-                "conv_name":         r.get::<String, _>("conv_name"),
-                "username":          r.get::<String, _>("username"),
-                "created_at":        r.get::<String, _>("created_at"),
-                "prompt_tokens":     r.get::<i64, _>("prompt_tokens"),
-                "completion_tokens": r.get::<i64, _>("completion_tokens"),
-                "total_tokens":      r.get::<i64, _>("total_tokens"),
+                "conv_id":              r.get::<String, _>("conv_id"),
+                "conv_name":            r.get::<String, _>("conv_name"),
+                "username":             r.get::<String, _>("username"),
+                "created_at":           r.get::<String, _>("created_at"),
+                "prompt_tokens":        r.get::<i64, _>("prompt_tokens"),
+                "completion_tokens":    r.get::<i64, _>("completion_tokens"),
+                "total_tokens":         r.get::<i64, _>("total_tokens"),
+                "cache_read_tokens":    r.get::<i64, _>("cache_read_tokens"),
+                "cache_creation_tokens":r.get::<i64, _>("cache_creation_tokens"),
             })
         })
         .collect();
@@ -794,15 +793,17 @@ pub async fn get_token_usage_daily(
 ) -> AppResult<Json<serde_json::Value>> {
     let rows = sqlx::query(
         r#"
-        SELECT DATE(c.created_at)::text AS day,
-               COALESCE(SUM((c.token_usage->>'total_tokens')::bigint), 0)::bigint      AS total_tokens,
-               COALESCE(SUM((c.token_usage->>'prompt_tokens')::bigint), 0)::bigint     AS prompt_tokens,
-               COALESCE(SUM((c.token_usage->>'completion_tokens')::bigint), 0)::bigint AS completion_tokens,
-               COUNT(c.id)::bigint AS conversation_count
-        FROM conversations c
-        WHERE c.created_at >= NOW() - INTERVAL '30 days'
-          AND COALESCE((c.token_usage->>'total_tokens')::bigint, 0) > 0
-        GROUP BY DATE(c.created_at)
+        SELECT DATE(TO_TIMESTAMP(recorded_at))::text                AS day,
+               COALESCE(SUM(total_tokens), 0)::bigint               AS total_tokens,
+               COALESCE(SUM(prompt_tokens), 0)::bigint              AS prompt_tokens,
+               COALESCE(SUM(completion_tokens), 0)::bigint          AS completion_tokens,
+               COALESCE(SUM(cache_read_tokens), 0)::bigint          AS cache_read_tokens,
+               COALESCE(SUM(cache_creation_tokens), 0)::bigint      AS cache_creation_tokens,
+               COUNT(*)::bigint                                      AS conversation_count
+        FROM token_usage_log
+        WHERE recorded_at >= EXTRACT(EPOCH FROM NOW() - INTERVAL '30 days')::bigint
+          AND total_tokens > 0
+        GROUP BY DATE(TO_TIMESTAMP(recorded_at))
         ORDER BY day ASC
         "#
     )
@@ -814,11 +815,13 @@ pub async fn get_token_usage_daily(
         .map(|r| {
             use sqlx::Row;
             serde_json::json!({
-                "day":                r.get::<String, _>("day"),
-                "total_tokens":       r.get::<i64, _>("total_tokens"),
-                "prompt_tokens":      r.get::<i64, _>("prompt_tokens"),
-                "completion_tokens":  r.get::<i64, _>("completion_tokens"),
-                "conversation_count": r.get::<i64, _>("conversation_count"),
+                "day":                  r.get::<String, _>("day"),
+                "total_tokens":         r.get::<i64, _>("total_tokens"),
+                "prompt_tokens":        r.get::<i64, _>("prompt_tokens"),
+                "completion_tokens":    r.get::<i64, _>("completion_tokens"),
+                "cache_read_tokens":    r.get::<i64, _>("cache_read_tokens"),
+                "cache_creation_tokens":r.get::<i64, _>("cache_creation_tokens"),
+                "conversation_count":   r.get::<i64, _>("conversation_count"),
             })
         })
         .collect();

@@ -365,6 +365,13 @@ async fn generation_loop(
 ) -> anyhow::Result<()> {
     let tool_defs: Vec<ToolDefinition> = tools.raw_tools();
 
+    // Accumulate token usage across all LLM calls in this generation.
+    let mut acc_prompt: i64 = 0;
+    let mut acc_completion: i64 = 0;
+    let mut acc_total: i64 = 0;
+    let mut acc_cache_read: i64 = 0;
+    let mut acc_cache_creation: i64 = 0;
+
     loop {
         // ── Check abort / interrupt ───────────────────────────────────────
         if check_stop_reason(&ctx.pool, ctx.job_id).await.is_some() {
@@ -493,6 +500,11 @@ async fn generation_loop(
 
                 Some(LlmEvent::Usage(u)) => {
                     usage += u.clone();
+                    acc_prompt += u.prompt_tokens as i64;
+                    acc_completion += u.completion_tokens as i64;
+                    acc_total += u.total_tokens as i64;
+                    acc_cache_read += u.cache_read_tokens as i64;
+                    acc_cache_creation += u.cache_creation_tokens as i64;
                     let pool = ctx.pool.clone();
                     let conv_id = ctx.conversation_id;
                     tokio::spawn(async move {
@@ -748,6 +760,34 @@ async fn generation_loop(
         }
 
         // Loop back → send tool results to LLM
+    }
+
+    // Sync accumulated token usage to token_usage_log so stats survive conversation deletion.
+    if acc_total > 0 {
+        let _ = sqlx::query(
+            r#"INSERT INTO token_usage_log
+                   (conversation_id, user_id, conversation_name,
+                    prompt_tokens, completion_tokens, total_tokens,
+                    cache_read_tokens, cache_creation_tokens, recorded_at)
+               SELECT $1, user_id, name, $2, $3, $4, $5, $6, EXTRACT(EPOCH FROM NOW())::bigint
+               FROM conversations WHERE id = $1
+               ON CONFLICT (conversation_id) DO UPDATE
+                 SET conversation_name    = EXCLUDED.conversation_name,
+                     prompt_tokens        = token_usage_log.prompt_tokens + EXCLUDED.prompt_tokens,
+                     completion_tokens    = token_usage_log.completion_tokens + EXCLUDED.completion_tokens,
+                     total_tokens         = token_usage_log.total_tokens + EXCLUDED.total_tokens,
+                     cache_read_tokens    = token_usage_log.cache_read_tokens + EXCLUDED.cache_read_tokens,
+                     cache_creation_tokens = token_usage_log.cache_creation_tokens + EXCLUDED.cache_creation_tokens,
+                     recorded_at          = EXCLUDED.recorded_at"#,
+        )
+        .bind(ctx.conversation_id)
+        .bind(acc_prompt)
+        .bind(acc_completion)
+        .bind(acc_total)
+        .bind(acc_cache_read)
+        .bind(acc_cache_creation)
+        .execute(&ctx.pool)
+        .await;
     }
 
     Ok(())

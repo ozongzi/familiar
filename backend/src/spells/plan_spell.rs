@@ -1,6 +1,7 @@
+use agentix::schemars::JsonSchema;
 use agentix::tool;
 use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::{json};
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -9,7 +10,7 @@ pub struct PlanSpell {
     pub conversation_id: Uuid,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, JsonSchema)]
 struct PlanStep {
     id: String,
     content: String,
@@ -22,11 +23,8 @@ impl Tool for PlanSpell {
     /// 创建或更新当前对话的结构化执行计划。
     /// 计划包含步骤列表，每个步骤有 id、content、status（pending/in_progress/completed）和 priority（high/medium/low）。
     /// todos: 步骤列表（JSON 数组）
-    async fn todo_list(&self, todos: Vec<Value>) -> Value {
-        let steps: Vec<PlanStep> = match serde_json::from_value(Value::Array(todos)) {
-            Ok(s) => s,
-            Err(e) => return json!({ "error": format!("无效的计划格式: {e}") }),
-        };
+    async fn todo_list(&self, todos: Vec<PlanStep>) -> Value {
+        let steps = todos;
 
         let plan_json = match serde_json::to_value(steps
             .iter()

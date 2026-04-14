@@ -424,8 +424,9 @@ pub async fn upload_file(
         _ => return Err(AppError::bad_request("未包含 file 字段")),
     };
 
-    // Storage directory scoped to the conversation sandbox.
-    let upload_dir = state.sandbox.get_conversation_dir(user_id, conv_id);
+    // Storage directory scoped to the conversation sandbox public dir.
+    // User uploads go to /workspace/public so they're accessible via the files API.
+    let upload_dir = state.sandbox.get_conversation_dir(user_id, conv_id).join("public");
     tokio::fs::create_dir_all(&upload_dir)
         .await
         .map_err(|e| AppError::internal(&e.to_string()))?;
@@ -460,8 +461,7 @@ pub async fn upload_file(
     let unique_name = format!("{}-{}", uniq, safe);
 
     let dest_path = upload_dir.join(&unique_name);
-    // In the sandbox, the conversation_dir is mounted at /workspace
-    let sandbox_path = format!("/workspace/{}", unique_name);
+    let sandbox_path = format!("/workspace/public/{}", unique_name);
 
     let mut f = File::create(&dest_path)
         .await
@@ -497,7 +497,7 @@ pub async fn upload_file(
     // db.append() / db.restore() will handle the __sandbox__: ref transparently.
     if mime.starts_with("image/") {
         parts.push(UserContent::Image(ImageContent {
-            data: ImageData::Url(format!("__sandbox__:{}", unique_name)),
+            data: ImageData::Url(format!("__sandbox__:public/{}", unique_name)),
             mime_type: mime.to_string(),
         }));
     }
