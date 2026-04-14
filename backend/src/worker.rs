@@ -686,11 +686,47 @@ async fn generation_loop(
                 } else { None })
                 .unwrap_or(Value::Null);
 
-            emit(
-                ctx,
-                json!({"type": "tool_result", "id": tc.id, "name": tc.name, "result": result_json}),
-            )
-            .await;
+            // Collect image content — resolve __sandbox__: refs to base64 data URIs
+            // so the browser can display them directly.
+            let mut sse_images: Vec<Value> = Vec::new();
+            for part in &result_val {
+                if let agentix::Content::Image(img) = part {
+                    use base64::Engine as _;
+                    let data_uri = match &img.data {
+                        agentix::request::ImageData::Url(u)
+                            if u.starts_with("__sandbox__:") =>
+                        {
+                            let filename = &u["__sandbox__:".len()..];
+                            let file_path = ctx
+                                .sandbox
+                                .get_conversation_dir(ctx.user_id, ctx.conversation_id)
+                                .join(filename);
+                            match tokio::fs::read(&file_path).await {
+                                Ok(bytes) => Some(format!(
+                                    "data:{};base64,{}",
+                                    img.mime_type,
+                                    base64::engine::general_purpose::STANDARD.encode(&bytes)
+                                )),
+                                Err(_) => None,
+                            }
+                        }
+                        agentix::request::ImageData::Url(u) => Some(u.clone()),
+                        agentix::request::ImageData::Base64(b) => {
+                            Some(format!("data:{};base64,{}", img.mime_type, b))
+                        }
+                    };
+                    if let Some(uri) = data_uri {
+                        sse_images.push(json!({"url": uri, "mime_type": img.mime_type}));
+                    }
+                }
+            }
+
+            let mut emit_payload =
+                json!({"type": "tool_result", "id": tc.id, "name": tc.name, "result": result_json});
+            if !sse_images.is_empty() {
+                emit_payload["images"] = Value::Array(sse_images);
+            }
+            emit(ctx, emit_payload).await;
 
             // If the tool returned an __ask__ marker, emit an ask event and end generation.
             // The user's answer will arrive as a new message, starting a new generation job.

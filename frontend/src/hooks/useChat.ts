@@ -730,6 +730,9 @@ export function useChat(
                   ...(event.args && event.args.length > 0
                     ? { argsRaw: event.args }
                     : {}),
+                  ...(event.images && event.images.length > 0
+                    ? { images: event.images.map((img) => img.url) }
+                    : {}),
                 }
               : b,
           ),

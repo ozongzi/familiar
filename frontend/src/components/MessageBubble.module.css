@@ -430,6 +430,23 @@
     display: none;
 }
 
+/* ── Tool result images (always visible, outside collapse) ── */
+.toolImages {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 6px;
+    margin-left: 20px;
+}
+
+.toolImage {
+    max-width: 320px;
+    max-height: 320px;
+    border-radius: 6px;
+    object-fit: contain;
+    display: block;
+}
+
 /* ── Expanded detail body ── */
 .toolBody {
     margin-top: 2px;

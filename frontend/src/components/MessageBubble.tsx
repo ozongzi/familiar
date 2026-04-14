@@ -513,19 +513,20 @@ function ToolCallBubble({
 }) {
   const [expanded, setExpanded] = useState(false);
 
-  // Auto-expand while pending (args streaming in), auto-collapse when done.
+  // Auto-expand while pending (args streaming in), auto-collapse when done
+  // (unless there are images to show — keep expanded so result is visible).
   useEffect(() => {
     let t: number | undefined;
     if (bubble.pending && bubble.argsRaw.length > 0 && !expanded) {
       t = window.setTimeout(() => setExpanded(true), 0);
-    } else if (!bubble.pending && expanded) {
+    } else if (!bubble.pending && expanded && !(bubble.images?.length)) {
       t = window.setTimeout(() => setExpanded(false), 0);
     }
     return () => {
       if (t !== undefined) clearTimeout(t);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bubble.pending, bubble.argsRaw.length > 0]);
+  }, [bubble.pending, bubble.argsRaw.length > 0, bubble.images?.length]);
 
   // ── All declarations and hooks must come before any early returns ──────────
 
@@ -818,6 +819,14 @@ function ToolCallBubble({
             </span>
           )}
         </button>
+
+        {(bubble.images?.length ?? 0) > 0 && (
+          <div className={styles.toolImages}>
+            {bubble.images!.map((src, i) => (
+              <img key={i} src={src} className={styles.toolImage} alt="" />
+            ))}
+          </div>
+        )}
 
         {expanded && (
           <div className={styles.toolBody}>

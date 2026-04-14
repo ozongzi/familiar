@@ -116,6 +116,7 @@ export type WsServerEvent =
       name: string;
       args?: string;
       result: unknown;
+      images?: Array<{ url: string; mime_type: string }>;
       source?: "spawn";
     }
   | { type: "tool_progress"; id: string; name: string; progress: string }
@@ -158,6 +159,7 @@ export interface ToolBubble {
   diagramCode?: string;
   _rawArgs?: string;
   progressLines?: string[];
+  images?: string[];
 }
 
 export interface UploadBubble {
