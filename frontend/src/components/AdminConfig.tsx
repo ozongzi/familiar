@@ -219,6 +219,15 @@ export function AdminConfig() {
                   placeholder="sk-..."
                 />
               </div>
+              <div className={styles.field}>
+                <label>fal.ai API Key（支持 NSFW 内容）</label>
+                <input
+                  type="password"
+                  value={config.fal_api_key ?? ""}
+                  onChange={(e) => setConfig({ ...config, fal_api_key: e.target.value || null })}
+                  placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx:..."
+                />
+              </div>
             </div>
           </div>
 
