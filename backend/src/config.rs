@@ -16,6 +16,7 @@ pub struct Config {
     #[serde(default)]
     pub mcp_catalog: Vec<McpCatalogEntry>,
     pub tavily_api_key: Option<String>,
+    pub siliconflow_api_key: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -101,6 +102,7 @@ struct AppConfigRow {
     subagent_prompt: Option<String>,
     mcp_catalog: Option<Value>,
     tavily_api_key: Option<String>,
+    siliconflow_api_key: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -141,6 +143,7 @@ impl Default for Config {
             mcp: vec![],
             mcp_catalog: vec![],
             tavily_api_key: None,
+            siliconflow_api_key: None,
         }
     }
 }
@@ -151,7 +154,8 @@ impl Config {
             r#"
             SELECT
                 public_path, artifacts_path, cheap_model, embedding_model,
-                server_port, system_prompt, subagent_prompt, mcp_catalog, tavily_api_key
+                server_port, system_prompt, subagent_prompt, mcp_catalog,
+                tavily_api_key, siliconflow_api_key
             FROM app_config WHERE id = true
             "#,
         )
@@ -184,6 +188,7 @@ impl Config {
                 cfg.mcp_catalog = serde_json::from_value(mc).unwrap_or(cfg.mcp_catalog);
             }
             cfg.tavily_api_key = r.tavily_api_key;
+            cfg.siliconflow_api_key = r.siliconflow_api_key;
         }
 
         // Load Global MCPs
@@ -243,9 +248,11 @@ impl Config {
             r#"
             INSERT INTO app_config (
                 id, public_path, artifacts_path, cheap_model, embedding_model,
-                server_port, system_prompt, subagent_prompt, mcp_catalog, updated_at
+                server_port, system_prompt, subagent_prompt, mcp_catalog,
+                tavily_api_key, siliconflow_api_key,
+                updated_at
             )
-            VALUES (true, $1, $2, $3, $4, $5, $6, $7, $8, NOW())
+            VALUES (true, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
             ON CONFLICT (id) DO UPDATE SET
                 public_path = EXCLUDED.public_path,
                 artifacts_path = EXCLUDED.artifacts_path,
@@ -255,6 +262,8 @@ impl Config {
                 system_prompt = EXCLUDED.system_prompt,
                 subagent_prompt = EXCLUDED.subagent_prompt,
                 mcp_catalog = EXCLUDED.mcp_catalog,
+                tavily_api_key = EXCLUDED.tavily_api_key,
+                siliconflow_api_key = EXCLUDED.siliconflow_api_key,
                 updated_at = NOW()
             "#,
         )
@@ -266,6 +275,8 @@ impl Config {
         .bind(&cfg.server.system_prompt)
         .bind(&cfg.server.subagent_prompt)
         .bind(serde_json::to_value(&cfg.mcp_catalog)?)
+        .bind(&cfg.tavily_api_key)
+        .bind(&cfg.siliconflow_api_key)
         .execute(pool)
         .await?;
 

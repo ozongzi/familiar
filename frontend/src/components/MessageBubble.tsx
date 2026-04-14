@@ -845,6 +845,16 @@ function ToolCallBubble({
               />
             )}
 
+            {/* Streaming progress lines */}
+            {bubble.pending && (bubble.progressLines?.length ?? 0) > 0 && (
+              <div className={styles.toolSection}>
+                <p className={styles.toolSectionLabel}>进度</p>
+                <pre className={styles.toolCode}>
+                  {bubble.progressLines!.join("\n")}
+                </pre>
+              </div>
+            )}
+
             {/* Result display */}
             {!!bubble.result && !fileResult && (
               <ObjectFieldsView data={bubble.result} label="结果" />

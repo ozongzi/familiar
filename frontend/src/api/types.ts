@@ -247,6 +247,8 @@ export interface AdminConfig {
   server: ServerConfig;
   mcp: McpServerConfig[];
   mcp_catalog: McpCatalogEntry[];
+  tavily_api_key?: string | null;
+  siliconflow_api_key?: string | null;
 }
 
 // ─── API error shape ─────────────────────────────────────────────────────

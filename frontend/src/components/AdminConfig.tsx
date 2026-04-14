@@ -199,6 +199,30 @@ export function AdminConfig() {
           </div>
 
           <div className={styles.group}>
+            <h4>图像生成</h4>
+            <div className={styles.fieldRow}>
+              <div className={styles.field}>
+                <label>Tavily API Key</label>
+                <input
+                  type="password"
+                  value={config.tavily_api_key ?? ""}
+                  onChange={(e) => setConfig({ ...config, tavily_api_key: e.target.value || null })}
+                  placeholder="tvly-..."
+                />
+              </div>
+              <div className={styles.field}>
+                <label>SiliconFlow API Key（仅支持 SFW 内容）</label>
+                <input
+                  type="password"
+                  value={config.siliconflow_api_key ?? ""}
+                  onChange={(e) => setConfig({ ...config, siliconflow_api_key: e.target.value || null })}
+                  placeholder="sk-..."
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className={styles.group}>
             <h4>System Prompt</h4>
             <div className={styles.editorContainer}>
               <textarea className={styles.editorTextarea}

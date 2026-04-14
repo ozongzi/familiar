@@ -1,0 +1,1 @@
+ALTER TABLE app_config ADD COLUMN IF NOT EXISTS fal_api_key TEXT;

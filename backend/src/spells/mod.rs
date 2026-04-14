@@ -3,6 +3,7 @@ mod manage_mcp_spell;
 mod memory_spell;
 mod plan_spell;
 mod sandbox_spell;
+mod siliconflow_spell;
 mod skill_spell;
 mod sourcegraph_spell;
 mod spawn_spell;
@@ -15,6 +16,7 @@ pub use memory_spell::consolidate_conversation_memories;
 pub use memory_spell::load_memories_for_prompt;
 use plan_spell::PlanSpell;
 use sandbox_spell::SandboxSpell;
+use siliconflow_spell::SiliconFlowSpell;
 use skill_spell::SkillSpell;
 use sourcegraph_spell::search_code;
 use tavily_spell::TavilySpell;
@@ -50,13 +52,14 @@ pub struct SpellDeps {
     pub mcp_catalog: Vec<McpCatalogEntry>,
     // TavilySpell
     pub tavily_api_key: Option<String>,
+    // SiliconFlowSpell
+    pub siliconflow_api_key: Option<String>,
     pub http: reqwest::Client,
 }
 
 /// Build the complete built-in spell bundle from the given dependencies.
 pub fn build_all_spells(deps: SpellDeps) -> impl agentix::Tool {
     // Build the subagent tool bundle first (no SpawnSpell — avoids infinite recursion).
-    // SpawnSpell gets an Arc to this so its spawned sub-agents share the same tools.
     let subagent_tavily: Option<TavilySpell> =
         deps.tavily_api_key.as_deref().map(|k| TavilySpell {
             api_key: k.to_string(),
@@ -118,7 +121,7 @@ pub fn build_all_spells(deps: SpellDeps) -> impl agentix::Tool {
             pool: deps.pool.clone(),
             conversation_id: deps.conversation_id,
             user_id: deps.user_id,
-            sandbox: deps.sandbox,
+            sandbox: deps.sandbox.clone(),
             catalog: deps.mcp_catalog,
         }
         + PlanSpell {
@@ -137,7 +140,16 @@ pub fn build_all_spells(deps: SpellDeps) -> impl agentix::Tool {
     if let Some(api_key) = deps.tavily_api_key {
         tb.push(TavilySpell {
             api_key,
-            http: deps.http,
+            http: deps.http.clone(),
+        });
+    }
+    if let Some(api_key) = deps.siliconflow_api_key {
+        tb.push(SiliconFlowSpell {
+            api_key,
+            http: deps.http.clone(),
+            sandbox: deps.sandbox.clone(),
+            user_id: deps.user_id,
+            conversation_id: deps.conversation_id,
         });
     }
     tb
