@@ -320,6 +320,7 @@ export function useChat(
 
   const setHistory = useCallback((msgs: Message[]) => {
     const toolResultMap = new Map<string, unknown>();
+    const toolImagesMap = new Map<string, string[]>();
     for (const m of msgs) {
       if (m.role === "tool" && m.tool_call_id && m.content) {
         let parsed: unknown = m.content;
@@ -343,6 +344,33 @@ export function useChat(
               }
             } else {
               parsed = outer;
+            }
+
+            // Extract image parts — sandbox refs become /api/files URLs
+            type ImageBlock = { type: "image"; data: { url?: string; base64?: string }; mime_type: string };
+            const imageUrls = (outer as unknown[])
+              .filter((b): b is ImageBlock =>
+                b !== null &&
+                typeof b === "object" &&
+                (b as Record<string, unknown>).type === "image",
+              )
+              .map((b) => {
+                const raw = b.data?.url ?? "";
+                if (raw.startsWith("__sandbox__:")) {
+                  const filename = raw.slice("__sandbox__:".length);
+                  const params = new URLSearchParams({ path: `/workspace/${filename}` });
+                  if (conversationId) params.set("conversation_id", conversationId);
+                  if (token) params.set("token", token);
+                  return `/api/files?${params.toString()}`;
+                }
+                if (b.data?.base64) {
+                  return `data:${b.mime_type};base64,${b.data.base64}`;
+                }
+                return raw;
+              })
+              .filter(Boolean);
+            if (imageUrls.length > 0) {
+              toolImagesMap.set(m.tool_call_id, imageUrls);
             }
           } else {
             parsed = outer;
@@ -424,6 +452,7 @@ export function useChat(
             ? (extractWidgetCode(result) ?? extractWidgetCode(tryParseWidgetArgs(argsRaw)))
             : null;
 
+          const historyImages = toolImagesMap.get(id);
           const toolBubble: ToolBubble = {
             kind: "tool",
             key: `tool-${id}`,
@@ -434,6 +463,7 @@ export function useChat(
             result,
             pending: result === null,
             ...(widgetCode ? { widgetCode } : {}),
+            ...(historyImages && historyImages.length > 0 ? { images: historyImages } : {}),
           };
           history.push(toolBubble);
         }
@@ -523,7 +553,7 @@ export function useChat(
 
     setBubbles(history);
     historyReadyRef.current = true;
-  }, []);
+  }, [conversationId, token]);
 
   const clearBubbles = useCallback(() => {
     abortControllerRef.current?.abort();

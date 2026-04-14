@@ -2,11 +2,42 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use agentix::schemars::JsonSchema;
 use agentix::tool;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
 use crate::sandbox::SandboxManager;
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+struct ReadItem {
+    /// absolute path to the file or directory
+    path: String,
+    start_line: Option<usize>,
+    end_line: Option<usize>,
+    search_regex: Option<String>,
+    context_lines: Option<usize>,
+    outline_only: Option<bool>,
+    extract_symbol: Option<String>,
+    max_depth: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+struct WriteItem {
+    /// absolute path to the file
+    path: String,
+    /// content to write or replacement text
+    new_string: String,
+    /// exact text to find and replace (omit to overwrite the whole file)
+    old_string: Option<String>,
+    /// expected number of replacements (default 1, 0 = replace all)
+    count: Option<usize>,
+    /// if true, append to end of file or insert after old_string
+    append: Option<bool>,
+    /// shebang line to prepend (e.g. "#!/usr/bin/env python3")
+    shebang: Option<String>,
+}
 
 // ── constants ─────────────────────────────────────────────────────────────────
 
@@ -648,25 +679,22 @@ impl agentix::Tool for SandboxSpell {
 
     /// Read multiple files or directories in one call to reduce round-trips.
     /// reads: array of read operations; each item has: path (required), start_line, end_line, search_regex, context_lines, outline_only, extract_symbol, max_depth
-    async fn multiread(&self, reads: Vec<Value>) -> Value {
+    async fn multiread(&self, reads: Vec<ReadItem>) -> Value {
         let mut results = Vec::new();
-        for item in &reads {
-            let path = match item["path"].as_str() {
-                Some(p) => match self.require_workspace_path(p) {
-                    Ok(resolved) => resolved,
-                    Err(e) => { results.push(e); continue; }
-                },
-                None => { results.push(json!({ "error": "missing path" })); continue; }
+        for item in reads {
+            let path = match self.require_workspace_path(&item.path) {
+                Ok(resolved) => resolved,
+                Err(e) => { results.push(e); continue; }
             };
             results.push(self.fixup_result_paths(do_read(
                 &path,
-                item["start_line"].as_u64().map(|n| n as usize),
-                item["end_line"].as_u64().map(|n| n as usize),
-                item["outline_only"].as_bool(),
-                item["extract_symbol"].as_str().map(str::to_string),
-                item["max_depth"].as_u64().map(|n| n as usize),
-                item["search_regex"].as_str().map(str::to_string),
-                item["context_lines"].as_u64().map(|n| n as usize),
+                item.start_line,
+                item.end_line,
+                item.outline_only,
+                item.extract_symbol,
+                item.max_depth,
+                item.search_regex,
+                item.context_lines,
             ).await));
         }
         json!({ "results": results })
@@ -705,26 +733,23 @@ impl agentix::Tool for SandboxSpell {
 
     /// Write multiple files in one call, then run checks for all affected projects.
     /// writes: array of write operations; each item has: path (required), new_string (required), old_string, count, append, shebang
-    async fn multiwrite(&self, writes: Vec<Value>) -> Value {
+    async fn multiwrite(&self, writes: Vec<WriteItem>) -> Value {
         let mut results = Vec::new();
         let mut affected: HashSet<(PathBuf, String)> = HashSet::new();
         let mut failures: Vec<String> = Vec::new();
 
         for item in &writes {
-            let path = match item["path"].as_str() {
-                Some(p) => match self.require_workspace_path(p) {
-                    Ok(resolved) => resolved,
-                    Err(e) => { results.push(e); failures.push(p.to_string()); continue; }
-                },
-                None => { results.push(json!({ "error": "missing path" })); failures.push("<unknown>".into()); continue; }
+            let path = match self.require_workspace_path(&item.path) {
+                Ok(resolved) => resolved,
+                Err(e) => { results.push(e); failures.push(item.path.clone()); continue; }
             };
             let write_result = do_write(
                 &path,
-                item["new_string"].as_str().unwrap_or("").to_string(),
-                item["old_string"].as_str().map(str::to_string),
-                item["count"].as_u64().map(|n| n as usize),
-                item["append"].as_bool(),
-                item["shebang"].as_str().map(str::to_string),
+                item.new_string.clone(),
+                item.old_string.clone(),
+                item.count,
+                item.append,
+                item.shebang.clone(),
             ).await;
             let failed = write_result.get("error").is_some();
             let write_result = if failed { write_result } else { self.fixup_result_paths(write_result) };
@@ -743,7 +768,7 @@ impl agentix::Tool for SandboxSpell {
         for (root, _) in &affected {
             if let Some(first_path) = results.iter().zip(writes.iter())
                 .filter(|(r, _)| r.get("error").is_none())
-                .filter_map(|(_, w)| w["path"].as_str())
+                .map(|(_, w)| w.path.as_str())
                 .find(|p| Path::new(p).starts_with(root))
                 && let Some(ac) = run_autocheck_in_container(&self.sandbox, self.user_id, self.conversation_id, first_path).await {
                     autochecks.push(ac);

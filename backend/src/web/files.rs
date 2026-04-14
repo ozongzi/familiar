@@ -59,18 +59,34 @@ pub async fn download_file(
         .conversation_id
         .ok_or_else(|| AppError::bad_request("缺少 conversation_id"))?;
 
-    // Resolve to an absolute path.
-    // If the path starts with /workspace, map it back to the host path.
+    // Verify the conversation belongs to the authenticated user.
+    let owned: bool = sqlx::query_scalar::<_, Option<bool>>(
+        "SELECT EXISTS(SELECT 1 FROM conversations WHERE id = $1 AND user_id = $2)",
+    )
+    .bind(conv_id)
+    .bind(user_id)
+    .fetch_one(&state.pool)
+    .await
+    .map_err(|e| {
+        tracing::error!("file download conv auth query: {e}");
+        AppError::internal("数据库错误")
+    })?
+    .unwrap_or(false);
+
+    if !owned {
+        return Err(AppError::not_found("文件不存在"));
+    }
+
+    // Resolve to an absolute path — only /workspace-prefixed paths are accepted.
     let q_path = std::path::PathBuf::from(&q.path);
-    let path = if q_path.starts_with("/workspace") {
-        let relative = q_path.strip_prefix("/workspace").unwrap();
-        state
-            .sandbox
-            .get_conversation_dir(user_id, conv_id)
-            .join(relative)
-    } else {
-        q_path
-    };
+    if !q_path.starts_with("/workspace") {
+        return Err(AppError::not_found("文件不存在"));
+    }
+    let relative = q_path.strip_prefix("/workspace").unwrap();
+    let path = state
+        .sandbox
+        .get_conversation_dir(user_id, conv_id)
+        .join(relative);
 
     // Enforce ownership: path must be within the sandbox workspace.
     let conv_dir = state.sandbox.get_conversation_dir(user_id, conv_id);
@@ -172,16 +188,34 @@ pub async fn preview_file(
         .conversation_id
         .ok_or_else(|| AppError::bad_request("缺少 conversation_id"))?;
 
+    // Verify the conversation belongs to the authenticated user.
+    let owned: bool = sqlx::query_scalar::<_, Option<bool>>(
+        "SELECT EXISTS(SELECT 1 FROM conversations WHERE id = $1 AND user_id = $2)",
+    )
+    .bind(conv_id)
+    .bind(user_id)
+    .fetch_one(&state.pool)
+    .await
+    .map_err(|e| {
+        tracing::error!("file preview conv auth query: {e}");
+        AppError::internal("数据库错误")
+    })?
+    .unwrap_or(false);
+
+    if !owned {
+        return Err(AppError::not_found("文件不存在"));
+    }
+
+    // Only /workspace-prefixed paths are accepted.
     let q_path = std::path::PathBuf::from(&q.path);
-    let path = if q_path.starts_with("/workspace") {
-        let relative = q_path.strip_prefix("/workspace").unwrap();
-        state
-            .sandbox
-            .get_conversation_dir(user_id, conv_id)
-            .join(relative)
-    } else {
-        q_path
-    };
+    if !q_path.starts_with("/workspace") {
+        return Err(AppError::not_found("文件不存在"));
+    }
+    let relative = q_path.strip_prefix("/workspace").unwrap();
+    let path = state
+        .sandbox
+        .get_conversation_dir(user_id, conv_id)
+        .join(relative);
 
     // Enforce ownership.
     let conv_dir = state.sandbox.get_conversation_dir(user_id, conv_id);
