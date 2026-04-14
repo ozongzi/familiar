@@ -24,6 +24,7 @@ pub struct ModelRow {
     pub api_key: String,
     pub extra_body: Value,
     pub is_default: bool,
+    pub role: Option<String>,
     pub created_at: sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc>,
 }
 
@@ -36,6 +37,7 @@ pub struct ModelResponse {
     pub model_name: String,
     pub api_base: String,
     pub is_default: bool,
+    pub role: Option<String>,
     pub created_at: String,
     // api_key intentionally omitted from responses
 }
@@ -50,6 +52,7 @@ impl From<ModelRow> for ModelResponse {
             model_name: r.model_name,
             api_base: r.api_base,
             is_default: r.is_default,
+            role: r.role,
             created_at: r.created_at.to_rfc3339(),
         }
     }
@@ -251,6 +254,46 @@ pub async fn admin_delete_model(
     }
 
     Ok(Json(json!({ "ok": true })))
+}
+
+/// Admin: assign or clear a role ('cheap' / 'embedding') on a global model.
+/// Setting a role clears it from any other global model that held it.
+pub async fn admin_set_model_role(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(id): Path<Uuid>,
+    Json(req): Json<SetRoleRequest>,
+) -> AppResult<Json<Value>> {
+    guard_admin(&auth)?;
+
+    let mut tx = state.pool.begin().await?;
+
+    if let Some(ref role) = req.role {
+        // Clear this role from all other global models first
+        sqlx::query("UPDATE models SET role = NULL WHERE scope = 'global' AND role = $1")
+            .bind(role)
+            .execute(&mut *tx)
+            .await?;
+    }
+
+    let rows = sqlx::query("UPDATE models SET role = $1 WHERE id = $2 AND scope = 'global'")
+        .bind(&req.role)
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+
+    tx.commit().await?;
+
+    if rows.rows_affected() == 0 {
+        return Err(AppError::not_found("模型不存在"));
+    }
+
+    Ok(Json(json!({ "ok": true })))
+}
+
+#[derive(Deserialize)]
+pub struct SetRoleRequest {
+    pub role: Option<String>,
 }
 
 /// Admin: set a global model as default (clears any existing default first).

@@ -79,8 +79,13 @@ async fn main() {
 
     // ── Web server ────────────────────────────────────────────────────────────
 
-    let router = web::create_router(web_state, cfg.server.allowed_origin.as_deref());
-    let addr = format!("0.0.0.0:{}", cfg.server.port);
+    let allowed_origin = std::env::var("ALLOWED_ORIGIN").ok();
+    let port: u16 = std::env::var("PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(3000);
+    let router = web::create_router(web_state, allowed_origin.as_deref());
+    let addr = format!("0.0.0.0:{port}");
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
         .unwrap_or_else(|e| panic!("failed to bind {addr}: {e}"));

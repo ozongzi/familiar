@@ -47,32 +47,20 @@ fn ext_from_mime(mime: Option<&str>, url: &str) -> &'static str {
 
 #[tool]
 impl Tool for GenerateImageSpell {
-    /// Generate images using SiliconFlow or fal.ai image generation APIs.
+    /// Generate images using SiliconFlow or fal.ai.
+    ///
+    /// SiliconFlow models (SFW only): Kwai-Kolors/Kolors (recommended), stabilityai/stable-diffusion-3-medium, stabilityai/stable-diffusion-xl-base-1.0
+    /// fal.ai models (NSFW supported): fal-ai/flux-pro/v1.1-ultra, fal-ai/flux-pro/v1.1, fal-ai/flux-pro (use safety_tolerance), fal-ai/flux-realism, fal-ai/flux/dev, rundiffusion-fal/juggernaut-flux/pro (use enable_safety_checker)
     ///
     /// provider: "siliconflow" or "fal"
-    ///
-    /// SiliconFlow models (SFW only — has content moderation):
-    ///   Kwai-Kolors/Kolors            high quality general-purpose (recommended)
-    ///   stabilityai/stable-diffusion-3-medium
-    ///   stabilityai/stable-diffusion-xl-base-1.0
-    ///
-    /// fal.ai models (NSFW supported with safety_tolerance or enable_safety_checker):
-    ///   fal-ai/flux-pro/v1.1-ultra    highest quality, use safety_tolerance
-    ///   fal-ai/flux-pro/v1.1          use safety_tolerance
-    ///   fal-ai/flux-pro               use safety_tolerance
-    ///   fal-ai/flux-realism           use enable_safety_checker
-    ///   fal-ai/flux/dev               use enable_safety_checker
-    ///   rundiffusion-fal/juggernaut-flux/pro  use enable_safety_checker
-    ///
-    /// image_size:
-    ///   SiliconFlow: "1024x1024" (default), "512x512", "768x1024", "1024x768"
-    ///   fal.ai: "square_hd", "square", "portrait_4_3", "portrait_16_9", "landscape_4_3", "landscape_16_9"
-    ///
-    /// safety_tolerance: fal.ai flux-pro models only, "1" (strictest) to "6" (most permissive)
-    /// enable_safety_checker: fal.ai non-pro models, set false to allow NSFW output
-    /// n: number of images (default 1, max 4)
-    /// negative_prompt: SiliconFlow only
-    /// seed: random seed for reproducibility (optional)
+    /// model: model ID
+    /// prompt: image description
+    /// image_size: SiliconFlow uses "1024x1024" (default) / "512x512" / "768x1024" / "1024x768"; fal.ai uses "portrait_4_3" (default) / "landscape_4_3" / "square_hd" / "square"
+    /// n: number of images, default 1 max 4
+    /// negative_prompt: negative prompt, SiliconFlow only
+    /// seed: random seed (optional)
+    /// safety_tolerance: fal.ai flux-pro models only, "1" strictest to "6" most permissive, use "6" for NSFW
+    /// enable_safety_checker: fal.ai non-pro models only, set false to allow NSFW output
     async fn generate_image(
         &self,
         provider: String,

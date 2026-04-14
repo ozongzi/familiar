@@ -143,6 +143,18 @@
   vertical-align: middle;
 }
 
+.roleBadge {
+  display: inline-block;
+  margin-left: 6px;
+  background: var(--text-secondary, #888);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 4px;
+  padding: 1px 6px;
+  vertical-align: middle;
+}
+
 .itemInfo {
   display: flex;
   flex-direction: column;

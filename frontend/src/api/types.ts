@@ -56,6 +56,7 @@ export interface Model {
   model_name: string;
   api_base: string;
   is_default: boolean;
+  role: "cheap" | "embedding" | null;
   created_at: string;
 }
 
@@ -224,12 +225,6 @@ export interface UpdateSettingsRequest {
   system_prompt?: string | null;
 }
 
-export interface ServerConfig {
-  port: number;
-  system_prompt: string | null;
-  subagent_prompt: string | null;
-}
-
 export type McpServerConfig =
   | { name: string; command: string; args?: string[]; env?: Record<string, string> }
   | { name: string; url: string };
@@ -241,14 +236,24 @@ export interface McpCatalogEntry {
   args: string[];
 }
 
+export interface CatalogEntry {
+  id: string;
+  name: string;
+  description: string;
+  command: string;
+  args: string[];
+  created_at: string;
+}
+
+export interface CatalogEntryRequest {
+  name: string;
+  description?: string;
+  command: string;
+  args?: string[];
+}
+
 export interface AdminConfig {
-  public_path: string;
-  artifacts_path: string;
-  cheap_model: ModelConfig;
-  embedding: ModelConfig;
-  server: ServerConfig;
   mcp: McpServerConfig[];
-  mcp_catalog: McpCatalogEntry[];
   tavily_api_key?: string | null;
   siliconflow_api_key?: string | null;
   fal_api_key?: string | null;

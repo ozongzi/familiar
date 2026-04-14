@@ -1,5 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
-import hljs from "highlight.js";
+import { useState, useEffect } from "react";
 import { api } from "../api/client";
 import { useAuth } from "../store/auth.shared";
 import {
@@ -7,62 +6,12 @@ import {
   createGlobalMcp,
   updateGlobalMcp,
   deleteGlobalMcp,
+  listCatalog,
+  createCatalogEntry,
+  deleteCatalogEntry,
 } from "../api/admin";
-import type { AdminConfig, GlobalMcp, ModelConfig, Provider } from "../api/types";
-import { PROVIDER_DEFAULT_BASE } from "../constants/providers";
-import { ProviderSelector } from "./ProviderSelector";
+import type { AdminConfig, GlobalMcp, CatalogEntry } from "../api/types";
 import styles from "./AdminConfig.module.css";
-import "highlight.js/styles/github.css";
-
-
-function ModelConfigBlock({
-  label,
-  value,
-  onChange,
-}: {
-  label: string;
-  value: ModelConfig;
-  onChange: (v: ModelConfig) => void;
-}) {
-  const provider: Provider = value.provider ?? "deepseek";
-
-  return (
-    <div className={styles.group}>
-      <h4>{label}</h4>
-      <div className={styles.field}>
-        <label>Provider</label>
-        <ProviderSelector variant="buttons" value={provider} onChange={(p) => onChange({ ...value, provider: p })} />
-      </div>
-      <div className={styles.fieldRow}>
-        <div className={styles.field}>
-          <label>Model Name</label>
-          <input
-            type="text"
-            value={value.name}
-            onChange={(e) => onChange({ ...value, name: e.target.value })}
-          />
-        </div>
-        <div className={styles.field}>
-          <label>API Base</label>
-          <input
-            type="text"
-            value={value.api_base}
-            onChange={(e) => onChange({ ...value, api_base: e.target.value })}
-            placeholder={PROVIDER_DEFAULT_BASE[provider]}
-          />
-        </div>
-        <div className={styles.field}>
-          <label>API Key</label>
-          <input
-            type="password"
-            value={value.api_key}
-            onChange={(e) => onChange({ ...value, api_key: e.target.value })}
-          />
-        </div>
-      </div>
-    </div>
-  );
-}
 
 type Tab = "general" | "mcp" | "catalog";
 
@@ -70,6 +19,7 @@ export function AdminConfig() {
   const { token } = useAuth();
   const [config, setConfig] = useState<AdminConfig | null>(null);
   const [mcps, setMcps] = useState<GlobalMcp[]>([]);
+  const [catalog, setCatalog] = useState<CatalogEntry[]>([]);
   const [tab, setTab] = useState<Tab>("general");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -79,12 +29,46 @@ export function AdminConfig() {
   const [envJsonStr, setEnvJsonStr] = useState("{}");
   const [envJsonError, setEnvJsonError] = useState("");
 
+  const [catalogForm, setCatalogForm] = useState({ name: "", description: "", command: "", args: "" });
+  const [catalogSaving, setCatalogSaving] = useState(false);
+
   useEffect(() => {
     if (!token) return;
-    Promise.all([api.getAdminConfig(token), listGlobalMcps(token)])
-      .then(([cfg, mcpList]) => { setConfig(cfg); setMcps(mcpList); })
+    Promise.all([api.getAdminConfig(token), listGlobalMcps(token), listCatalog(token)])
+      .then(([cfg, mcpList, catalogList]) => { setConfig(cfg); setMcps(mcpList); setCatalog(catalogList); })
       .catch((e) => setError(e instanceof Error ? e.message : "加载配置失败"));
   }, [token]);
+
+  async function handleAddCatalogEntry() {
+    if (!token || !catalogForm.name || !catalogForm.command) {
+      alert("名称和命令不能为空"); return;
+    }
+    setCatalogSaving(true);
+    try {
+      const entry = await createCatalogEntry({
+        name: catalogForm.name,
+        description: catalogForm.description,
+        command: catalogForm.command,
+        args: catalogForm.args.split("\n").map((l) => l.trim()).filter(Boolean),
+      }, token);
+      setCatalog((prev) => [...prev, entry]);
+      setCatalogForm({ name: "", description: "", command: "", args: "" });
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "添加失败");
+    } finally {
+      setCatalogSaving(false);
+    }
+  }
+
+  async function handleDeleteCatalogEntry(id: string) {
+    if (!token || !confirm("删除此目录项？")) return;
+    try {
+      await deleteCatalogEntry(id, token);
+      setCatalog((prev) => prev.filter((e) => e.id !== id));
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "删除失败");
+    }
+  }
 
   async function handleSave() {
     if (!config || !token) return;
@@ -137,18 +121,6 @@ export function AdminConfig() {
     finally { setSaving(false); }
   }
 
-  const highlightedSystemPrompt = useMemo(() => {
-    if (!config?.server.system_prompt) return "";
-    try { return hljs.highlight(config.server.system_prompt, { language: "markdown" }).value; }
-    catch { return config.server.system_prompt; }
-  }, [config?.server.system_prompt]);
-
-  const highlightedSubagentPrompt = useMemo(() => {
-    if (!config?.server.subagent_prompt) return "";
-    try { return hljs.highlight(config.server.subagent_prompt, { language: "markdown" }).value; }
-    catch { return config.server.subagent_prompt; }
-  }, [config?.server.subagent_prompt]);
-
   if (!config) return <div className={styles.loading}>加载中...</div>;
 
   return (
@@ -171,35 +143,8 @@ export function AdminConfig() {
       {/* ── 通用设置 ── */}
       {tab === "general" && (
         <div className={styles.panel}>
-          <div className={styles.twoCol}>
-            <div className={styles.group}>
-              <h4>路径</h4>
-              <div className={styles.field}>
-                <label>Frontend Path (Public)</label>
-                <input type="text" value={config.public_path}
-                  onChange={(e) => setConfig({ ...config, public_path: e.target.value })} />
-              </div>
-              <div className={styles.field}>
-                <label>Artifacts Path</label>
-                <input type="text" value={config.artifacts_path}
-                  onChange={(e) => setConfig({ ...config, artifacts_path: e.target.value })} />
-              </div>
-              <div className={styles.field}>
-                <label>Port</label>
-                <input type="number" value={config.server.port}
-                  onChange={(e) => setConfig({ ...config, server: { ...config.server, port: parseInt(e.target.value) || 3000 } })} />
-              </div>
-            </div>
-
-            <ModelConfigBlock label="Cheap Model" value={config.cheap_model}
-              onChange={(v) => setConfig({ ...config, cheap_model: v })} />
-
-            <ModelConfigBlock label="Embedding Model" value={config.embedding}
-              onChange={(v) => setConfig({ ...config, embedding: v })} />
-          </div>
-
           <div className={styles.group}>
-            <h4>图像生成</h4>
+            <h4>API Keys</h4>
             <div className={styles.fieldRow}>
               <div className={styles.field}>
                 <label>Tavily API Key</label>
@@ -228,38 +173,6 @@ export function AdminConfig() {
                   placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx:..."
                 />
               </div>
-            </div>
-          </div>
-
-          <div className={styles.group}>
-            <h4>System Prompt</h4>
-            <div className={styles.editorContainer}>
-              <textarea className={styles.editorTextarea}
-                value={config.server.system_prompt || ""}
-                onChange={(e) => setConfig({ ...config, server: { ...config.server, system_prompt: e.target.value } })}
-                onScroll={(e) => {
-                  const h = e.currentTarget.nextElementSibling as HTMLElement;
-                  if (h) { h.scrollTop = e.currentTarget.scrollTop; h.scrollLeft = e.currentTarget.scrollLeft; }
-                }}
-                placeholder="输入系统提示词..." spellCheck={false} />
-              <pre className={styles.editorHighlight} aria-hidden="true"
-                dangerouslySetInnerHTML={{ __html: highlightedSystemPrompt + "\n" }} />
-            </div>
-          </div>
-
-          <div className={styles.group}>
-            <h4>Subagent System Prompt</h4>
-            <div className={styles.editorContainer}>
-              <textarea className={styles.editorTextarea}
-                value={config.server.subagent_prompt || ""}
-                onChange={(e) => setConfig({ ...config, server: { ...config.server, subagent_prompt: e.target.value } })}
-                onScroll={(e) => {
-                  const h = e.currentTarget.nextElementSibling as HTMLElement;
-                  if (h) { h.scrollTop = e.currentTarget.scrollTop; h.scrollLeft = e.currentTarget.scrollLeft; }
-                }}
-                placeholder="输入子代理系统提示词..." spellCheck={false} />
-              <pre className={styles.editorHighlight} aria-hidden="true"
-                dangerouslySetInnerHTML={{ __html: highlightedSubagentPrompt + "\n" }} />
             </div>
           </div>
 
@@ -363,16 +276,15 @@ export function AdminConfig() {
       )}
 
       {/* ── MCP 目录 ── */}
-      {tab === "catalog" && config && (
+      {tab === "catalog" && (
         <div className={styles.panel}>
           <p className={styles.hint}>用户可在个人设置中一键启用这些预配置的服务器。</p>
           <div className={styles.catalogList}>
-            {config.mcp_catalog.map((entry, idx) => (
-              <div key={idx} className={styles.catalogItem}>
+            {catalog.map((entry) => (
+              <div key={entry.id} className={styles.catalogItem}>
                 <div className={styles.catalogHeader}>
                   <strong>{entry.name}</strong>
-                  <button className={styles.deleteBtn}
-                    onClick={() => setConfig({ ...config, mcp_catalog: config.mcp_catalog.filter((_, i) => i !== idx) })}>
+                  <button className={styles.deleteBtn} onClick={() => handleDeleteCatalogEntry(entry.id)}>
                     删除
                   </button>
                 </div>
@@ -387,35 +299,28 @@ export function AdminConfig() {
             <div className={styles.fieldRow}>
               <div className={styles.field}>
                 <label>名称</label>
-                <input type="text" placeholder="filesystem" id="catalog-name" />
+                <input type="text" placeholder="filesystem" value={catalogForm.name}
+                  onChange={(e) => setCatalogForm({ ...catalogForm, name: e.target.value })} />
               </div>
               <div className={styles.field}>
                 <label>描述</label>
-                <input type="text" placeholder="文件系统访问工具" id="catalog-description" />
+                <input type="text" placeholder="文件系统访问工具" value={catalogForm.description}
+                  onChange={(e) => setCatalogForm({ ...catalogForm, description: e.target.value })} />
               </div>
               <div className={styles.field}>
                 <label>命令</label>
-                <input type="text" placeholder="npx" id="catalog-command" />
+                <input type="text" placeholder="npx" value={catalogForm.command}
+                  onChange={(e) => setCatalogForm({ ...catalogForm, command: e.target.value })} />
               </div>
             </div>
             <div className={styles.field}>
               <label>参数（每行一个）</label>
-              <textarea rows={3} placeholder="-y&#10;@modelcontextprotocol/server-filesystem" id="catalog-args" />
+              <textarea rows={3} placeholder="-y&#10;@modelcontextprotocol/server-filesystem"
+                value={catalogForm.args}
+                onChange={(e) => setCatalogForm({ ...catalogForm, args: e.target.value })} />
             </div>
-            <button className={styles.addBtn} onClick={() => {
-              const n = (document.getElementById("catalog-name") as HTMLInputElement);
-              const d = (document.getElementById("catalog-description") as HTMLInputElement);
-              const c = (document.getElementById("catalog-command") as HTMLInputElement);
-              const a = (document.getElementById("catalog-args") as HTMLTextAreaElement);
-              if (!n.value || !d.value || !c.value) { alert("请填写所有必填字段"); return; }
-              setConfig({ ...config, mcp_catalog: [...config.mcp_catalog, { name: n.value, description: d.value, command: c.value, args: a.value.split("\n").filter(Boolean) }] });
-              n.value = ""; d.value = ""; c.value = ""; a.value = "";
-            }}>添加到目录</button>
-          </div>
-
-          <div className={styles.actions}>
-            <button className={styles.saveBtn} onClick={handleSave} disabled={saving}>
-              {saving ? "保存中..." : "保存目录配置"}
+            <button className={styles.addBtn} onClick={handleAddCatalogEntry} disabled={catalogSaving}>
+              {catalogSaving ? "添加中..." : "添加到目录"}
             </button>
           </div>
         </div>

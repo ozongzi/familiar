@@ -8,6 +8,8 @@ import type {
   GlobalMcp,
   CreateGlobalMcpRequest,
   UpdateGlobalMcpRequest,
+  CatalogEntry,
+  CatalogEntryRequest,
 } from "./types";
 
 const BASE = "";
@@ -159,6 +161,24 @@ export function updateGlobalMcp(
 
 export function deleteGlobalMcp(id: string, token: string): Promise<{ ok: boolean }> {
   return del<{ ok: boolean }>(`/api/admin/mcps/${id}`, token);
+}
+
+// ─── MCP Catalog ─────────────────────────────────────────────────────────────
+
+export function listCatalog(token: string): Promise<CatalogEntry[]> {
+  return get<CatalogEntry[]>("/api/admin/catalog", token);
+}
+
+export function createCatalogEntry(data: CatalogEntryRequest, token: string): Promise<CatalogEntry> {
+  return post<CatalogEntry>("/api/admin/catalog", data, token);
+}
+
+export function updateCatalogEntry(id: string, data: CatalogEntryRequest, token: string): Promise<CatalogEntry> {
+  return put<CatalogEntry>(`/api/admin/catalog/${id}`, data, token);
+}
+
+export function deleteCatalogEntry(id: string, token: string): Promise<{ ok: boolean }> {
+  return del<{ ok: boolean }>(`/api/admin/catalog/${id}`, token);
 }
 
 // ─── Invite Codes ─────────────────────────────────────────────────────────────

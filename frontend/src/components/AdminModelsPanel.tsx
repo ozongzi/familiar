@@ -102,6 +102,20 @@ export function AdminModelsPanel({ token }: Props) {
     }
   }
 
+  async function setRole(id: string, role: "cheap" | "embedding" | null) {
+    try {
+      await api.adminSetModelRole(token, id, role);
+      setModels((prev) =>
+        prev.map((m) => ({
+          ...m,
+          role: m.id === id ? role : m.role === role ? null : m.role,
+        }))
+      );
+    } catch (e: any) {
+      setError(e.message ?? "设置失败");
+    }
+  }
+
   return (
     <div className={styles.panel}>
       <div className={styles.header}>
@@ -169,12 +183,23 @@ export function AdminModelsPanel({ token }: Props) {
               <span className={styles.itemLabel}>
                 {m.label}
                 {m.is_default && <span className={styles.defaultBadge}>默认</span>}
+                {m.role === "cheap" && <span className={styles.roleBadge}>cheap</span>}
+                {m.role === "embedding" && <span className={styles.roleBadge}>embedding</span>}
               </span>
               <span className={styles.itemMeta}>{m.provider} · {m.model_name}</span>
             </div>
             <div className={styles.itemActions}>
               {!m.is_default && (
                 <button onClick={() => setDefault(m.id)}>设为默认</button>
+              )}
+              {m.role !== "cheap" && (
+                <button onClick={() => setRole(m.id, "cheap")}>设为 cheap</button>
+              )}
+              {m.role !== "embedding" && (
+                <button onClick={() => setRole(m.id, "embedding")}>设为 embedding</button>
+              )}
+              {m.role && (
+                <button onClick={() => setRole(m.id, null)}>清除角色</button>
               )}
               <button onClick={() => startEdit(m)}>编辑</button>
               <button className={styles.deleteBtn} onClick={() => remove(m.id)}>删除</button>

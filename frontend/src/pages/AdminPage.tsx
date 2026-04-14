@@ -7,6 +7,7 @@ import { AppSkillsPanel } from "../components/SkillsPanel";
 import { AdminModelsPanel } from "../components/AdminModelsPanel";
 import { AdminOverview } from "../components/AdminOverview";
 import { InviteCodesPanel } from "../components/InviteCodesPanel";
+import { SqlPanel } from "../components/SqlPanel";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../store/auth.shared";
 
@@ -17,7 +18,8 @@ export type AdminView =
   | "users"
   | "invites"
   | "skills"
-  | "audit";
+  | "audit"
+  | "sql";
 
 const NAV: { id: AdminView; label: string }[] = [
   { id: "overview", label: "概览" },
@@ -27,6 +29,7 @@ const NAV: { id: AdminView; label: string }[] = [
   { id: "invites",  label: "邀请码" },
   { id: "skills",   label: "默认技能" },
   { id: "audit",    label: "审计日志" },
+  { id: "sql",      label: "SQL" },
 ];
 
 export function AdminPage() {
@@ -62,6 +65,7 @@ export function AdminPage() {
         {view === "invites"  && <InviteCodesPanel />}
         {view === "skills"   && <AppSkillsPanel token={token ?? ""} />}
         {view === "audit"    && <AuditLogView />}
+        {view === "sql"      && <SqlPanel />}
       </main>
     </div>
   );

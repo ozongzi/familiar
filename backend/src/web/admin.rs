@@ -828,3 +828,163 @@ pub async fn get_token_usage_daily(
 
     Ok(Json(serde_json::json!({ "days": days })))
 }
+
+// ── SQL panel ─────────────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct SqlQuery {
+    pub sql: String,
+}
+
+pub async fn run_sql(
+    State(state): State<AppState>,
+    _auth: AuthUser,
+    Json(payload): Json<SqlQuery>,
+) -> AppResult<Json<serde_json::Value>> {
+    use sqlx::Row;
+
+    use sqlx::postgres::PgRow;
+    use sqlx::{Column, TypeInfo};
+
+    let rows: Vec<PgRow> = sqlx::query(&payload.sql)
+        .fetch_all(&state.pool)
+        .await
+        .map_err(|e| AppError::internal(&e.to_string()))?;
+
+    if rows.is_empty() {
+        return Ok(Json(serde_json::json!({ "columns": [], "rows": [] })));
+    }
+
+    let columns: Vec<String> = rows[0]
+        .columns()
+        .iter()
+        .map(|c| c.name().to_string())
+        .collect();
+
+    let result_rows: Vec<serde_json::Value> = rows
+        .iter()
+        .map(|row: &PgRow| {
+            let mut obj = serde_json::Map::new();
+            for col in row.columns() {
+                let idx = col.ordinal();
+                let type_name = col.type_info().name();
+                let val: serde_json::Value = match type_name {
+                    "BOOL" => row.try_get::<Option<bool>, _>(idx)
+                        .ok().flatten().map(serde_json::Value::Bool)
+                        .unwrap_or(serde_json::Value::Null),
+                    "INT2" | "INT4" => row.try_get::<Option<i32>, _>(idx)
+                        .ok().flatten().map(|n| serde_json::json!(n))
+                        .unwrap_or(serde_json::Value::Null),
+                    "INT8" | "OID" => row.try_get::<Option<i64>, _>(idx)
+                        .ok().flatten().map(|n| serde_json::json!(n))
+                        .unwrap_or(serde_json::Value::Null),
+                    "FLOAT4" | "FLOAT8" | "NUMERIC" => row.try_get::<Option<f64>, _>(idx)
+                        .ok().flatten().map(|n| serde_json::json!(n))
+                        .unwrap_or(serde_json::Value::Null),
+                    "JSONB" | "JSON" => row.try_get::<Option<serde_json::Value>, _>(idx)
+                        .ok().flatten()
+                        .unwrap_or(serde_json::Value::Null),
+                    _ => row.try_get::<Option<String>, _>(idx)
+                        .ok().flatten().map(serde_json::Value::String)
+                        .unwrap_or(serde_json::Value::Null),
+                };
+                obj.insert(col.name().to_string(), val);
+            }
+            serde_json::Value::Object(obj)
+        })
+        .collect();
+
+    Ok(Json(serde_json::json!({ "columns": columns, "rows": result_rows })))
+}
+
+// ── MCP Catalog ───────────────────────────────────────────────────────────────
+
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct CatalogEntry {
+    pub id: Uuid,
+    pub name: String,
+    pub description: String,
+    pub command: String,
+    pub args: serde_json::Value,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CatalogEntryRequest {
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    pub command: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+}
+
+pub async fn list_catalog(
+    State(state): State<AppState>,
+    auth: AuthUser,
+) -> AppResult<Json<Vec<CatalogEntry>>> {
+    guard_admin(&auth)?;
+    let rows = sqlx::query_as::<_, CatalogEntry>(
+        "SELECT * FROM mcp_catalog ORDER BY created_at ASC",
+    )
+    .fetch_all(&state.pool)
+    .await?;
+    Ok(Json(rows))
+}
+
+pub async fn create_catalog_entry(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Json(req): Json<CatalogEntryRequest>,
+) -> AppResult<Json<CatalogEntry>> {
+    guard_admin(&auth)?;
+    let row = sqlx::query_as::<_, CatalogEntry>(
+        "INSERT INTO mcp_catalog (name, description, command, args)
+         VALUES ($1, $2, $3, $4) RETURNING *",
+    )
+    .bind(&req.name)
+    .bind(&req.description)
+    .bind(&req.command)
+    .bind(serde_json::to_value(&req.args).unwrap_or_default())
+    .fetch_one(&state.pool)
+    .await?;
+    Ok(Json(row))
+}
+
+pub async fn update_catalog_entry(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(id): Path<Uuid>,
+    Json(req): Json<CatalogEntryRequest>,
+) -> AppResult<Json<CatalogEntry>> {
+    guard_admin(&auth)?;
+    let row = sqlx::query_as::<_, CatalogEntry>(
+        "UPDATE mcp_catalog SET name=$1, description=$2, command=$3, args=$4
+         WHERE id=$5 RETURNING *",
+    )
+    .bind(&req.name)
+    .bind(&req.description)
+    .bind(&req.command)
+    .bind(serde_json::to_value(&req.args).unwrap_or_default())
+    .bind(id)
+    .fetch_optional(&state.pool)
+    .await?
+    .ok_or_else(|| AppError::not_found("目录项不存在"))?;
+    Ok(Json(row))
+}
+
+pub async fn delete_catalog_entry(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(id): Path<Uuid>,
+) -> AppResult<Json<serde_json::Value>> {
+    guard_admin(&auth)?;
+    let result = sqlx::query("DELETE FROM mcp_catalog WHERE id=$1")
+        .bind(id)
+        .execute(&state.pool)
+        .await?;
+    if result.rows_affected() == 0 {
+        return Err(AppError::not_found("目录项不存在"));
+    }
+    Ok(Json(serde_json::json!({ "ok": true })))
+}

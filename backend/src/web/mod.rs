@@ -16,11 +16,11 @@ pub mod users;
 use std::{path::Path, sync::Arc};
 
 use admin::{
-    create_app_skill, create_global_mcp, create_user, delete_app_skill, delete_global_mcp,
-    delete_user, get_admin_config, get_token_usage, get_token_usage_by_user,
-    get_token_usage_conversations, get_token_usage_daily, list_app_skills, list_audit_logs,
-    list_global_mcps, list_users, reset_user_password, update_admin_config, update_app_skill,
-    update_global_mcp, update_user,
+    create_app_skill, create_catalog_entry, create_global_mcp, create_user, delete_app_skill,
+    delete_catalog_entry, delete_global_mcp, delete_user, get_admin_config, get_token_usage,
+    get_token_usage_by_user, get_token_usage_conversations, get_token_usage_daily, list_app_skills,
+    list_audit_logs, list_catalog, list_global_mcps, list_users, reset_user_password, run_sql,
+    update_admin_config, update_app_skill, update_catalog_entry, update_global_mcp, update_user,
 };
 use axum::extract::DefaultBodyLimit;
 use axum::http::HeaderValue;
@@ -31,7 +31,7 @@ use axum::{
 use mcps::{create_mcp, delete_mcp, list_mcps, update_mcp};
 use models::{
     admin_create_model, admin_delete_model, admin_list_models, admin_set_default_model,
-    admin_update_model, create_model, delete_model, list_models, update_model,
+    admin_set_model_role, admin_update_model, create_model, delete_model, list_models, update_model,
 };
 use settings::{
     create_skill, delete_skill, get_settings, list_skills, update_settings, update_skill,
@@ -115,6 +115,10 @@ pub fn create_router(state: AppState, allowed_origin: Option<&str>) -> Router {
         .route("/api/admin/mcps", post(create_global_mcp))
         .route("/api/admin/mcps/{id}", put(update_global_mcp))
         .route("/api/admin/mcps/{id}", delete(delete_global_mcp))
+        .route("/api/admin/catalog", get(list_catalog))
+        .route("/api/admin/catalog", post(create_catalog_entry))
+        .route("/api/admin/catalog/{id}", put(update_catalog_entry))
+        .route("/api/admin/catalog/{id}", delete(delete_catalog_entry))
         .route("/api/admin/skills", get(list_app_skills))
         .route("/api/admin/skills", post(create_app_skill))
         .route("/api/admin/skills/{id}", put(update_app_skill))
@@ -140,6 +144,7 @@ pub fn create_router(state: AppState, allowed_origin: Option<&str>) -> Router {
             get(get_token_usage_conversations),
         )
         .route("/api/admin/token-usage/daily", get(get_token_usage_daily))
+        .route("/api/admin/sql", post(run_sql))
         // ── User Skills (per-user) ─────────────────────────────────────────────
         .route("/api/skills", get(list_skills))
         .route("/api/skills", post(create_skill))
@@ -171,6 +176,10 @@ pub fn create_router(state: AppState, allowed_origin: Option<&str>) -> Router {
         .route(
             "/api/admin/models/{id}/default",
             post(admin_set_default_model),
+        )
+        .route(
+            "/api/admin/models/{id}/role",
+            post(admin_set_model_role),
         )
         // ── File download / preview ───────────────────────────────────────────
         .route("/api/files", get(download_file))

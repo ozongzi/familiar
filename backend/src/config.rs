@@ -6,11 +6,8 @@ use uuid::Uuid;
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Config {
-    pub public_path: String,
-    pub artifacts_path: String,
     pub cheap_model: ModelConfig,
     pub embedding: ModelConfig,
-    pub server: ServerConfig,
     #[serde(default)]
     pub mcp: Vec<McpServerConfig>,
     #[serde(default)]
@@ -57,16 +54,6 @@ impl ModelConfig {
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
-pub struct ServerConfig {
-    pub port: u16,
-    pub system_prompt: Option<String>,
-    pub subagent_prompt: Option<String>,
-    /// If set, only this origin is allowed for CORS. Leave unset to allow any origin (dev mode).
-    #[serde(default)]
-    pub allowed_origin: Option<String>,
-}
-
-#[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(untagged)]
 pub enum McpServerConfig {
     Studio {
@@ -94,14 +81,6 @@ pub struct GlobalMcp {
 
 #[derive(Debug, Deserialize, sqlx::FromRow)]
 struct AppConfigRow {
-    public_path: Option<String>,
-    artifacts_path: Option<String>,
-    cheap_model: Option<Value>,
-    embedding_model: Option<Value>,
-    server_port: Option<i32>,
-    system_prompt: Option<String>,
-    subagent_prompt: Option<String>,
-    mcp_catalog: Option<Value>,
     tavily_api_key: Option<String>,
     siliconflow_api_key: Option<String>,
     fal_api_key: Option<String>,
@@ -120,28 +99,23 @@ impl EnvConfig {
     }
 }
 
+fn default_model() -> ModelConfig {
+    ModelConfig {
+        api_key: String::new(),
+        api_base: "https://api.deepseek.com/v1".to_string(),
+        name: "deepseek-chat".to_string(),
+        provider: Provider::DeepSeek,
+        extra_body: HashMap::new(),
+        max_tokens: None,
+    }
+}
+
 impl Default for Config {
     fn default() -> Self {
-        let default_model = ModelConfig {
-            api_key: String::new(),
-            api_base: "https://api.deepseek.com/v1".to_string(),
-            name: "deepseek-chat".to_string(),
-            provider: Provider::DeepSeek,
-            extra_body: HashMap::new(),
-            max_tokens: None,
-        };
-
+        let m = default_model();
         Self {
-            public_path: "/app/frontend/dist".to_string(),
-            artifacts_path: "/app/artifacts".to_string(),
-            cheap_model: default_model.clone(),
-            embedding: default_model,
-            server: ServerConfig {
-                port: 3000,
-                system_prompt: None,
-                subagent_prompt: None,
-                allowed_origin: None,
-            },
+            cheap_model: m.clone(),
+            embedding: m,
             mcp: vec![],
             mcp_catalog: vec![],
             tavily_api_key: None,
@@ -153,49 +127,92 @@ impl Default for Config {
 
 impl Config {
     pub async fn load_from_db(pool: &PgPool) -> anyhow::Result<Self> {
+        let mut cfg = Self::default();
+
+        // ── Load API keys + mcp_catalog from app_config ───────────────────
         let row = sqlx::query_as::<_, AppConfigRow>(
-            r#"
-            SELECT
-                public_path, artifacts_path, cheap_model, embedding_model,
-                server_port, system_prompt, subagent_prompt, mcp_catalog,
-                tavily_api_key, siliconflow_api_key, fal_api_key
-            FROM app_config WHERE id = true
-            "#,
+            "SELECT tavily_api_key, siliconflow_api_key, fal_api_key
+             FROM app_config WHERE id = true",
         )
         .fetch_optional(pool)
         .await?;
 
-        let mut cfg = Self::default();
-
         if let Some(r) = row {
-            if let Some(pp) = r.public_path {
-                cfg.public_path = pp;
-            }
-            if let Some(ap) = r.artifacts_path {
-                cfg.artifacts_path = ap;
-            }
-            if let Some(cm) = r.cheap_model {
-                cfg.cheap_model = serde_json::from_value(cm).unwrap_or(cfg.cheap_model);
-            }
-            if let Some(em) = r.embedding_model {
-                cfg.embedding = serde_json::from_value(em).unwrap_or(cfg.embedding);
-            }
-
-            if let Some(port) = r.server_port {
-                cfg.server.port = port as u16;
-            }
-            cfg.server.system_prompt = r.system_prompt;
-            cfg.server.subagent_prompt = r.subagent_prompt;
-
-            if let Some(mc) = r.mcp_catalog {
-                cfg.mcp_catalog = serde_json::from_value(mc).unwrap_or(cfg.mcp_catalog);
-            }
             cfg.tavily_api_key = r.tavily_api_key;
             cfg.siliconflow_api_key = r.siliconflow_api_key;
             cfg.fal_api_key = r.fal_api_key;
         }
 
-        // Load Global MCPs
+        // ── Load MCP catalog from dedicated table ─────────────────────────
+        #[derive(sqlx::FromRow)]
+        struct CatalogRow {
+            name: String,
+            description: String,
+            command: String,
+            args: Value,
+        }
+        let catalog_rows = sqlx::query_as::<_, CatalogRow>(
+            "SELECT name, description, command, args FROM mcp_catalog ORDER BY created_at ASC",
+        )
+        .fetch_all(pool)
+        .await?;
+        cfg.mcp_catalog = catalog_rows
+            .into_iter()
+            .map(|r| McpCatalogEntry {
+                name: r.name,
+                description: r.description,
+                command: r.command,
+                args: serde_json::from_value(r.args).unwrap_or_default(),
+            })
+            .collect();
+
+        // ── Load cheap model from models table ────────────────────────────
+        let cheap: Option<(String, String, String, String, Value)> = sqlx::query_as(
+            "SELECT provider, model_name, api_base, api_key, extra_body
+             FROM models WHERE scope = 'global' AND role = 'cheap' LIMIT 1",
+        )
+        .fetch_optional(pool)
+        .await?;
+
+        if let Some((provider, name, api_base, api_key, extra_body)) = cheap {
+            cfg.cheap_model = ModelConfig {
+                provider: serde_json::from_value(Value::String(provider))
+                    .unwrap_or(Provider::DeepSeek),
+                name,
+                api_base,
+                api_key,
+                extra_body: extra_body
+                    .as_object()
+                    .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+                    .unwrap_or_default(),
+                max_tokens: None,
+            };
+        }
+
+        // ── Load embedding model from models table ────────────────────────
+        let embed: Option<(String, String, String, String, Value)> = sqlx::query_as(
+            "SELECT provider, model_name, api_base, api_key, extra_body
+             FROM models WHERE scope = 'global' AND role = 'embedding' LIMIT 1",
+        )
+        .fetch_optional(pool)
+        .await?;
+
+        if let Some((provider, name, api_base, api_key, extra_body)) = embed {
+            cfg.embedding = ModelConfig {
+                provider: serde_json::from_value(Value::String(provider))
+                    .unwrap_or(Provider::DeepSeek),
+                name,
+                api_base,
+                api_key,
+                extra_body: extra_body
+                    .as_object()
+                    .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+                    .unwrap_or_default(),
+                max_tokens: None,
+            };
+        }
+
+        // ── Load Global MCPs ──────────────────────────────────────────────
         let mcps =
             sqlx::query_as::<_, GlobalMcp>("SELECT * FROM global_mcps ORDER BY created_at ASC")
                 .fetch_all(pool)
@@ -250,48 +267,24 @@ impl Config {
     pub async fn upsert(pool: &PgPool, cfg: &Config) -> anyhow::Result<()> {
         sqlx::query(
             r#"
-            INSERT INTO app_config (
-                id, public_path, artifacts_path, cheap_model, embedding_model,
-                server_port, system_prompt, subagent_prompt, mcp_catalog,
-                tavily_api_key, siliconflow_api_key, fal_api_key,
-                updated_at
-            )
-            VALUES (true, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
+            INSERT INTO app_config (id, tavily_api_key, siliconflow_api_key, fal_api_key, updated_at)
+            VALUES (true, $1, $2, $3, NOW())
             ON CONFLICT (id) DO UPDATE SET
-                public_path = EXCLUDED.public_path,
-                artifacts_path = EXCLUDED.artifacts_path,
-                cheap_model = EXCLUDED.cheap_model,
-                embedding_model = EXCLUDED.embedding_model,
-                server_port = EXCLUDED.server_port,
-                system_prompt = EXCLUDED.system_prompt,
-                subagent_prompt = EXCLUDED.subagent_prompt,
-                mcp_catalog = EXCLUDED.mcp_catalog,
-                tavily_api_key = EXCLUDED.tavily_api_key,
+                tavily_api_key      = EXCLUDED.tavily_api_key,
                 siliconflow_api_key = EXCLUDED.siliconflow_api_key,
-                fal_api_key = EXCLUDED.fal_api_key,
-                updated_at = NOW()
+                fal_api_key         = EXCLUDED.fal_api_key,
+                updated_at          = NOW()
             "#,
         )
-        .bind(&cfg.public_path)
-        .bind(&cfg.artifacts_path)
-        .bind(serde_json::to_value(&cfg.cheap_model)?)
-        .bind(serde_json::to_value(&cfg.embedding)?)
-        .bind(cfg.server.port as i32)
-        .bind(&cfg.server.system_prompt)
-        .bind(&cfg.server.subagent_prompt)
-        .bind(serde_json::to_value(&cfg.mcp_catalog)?)
         .bind(&cfg.tavily_api_key)
         .bind(&cfg.siliconflow_api_key)
         .bind(&cfg.fal_api_key)
         .execute(pool)
         .await?;
 
-        // Note: Global MCPs are NOT updated here. Use dedicated endpoints.
+        // Note: Global MCPs and MCP catalog have dedicated endpoints.
+        // cheap_model and embedding are stored in the models table (role='cheap'/'embedding').
 
         Ok(())
     }
-
-    // pub fn system_prompt(&self) -> Option<String> {
-    //     self.server.system_prompt.clone()
-    // }
 }

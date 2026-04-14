@@ -25,15 +25,18 @@ pub struct AppState {
     pub pending_auth: Arc<DashMap<String, String>>,
 }
 
+const PUBLIC_PATH: &str = "/app/frontend/dist";
+const ARTIFACTS_PATH: &str = "/app/artifacts";
+
 impl AppState {
-    pub fn new(cfg: &Config, pool: PgPool) -> Self {
+    pub fn new(_cfg: &Config, pool: PgPool) -> Self {
         let sandbox = Arc::new(crate::sandbox::SandboxManager::new(
-            std::path::PathBuf::from(&cfg.artifacts_path),
+            std::path::PathBuf::from(ARTIFACTS_PATH),
         ));
         let db = Db::new(pool.clone(), sandbox.clone());
         Self {
-            public_path: cfg.public_path.clone(),
-            artifacts_path: cfg.artifacts_path.clone(),
+            public_path: PUBLIC_PATH.to_string(),
+            artifacts_path: ARTIFACTS_PATH.to_string(),
             pool,
             db,
             sandbox,

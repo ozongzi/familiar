@@ -254,6 +254,10 @@ export const api = {
     return post<{ ok: boolean }>(`/api/admin/models/${id}/default`, {}, token);
   },
 
+  adminSetModelRole(token: string, id: string, role: "cheap" | "embedding" | null) {
+    return post<{ ok: boolean }>(`/api/admin/models/${id}/role`, { role }, token);
+  },
+
   // ── MCPs ─────────────────────────────────────────────────────────────────
   listMcps(token: string) {
     return get<Mcp[]>("/api/mcps", token);
