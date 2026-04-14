@@ -2,6 +2,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use agentix::request::{Content, ImageContent, ImageData};
 use agentix::schemars::JsonSchema;
 use agentix::tool;
 use serde::{Deserialize, Serialize};
@@ -132,6 +133,41 @@ fn add_line_numbers(content: &str, start_line: usize) -> String {
     content.lines().enumerate()
         .map(|(i, l)| format!("{:4} | {}", start_line + i, l))
         .collect::<Vec<_>>().join("\n")
+}
+
+fn image_mime(path: &Path) -> Option<&'static str> {
+    match path.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()).as_deref() {
+        Some("png")  => Some("image/png"),
+        Some("jpg") | Some("jpeg") => Some("image/jpeg"),
+        Some("gif")  => Some("image/gif"),
+        Some("webp") => Some("image/webp"),
+        Some("bmp")  => Some("image/bmp"),
+        Some("svg")  => Some("image/svg+xml"),
+        _ => None,
+    }
+}
+
+async fn read_as_contents(path: &str) -> Vec<Content> {
+    use base64::Engine as _;
+    let p = Path::new(path);
+    if let Some(mime) = image_mime(p) {
+        match tokio::fs::read(p).await {
+            Ok(bytes) => {
+                let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+                vec![
+                    Content::Image(ImageContent {
+                        data: ImageData::Base64(b64),
+                        mime_type: mime.to_string(),
+                    }),
+                    Content::text(json!({ "type": "image", "path": path, "mime_type": mime }).to_string()),
+                ]
+            }
+            Err(e) => vec![Content::text(json!({ "error": format!("read failed: {e}"), "path": path }).to_string())],
+        }
+    } else {
+        let result = do_read(path, None, None, None, None, None, None, None).await;
+        vec![Content::text(result.to_string())]
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -649,6 +685,7 @@ impl SandboxSpell {
 #[tool]
 impl agentix::Tool for SandboxSpell {
     /// Read, search, explore, or summarize files and directories.
+    /// Image files (png, jpg, gif, webp, bmp, svg) are returned as viewable images.
     ///
     /// path: absolute path to the file or directory
     /// start_line: optional starting line number (1-indexed)
@@ -668,36 +705,45 @@ impl agentix::Tool for SandboxSpell {
         outline_only: Option<bool>,
         extract_symbol: Option<String>,
         max_depth: Option<usize>,
-    ) -> Value {
+    ) -> Vec<Content> {
         let path = match self.require_workspace_path(&path) {
             Ok(p) => p,
-            Err(e) => return e,
+            Err(e) => return vec![Content::text(e.to_string())],
         };
+        if image_mime(Path::new(&path)).is_some() {
+            return read_as_contents(&path).await;
+        }
         let result = do_read(&path, start_line, end_line, outline_only, extract_symbol, max_depth, search_regex, context_lines).await;
-        self.fixup_result_paths(result)
+        vec![Content::text(self.fixup_result_paths(result).to_string())]
     }
 
     /// Read multiple files or directories in one call to reduce round-trips.
+    /// Image files are returned inline as viewable images.
     /// reads: array of read operations; each item has: path (required), start_line, end_line, search_regex, context_lines, outline_only, extract_symbol, max_depth
-    async fn multiread(&self, reads: Vec<ReadItem>) -> Value {
-        let mut results = Vec::new();
+    async fn multiread(&self, reads: Vec<ReadItem>) -> Vec<Content> {
+        let mut contents: Vec<Content> = Vec::new();
         for item in reads {
             let path = match self.require_workspace_path(&item.path) {
                 Ok(resolved) => resolved,
-                Err(e) => { results.push(e); continue; }
+                Err(e) => { contents.push(Content::text(e.to_string())); continue; }
             };
-            results.push(self.fixup_result_paths(do_read(
-                &path,
-                item.start_line,
-                item.end_line,
-                item.outline_only,
-                item.extract_symbol,
-                item.max_depth,
-                item.search_regex,
-                item.context_lines,
-            ).await));
+            if image_mime(Path::new(&path)).is_some() {
+                contents.extend(read_as_contents(&path).await);
+            } else {
+                let result = self.fixup_result_paths(do_read(
+                    &path,
+                    item.start_line,
+                    item.end_line,
+                    item.outline_only,
+                    item.extract_symbol,
+                    item.max_depth,
+                    item.search_regex,
+                    item.context_lines,
+                ).await);
+                contents.push(Content::text(result.to_string()));
+            }
         }
-        json!({ "results": results })
+        contents
     }
 
     /// Write to a file (overwrite / replace / append), then run autocheck in the sandbox.
