@@ -557,9 +557,9 @@ async fn resolve_sandbox_images(
 ) {
     let conv_dir = sandbox.get_conversation_dir(user_id, conversation_id);
 
-    // Find the position of the last __sandbox__: image — only that one gets
-    // resolved to base64. All earlier images are replaced with a text note
-    // giving the sandbox path so the model knows where to find them.
+    // Find the last image part across all messages — any format (sandbox URL
+    // or inline base64). Only that one is kept; all earlier images are
+    // replaced with a text note so the model knows where to find them.
     let last_img_pos: Option<(usize, usize)> = messages
         .iter()
         .enumerate()
@@ -570,19 +570,12 @@ async fn resolve_sandbox_images(
                 _ => &[],
             };
             parts.iter().enumerate().filter_map(move |(pi, p)| {
-                if let UserContent::Image(img) = p {
-                    if matches!(&img.data, ImageData::Url(u) if u.starts_with("__sandbox__:")) {
-                        return Some((mi, pi));
-                    }
-                }
-                None
+                if matches!(p, UserContent::Image(_)) { Some((mi, pi)) } else { None }
             })
         })
         .last();
 
-    let Some((keep_mi, keep_pi)) = last_img_pos else {
-        return;
-    };
+    let Some((keep_mi, keep_pi)) = last_img_pos else { return };
 
     for (mi, msg) in messages.iter_mut().enumerate() {
         let parts: &mut Vec<UserContent> = match msg {
@@ -591,30 +584,32 @@ async fn resolve_sandbox_images(
             _ => continue,
         };
         for (pi, part) in parts.iter_mut().enumerate() {
-            let UserContent::Image(img) = part else {
-                continue;
-            };
-            let ImageData::Url(url) = &img.data else {
-                continue;
-            };
-            let Some(filename) = url.strip_prefix("__sandbox__:") else {
-                continue;
-            };
+            let UserContent::Image(img) = part else { continue };
 
             if mi == keep_mi && pi == keep_pi {
-                // Resolve the latest image to base64.
-                let path = conv_dir.join(filename);
-                match tokio::fs::read(&path).await {
-                    Ok(bytes) => {
-                        img.data = ImageData::Base64(
-                            base64::engine::general_purpose::STANDARD.encode(&bytes),
-                        );
+                // Latest image: resolve __sandbox__: → base64 if needed.
+                if let ImageData::Url(url) = &img.data {
+                    if let Some(filename) = url.strip_prefix("__sandbox__:") {
+                        let path = conv_dir.join(filename);
+                        match tokio::fs::read(&path).await {
+                            Ok(bytes) => {
+                                img.data = ImageData::Base64(
+                                    base64::engine::general_purpose::STANDARD.encode(&bytes),
+                                );
+                            }
+                            Err(e) => tracing::warn!(?path, "sandbox image read failed: {e}"),
+                        }
                     }
-                    Err(e) => tracing::warn!(?path, "sandbox image read failed: {e}"),
                 }
+                // Already base64 — leave as-is.
             } else {
-                // Replace older images with a text note pointing to the path.
-                let sandbox_path = format!("/workspace/{filename}");
+                // Older image: replace with a text note giving the sandbox path.
+                let sandbox_path = match &img.data {
+                    ImageData::Url(u) if u.starts_with("__sandbox__:") =>
+                        format!("/workspace/{}", &u["__sandbox__:".len()..]),
+                    ImageData::Url(u) => u.clone(),
+                    ImageData::Base64(_) => "(inline image)".to_string(),
+                };
                 *part = UserContent::Text {
                     text: format!("[图片未显示，已存储于 {sandbox_path}，如需查看可使用 read]"),
                 };
