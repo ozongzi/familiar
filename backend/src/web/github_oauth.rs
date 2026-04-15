@@ -146,17 +146,6 @@ pub async fn github_callback(
 
     let is_new = existing.is_none();
 
-    // Add default sandbox MCP for new GitHub users
-    if is_new {
-        let _ = sqlx::query(
-            r#"INSERT INTO user_mcps (user_id, name, type, config)
-               VALUES ($1, 'autocheck-mcp', 'stdio', '{"command": "autocheck-mcp", "args": []}'::jsonb)
-               ON CONFLICT (user_id, name) DO NOTHING"#,
-        )
-        .bind(user_id)
-        .execute(&state.pool)
-        .await;
-    }
 
     let is_tauri = params.state.as_deref() == Some("tauri");
     let redirect_url = if is_tauri {

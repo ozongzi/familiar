@@ -284,15 +284,6 @@ pub async fn create_user(
         }
     })?;
 
-    // Add default sandbox MCP for new user
-    let _ = sqlx::query(
-        r#"INSERT INTO user_mcps (user_id, name, type, config)
-           VALUES ($1, 'autocheck-mcp', 'stdio', '{"command": "autocheck-mcp", "args": []}'::jsonb)
-           ON CONFLICT (user_id, name) DO NOTHING"#,
-    )
-    .bind(user.id)
-    .execute(&state.pool)
-    .await;
 
     // Log audit
     let _ = crate::audit::log_audit(

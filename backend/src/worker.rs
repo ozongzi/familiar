@@ -63,16 +63,20 @@ async fn run_worker(ctx: WorkerContext) -> anyhow::Result<()> {
         .execute(&ctx.pool)
         .await?;
 
+    let t_start = std::time::Instant::now();
     let result = run_worker_inner(&ctx).await;
+    let duration_ms = t_start.elapsed().as_millis() as i64;
 
     match &result {
         Ok(()) => {
             emit(&ctx, json!({"type": "done"})).await;
+            record_job_latency(&ctx.pool, ctx.job_id, None, Some(duration_ms), None, None).await;
             set_job_status(&ctx.pool, ctx.job_id, "done", None).await;
         }
         Err(e) => {
             let msg = e.to_string();
             emit(&ctx, json!({"type": "error", "message": &msg})).await;
+            record_job_latency(&ctx.pool, ctx.job_id, None, Some(duration_ms), None, None).await;
             set_job_status(&ctx.pool, ctx.job_id, "error", Some(&msg)).await;
         }
     }
@@ -166,6 +170,13 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
             }
         }
     };
+
+    // ── Record model + provider for this job ─────────────────────────────
+    record_job_latency(
+        &ctx.pool, ctx.job_id, None, None,
+        Some(&frontier_cfg.name),
+        Some(&format!("{:?}", frontier_cfg.provider).to_lowercase()),
+    ).await;
 
     // ── Resolve user name ─────────────────────────────────────────────────
     let user_name: String = sqlx::query_scalar::<_, String>("SELECT name FROM users WHERE id = $1")
@@ -365,6 +376,7 @@ async fn generation_loop(
     cheap_model: ModelConfig,
 ) -> anyhow::Result<()> {
     let tool_defs: Vec<ToolDefinition> = tools.raw_tools();
+    let mut ttft_written = false; // only record TTFT for the first LLM call
 
     // Accumulate token usage across all LLM calls in this generation.
     let mut acc_prompt: i64 = 0;
@@ -463,7 +475,12 @@ async fn generation_loop(
                 Some(LlmEvent::Token(token)) => {
                     if !ttft_logged {
                         ttft_logged = true;
-                        info!(ms = t_llm.elapsed().as_millis(), "⏱ TTFT (first token)");
+                        let ttft = t_llm.elapsed().as_millis() as i64;
+                        info!(ms = ttft, "⏱ TTFT (first token)");
+                        if !ttft_written {
+                            ttft_written = true;
+                            record_job_latency(&ctx.pool, ctx.job_id, Some(ttft), None, None, None).await;
+                        }
                     }
                     reply_buf.push_str(&token);
                     emit(ctx, json!({"type": "token", "content": token})).await;
@@ -1003,6 +1020,32 @@ async fn check_stop_reason(pool: &PgPool, job_id: Uuid) -> Option<StopReason> {
         Some("interrupted") => Some(StopReason::Interrupted),
         _ => None,
     }
+}
+
+async fn record_job_latency(
+    pool: &PgPool,
+    job_id: Uuid,
+    ttft_ms: Option<i64>,
+    duration_ms: Option<i64>,
+    model: Option<&str>,
+    provider: Option<&str>,
+) {
+    let _ = sqlx::query(
+        "UPDATE generation_jobs
+         SET ttft_ms     = COALESCE($1, ttft_ms),
+             duration_ms = COALESCE($2, duration_ms),
+             model       = COALESCE($3, model),
+             provider    = COALESCE($4, provider),
+             updated_at  = now()
+         WHERE id = $5",
+    )
+    .bind(ttft_ms)
+    .bind(duration_ms)
+    .bind(model)
+    .bind(provider)
+    .bind(job_id)
+    .execute(pool)
+    .await;
 }
 
 async fn set_job_status(pool: &PgPool, job_id: Uuid, status: &str, error: Option<&str>) {

@@ -191,15 +191,6 @@ pub async fn register_with_invite(
     .execute(&state.pool)
     .await?;
 
-    // Add default sandbox MCP
-    let _ = sqlx::query(
-        r#"INSERT INTO user_mcps (user_id, name, type, config)
-           VALUES ($1, 'autocheck-mcp', 'stdio', '{"command": "autocheck-mcp", "args": []}'::jsonb)
-           ON CONFLICT (user_id, name) DO NOTHING"#,
-    )
-    .bind(user_id)
-    .execute(&state.pool)
-    .await;
 
     let _ = crate::audit::log_audit(
         &state.pool,

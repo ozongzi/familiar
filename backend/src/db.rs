@@ -168,8 +168,7 @@ impl Db {
                             UserContent::Image(img) => {
                                 if let ImageData::Base64(b64) = &img.data {
                                     let ext = ext_from_mime(&img.mime_type);
-                                    let filename =
-                                        format!("img-{}.{}", Uuid::new_v4(), ext);
+                                    let filename = format!("img-{}.{}", Uuid::new_v4(), ext);
                                     let path = conv_dir.join(&filename);
                                     match base64::engine::general_purpose::STANDARD
                                         .decode(b64.as_bytes())
@@ -477,10 +476,9 @@ pub fn row_to_message(row: MessageRow) -> Message {
         "tool" => Message::ToolResult {
             call_id: row.spell_cast_id.unwrap_or_default(),
             content: {
-                        let s = row.content.unwrap_or_default();
-                        serde_json::from_str(&s)
-                            .unwrap_or_else(|_| vec![agentix::Content::text(s)])
-                    },
+                let s = row.content.unwrap_or_default();
+                serde_json::from_str(&s).unwrap_or_else(|_| vec![agentix::Content::text(s)])
+            },
         },
         "assistant" => {
             let tool_calls: Vec<AgentToolCall> = row
@@ -504,7 +502,8 @@ pub fn row_to_message(row: MessageRow) -> Message {
                         },
                         Err(_) => serde_json::json!({}), // truncated / invalid JSON
                     };
-                    tc.arguments = serde_json::to_string(&fixed).unwrap_or_else(|_| "{}".to_string());
+                    tc.arguments =
+                        serde_json::to_string(&fixed).unwrap_or_else(|_| "{}".to_string());
                     tc
                 })
                 .collect();
@@ -558,25 +557,67 @@ async fn resolve_sandbox_images(
 ) {
     let conv_dir = sandbox.get_conversation_dir(user_id, conversation_id);
 
-    for msg in messages.iter_mut() {
+    // Find the position of the last __sandbox__: image — only that one gets
+    // resolved to base64. All earlier images are replaced with a text note
+    // giving the sandbox path so the model knows where to find them.
+    let last_img_pos: Option<(usize, usize)> = messages
+        .iter()
+        .enumerate()
+        .flat_map(|(mi, msg)| {
+            let parts: &[UserContent] = match msg {
+                Message::User(p) => p,
+                Message::ToolResult { content, .. } => content,
+                _ => &[],
+            };
+            parts.iter().enumerate().filter_map(move |(pi, p)| {
+                if let UserContent::Image(img) = p {
+                    if matches!(&img.data, ImageData::Url(u) if u.starts_with("__sandbox__:")) {
+                        return Some((mi, pi));
+                    }
+                }
+                None
+            })
+        })
+        .last();
+
+    let Some((keep_mi, keep_pi)) = last_img_pos else {
+        return;
+    };
+
+    for (mi, msg) in messages.iter_mut().enumerate() {
         let parts: &mut Vec<UserContent> = match msg {
-            Message::User(parts) => parts,
+            Message::User(p) => p,
             Message::ToolResult { content, .. } => content,
             _ => continue,
         };
+        for (pi, part) in parts.iter_mut().enumerate() {
+            let UserContent::Image(img) = part else {
+                continue;
+            };
+            let ImageData::Url(url) = &img.data else {
+                continue;
+            };
+            let Some(filename) = url.strip_prefix("__sandbox__:") else {
+                continue;
+            };
 
-        for part in parts.iter_mut() {
-            let UserContent::Image(img) = part else { continue };
-            let ImageData::Url(url) = &img.data else { continue };
-            let Some(filename) = url.strip_prefix("__sandbox__:") else { continue };
-            let path = conv_dir.join(filename);
-            match tokio::fs::read(&path).await {
-                Ok(bytes) => {
-                    img.data = ImageData::Base64(
-                        base64::engine::general_purpose::STANDARD.encode(&bytes),
-                    );
+            if mi == keep_mi && pi == keep_pi {
+                // Resolve the latest image to base64.
+                let path = conv_dir.join(filename);
+                match tokio::fs::read(&path).await {
+                    Ok(bytes) => {
+                        img.data = ImageData::Base64(
+                            base64::engine::general_purpose::STANDARD.encode(&bytes),
+                        );
+                    }
+                    Err(e) => tracing::warn!(?path, "sandbox image read failed: {e}"),
                 }
-                Err(e) => tracing::warn!(?path, "sandbox image read failed: {e}"),
+            } else {
+                // Replace older images with a text note pointing to the path.
+                let sandbox_path = format!("/workspace/{filename}");
+                *part = UserContent::Text {
+                    text: format!("[图片未显示，已存储于 {sandbox_path}，如需查看可使用 read]"),
+                };
             }
         }
     }
