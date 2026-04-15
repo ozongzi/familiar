@@ -491,6 +491,7 @@ export function useChat(
                 filename: parsed.filename,
                 path: parsed.path,
                 size: parsed.size,
+                conversationId: conversationId ?? undefined,
               };
               history.push(uploadBubble);
               continue;
@@ -510,10 +511,33 @@ export function useChat(
                 | { type: "text"; text: string }
                 | { type: "image"; data: { base64?: string; url?: string }; mime_type: string };
               const parts = JSON.parse(json) as Part[];
-              const text = parts
+
+              // File upload: text part is the file_upload JSON marker
+              const textContent = parts
                 .filter((p): p is Extract<Part, { type: "text" }> => p.type === "text")
                 .map(p => p.text)
                 .join("");
+              try {
+                const parsed = JSON.parse(textContent) as Record<string, unknown>;
+                if (
+                  parsed.__type === "file_upload" &&
+                  typeof parsed.filename === "string" &&
+                  typeof parsed.path === "string" &&
+                  typeof parsed.size === "number"
+                ) {
+                  history.push({
+                    kind: "upload",
+                    key: uid(),
+                    role: "user",
+                    filename: parsed.filename,
+                    path: parsed.path,
+                    size: parsed.size,
+                    conversationId: conversationId ?? undefined,
+                  });
+                  continue;
+                }
+              } catch { /* text is not file_upload JSON */ }
+
               const images = parts
                 .filter((p): p is Extract<Part, { type: "image" }> => p.type === "image")
                 .map(p => p.data.base64
@@ -524,7 +548,7 @@ export function useChat(
                 kind: "text",
                 key: uid(),
                 role: "user",
-                content: text,
+                content: textContent,
                 reasoning: "",
                 streaming: false,
                 images: images.length > 0 ? images : undefined,
@@ -578,6 +602,7 @@ export function useChat(
         filename,
         path,
         size,
+        conversationId: conversationId ?? undefined,
       };
       setBubbles((prev) => [...prev, bubble]);
     },

@@ -362,11 +362,12 @@ function UploadChatBubble({ bubble }: { bubble: UploadBubble }) {
 
   const handleDownload = useCallback(() => {
     const params = new URLSearchParams({ path: bubble.path, token });
+    if (bubble.conversationId) params.append("conversation_id", bubble.conversationId);
     const a = document.createElement("a");
     a.href = `/api/files?${params}`;
     a.download = bubble.filename;
     a.click();
-  }, [bubble.path, bubble.filename, token]);
+  }, [bubble.path, bubble.filename, bubble.conversationId, token]);
 
   return (
     <div className={`${styles.row} ${styles.rowUser}`}>

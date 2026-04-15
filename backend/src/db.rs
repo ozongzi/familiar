@@ -559,9 +559,12 @@ async fn resolve_sandbox_images(
     let conv_dir = sandbox.get_conversation_dir(user_id, conversation_id);
 
     for msg in messages.iter_mut() {
-        let Message::User(parts) = msg else { continue };
+        let parts: &mut Vec<UserContent> = match msg {
+            Message::User(parts) => parts,
+            Message::ToolResult { content, .. } => content,
+            _ => continue,
+        };
 
-        // Pass 1: resolve __sandbox__: refs in existing Image parts.
         for part in parts.iter_mut() {
             let UserContent::Image(img) = part else { continue };
             let ImageData::Url(url) = &img.data else { continue };
@@ -576,6 +579,5 @@ async fn resolve_sandbox_images(
                 Err(e) => tracing::warn!(?path, "sandbox image read failed: {e}"),
             }
         }
-
     }
 }

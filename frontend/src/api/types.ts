@@ -170,6 +170,7 @@ export interface UploadBubble {
   filename: string;
   path: string;
   size: number;
+  conversationId?: string;
 }
 
 export type ChatBubble = TextBubble | ToolBubble | UploadBubble;
