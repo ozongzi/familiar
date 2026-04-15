@@ -22,7 +22,7 @@ use pgvector::Vector;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use agentix::request::{ImageContent, ImageData, Message, ToolCall as AgentToolCall, UserContent};
+use agentix::request::{Content, ImageContent, ImageData, Message, ToolCall as AgentToolCall, UserContent};
 
 use crate::sandbox::SandboxManager;
 
@@ -226,13 +226,60 @@ impl Db {
                     reasoning.clone(),
                 )
             }
-            Message::ToolResult { call_id, content } => (
-                "tool",
-                Some(serde_json::to_string(content).unwrap_or_default()),
-                None,
-                Some(call_id.clone()),
-                None,
-            ),
+            Message::ToolResult { call_id, content } => {
+                let has_images = content.iter().any(|p| matches!(p, Content::Image(_)));
+                let serialized = if has_images {
+                    // Offload base64 images to the sandbox. Use MD5 of bytes as
+                    // filename so the path matches what generate_image_spell wrote.
+                    let conv_dir = self.sandbox.get_conversation_dir(user_id, conversation_id);
+                    let pub_dir = conv_dir.join("public");
+                    let _ = tokio::fs::create_dir_all(&pub_dir).await;
+                    let mut new_content: Vec<Content> = Vec::with_capacity(content.len());
+                    for part in content.iter() {
+                        match part {
+                            Content::Image(img) => {
+                                if let ImageData::Base64(b64) = &img.data {
+                                    let ext = ext_from_mime(&img.mime_type);
+                                    match base64::engine::general_purpose::STANDARD
+                                        .decode(b64.as_bytes())
+                                    {
+                                        Ok(bytes) => {
+                                            let hash = format!("{:x}", md5::compute(&bytes));
+                                            let filename = format!("img-{}.{}", hash, ext);
+                                            let path = pub_dir.join(&filename);
+                                            // Write only if not already present (same bytes = same hash).
+                                            if !path.exists() {
+                                                let _ = tokio::fs::write(&path, &bytes).await;
+                                            }
+                                            new_content.push(Content::Image(ImageContent {
+                                                data: ImageData::Url(format!(
+                                                    "__sandbox__:public/{}",
+                                                    filename
+                                                )),
+                                                mime_type: img.mime_type.clone(),
+                                            }));
+                                        }
+                                        Err(_) => new_content.push(part.clone()),
+                                    }
+                                } else {
+                                    new_content.push(part.clone());
+                                }
+                            }
+                            _ => new_content.push(part.clone()),
+                        }
+                    }
+                    serde_json::to_string(&new_content).unwrap_or_default()
+                } else {
+                    serde_json::to_string(content).unwrap_or_default()
+                };
+                (
+                    "tool",
+                    Some(serialized),
+                    None,
+                    Some(call_id.clone()),
+                    None,
+                )
+            }
         };
         let now = unix_now();
 

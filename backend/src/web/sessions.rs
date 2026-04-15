@@ -73,8 +73,9 @@ pub async fn logout(
     State(state): State<AppState>,
     auth: AuthUser,
 ) -> AppResult<Json<serde_json::Value>> {
-    sqlx::query("DELETE FROM sessions WHERE user_id = $1")
+    sqlx::query("DELETE FROM sessions WHERE user_id = $1 AND token = $2")
         .bind(auth.user_id)
+        .bind(&auth.token)
         .execute(&state.pool)
         .await?;
 

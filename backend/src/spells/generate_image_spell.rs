@@ -1,4 +1,5 @@
 use agentix::request::{Content, ImageContent, ImageData};
+use base64::Engine as _;
 use agentix::tool;
 use reqwest::Client;
 use serde::Deserialize;
@@ -203,8 +204,6 @@ impl GenerateImageSpell {
 
         for img in &images {
             let ext = ext_from_mime(img.content_type.as_deref(), &img.url);
-            let filename = format!("img-{}.{}", Uuid::new_v4(), ext);
-            let path = conv_dir.join(&filename);
 
             let bytes = match self.http.get(&img.url).send().await {
                 Ok(r) if r.status().is_success() => match r.bytes().await {
@@ -215,14 +214,22 @@ impl GenerateImageSpell {
                 Err(e) => { results.push(Content::text(format!("image download error: {e}"))); continue; }
             };
 
+            // Use MD5 of bytes as filename — db.append will compute the same hash
+            // when converting base64 → __sandbox__: URL, so paths stay consistent.
+            let hash = format!("{:x}", md5::compute(&bytes));
+            let filename = format!("img-{}.{}", hash, ext);
+            let path = conv_dir.join(&filename);
+
             if let Err(e) = tokio::fs::write(&path, &bytes).await {
                 results.push(Content::text(format!("sandbox write error: {e}")));
                 continue;
             }
 
+            let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+            let mime = format!("image/{}", ext);
             results.push(Content::Image(ImageContent {
-                data: ImageData::Url(format!("__sandbox__:public/{}", filename)),
-                mime_type: format!("image/{}", ext),
+                data: ImageData::Base64(b64),
+                mime_type: mime,
             }));
             results.push(Content::text(format!("/workspace/public/{}", filename)));
         }

@@ -12,6 +12,7 @@ use crate::errors::AppError;
 pub struct AuthUser {
     pub user_id: Uuid,
     pub is_admin: bool,
+    pub token: String,
 }
 
 impl<S> FromRequestParts<S> for AuthUser
@@ -52,6 +53,7 @@ where
                 .try_get("user_id")
                 .map_err(|_| AppError::unauthorized())?,
             is_admin: row.try_get("is_admin").unwrap_or(false),
+            token: bearer.token().to_string(),
         })
     }
 }

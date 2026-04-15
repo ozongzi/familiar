@@ -643,8 +643,9 @@ pub async fn delete_global_mcp(
 /// GET /api/admin/token-usage
 pub async fn get_token_usage(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    auth: AuthUser,
 ) -> AppResult<Json<serde_json::Value>> {
+    guard_admin(&auth)?;
     let row = sqlx::query(
         r#"SELECT COALESCE(SUM(prompt_tokens), 0)::bigint          AS prompt_tokens,
                   COALESCE(SUM(completion_tokens), 0)::bigint      AS completion_tokens,
@@ -670,8 +671,9 @@ pub async fn get_token_usage(
 
 pub async fn get_token_usage_by_user(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    auth: AuthUser,
 ) -> AppResult<Json<serde_json::Value>> {
+    guard_admin(&auth)?;
     let rows = sqlx::query(
         r#"
         SELECT u.id::text AS user_id, u.name AS username,
@@ -712,9 +714,10 @@ pub async fn get_token_usage_by_user(
 
 pub async fn get_token_usage_conversations(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    auth: AuthUser,
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> AppResult<Json<serde_json::Value>> {
+    guard_admin(&auth)?;
     let user_id = params.get("user_id").cloned().unwrap_or_default();
 
     let rows = if user_id.is_empty() {
@@ -780,8 +783,9 @@ pub async fn get_token_usage_conversations(
 
 pub async fn get_token_usage_daily(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    auth: AuthUser,
 ) -> AppResult<Json<serde_json::Value>> {
+    guard_admin(&auth)?;
     let rows = sqlx::query(
         r#"
         SELECT DATE(TO_TIMESTAMP(recorded_at))::text                AS day,
@@ -829,9 +833,10 @@ pub struct SqlQuery {
 
 pub async fn run_sql(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    auth: AuthUser,
     Json(payload): Json<SqlQuery>,
 ) -> AppResult<Json<serde_json::Value>> {
+    guard_admin(&auth)?;
     use sqlx::Row;
 
     use sqlx::postgres::PgRow;
