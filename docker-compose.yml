@@ -16,6 +16,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./frontend/dist:/app/frontend/dist:ro
       - ${HOST_ARTIFACTS_PATH:-./artifacts}:/app/artifacts
+      - ${HOST_CLAUDE_DIR:-${HOME}/.claude}:/root/.claude
     depends_on:
       postgres:
         condition: service_healthy
