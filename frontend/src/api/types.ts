@@ -48,6 +48,8 @@ export interface CreateConversationRequest {
 
 // ─── Models ───────────────────────────────────────────────────────────────
 
+export type ModelKind = "api" | "claude-code";
+
 export interface Model {
   id: string;
   scope: "global" | "user";
@@ -57,6 +59,8 @@ export interface Model {
   api_base: string;
   is_default: boolean;
   role: "cheap" | "embedding" | null;
+  visible: boolean;
+  kind: ModelKind;
   created_at: string;
 }
 
@@ -67,6 +71,7 @@ export interface UpsertModelRequest {
   api_base?: string;
   api_key?: string;
   extra_body?: Record<string, unknown>;
+  kind?: ModelKind;
 }
 
 export interface RenameConversationRequest {

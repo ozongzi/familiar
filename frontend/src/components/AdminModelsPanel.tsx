@@ -11,6 +11,7 @@ const EMPTY_FORM: UpsertModelRequest = {
   model_name: "",
   api_base: "",
   api_key: "",
+  kind: "api",
 };
 
 interface Props {
@@ -48,6 +49,7 @@ export function AdminModelsPanel({ token }: Props) {
       model_name: m.model_name,
       api_base: m.api_base,
       api_key: "",
+      kind: m.kind,
     });
     setEditing(m.id);
     setError("");
@@ -116,6 +118,15 @@ export function AdminModelsPanel({ token }: Props) {
     }
   }
 
+  async function setVisible(id: string, visible: boolean) {
+    try {
+      await api.adminSetModelVisible(token, id, visible);
+      setModels((prev) => prev.map((m) => (m.id === id ? { ...m, visible } : m)));
+    } catch (e: any) {
+      setError(e.message ?? "设置失败");
+    }
+  }
+
   return (
     <div className={styles.panel}>
       <div className={styles.header}>
@@ -136,6 +147,18 @@ export function AdminModelsPanel({ token }: Props) {
             />
           </div>
           <div className={styles.row}>
+            <label>类型</label>
+            <select
+              value={form.kind ?? "api"}
+              onChange={(e) =>
+                setForm({ ...form, kind: e.target.value as "api" | "claude-code" })
+              }
+            >
+              <option value="api">API (HTTP provider)</option>
+              <option value="claude-code">Claude Code (Max OAuth, 本地 claude -p)</option>
+            </select>
+          </div>
+          <div className={styles.row}>
             <label>Provider</label>
             <ProviderSelector value={form.provider} onChange={(p) => setForm({ ...form, provider: p })} />
           </div>
@@ -144,7 +167,7 @@ export function AdminModelsPanel({ token }: Props) {
             <input
               value={form.model_name}
               onChange={(e) => setForm({ ...form, model_name: e.target.value })}
-              placeholder="e.g. claude-sonnet-4-5"
+              placeholder={form.kind === "claude-code" ? "sonnet / opus / haiku 或完整 model id" : "e.g. claude-sonnet-4-5"}
             />
           </div>
           <div className={styles.row}>
@@ -152,7 +175,8 @@ export function AdminModelsPanel({ token }: Props) {
             <input
               value={form.api_base}
               onChange={(e) => setForm({ ...form, api_base: e.target.value })}
-              placeholder="留空使用默认"
+              placeholder={form.kind === "claude-code" ? "claude-code 不使用 HTTP，此字段可留空" : "留空使用默认"}
+              disabled={form.kind === "claude-code"}
             />
           </div>
           <div className={styles.row}>
@@ -161,7 +185,14 @@ export function AdminModelsPanel({ token }: Props) {
               type="password"
               value={form.api_key}
               onChange={(e) => setForm({ ...form, api_key: e.target.value })}
-              placeholder={editing !== "new" ? "不修改则留空" : ""}
+              placeholder={
+                form.kind === "claude-code"
+                  ? "使用系统 claude CLI 的 Max OAuth,此处留空"
+                  : editing !== "new"
+                    ? "不修改则留空"
+                    : ""
+              }
+              disabled={form.kind === "claude-code"}
             />
           </div>
           <div className={styles.actions}>
@@ -185,6 +216,8 @@ export function AdminModelsPanel({ token }: Props) {
                 {m.is_default && <span className={styles.defaultBadge}>默认</span>}
                 {m.role === "cheap" && <span className={styles.roleBadge}>cheap</span>}
                 {m.role === "embedding" && <span className={styles.roleBadge}>embedding</span>}
+                {m.kind === "claude-code" && <span className={styles.roleBadge}>claude-code</span>}
+                {!m.visible && <span className={styles.roleBadge}>隐藏</span>}
               </span>
               <span className={styles.itemMeta}>{m.provider} · {m.model_name}</span>
             </div>
@@ -192,6 +225,9 @@ export function AdminModelsPanel({ token }: Props) {
               {!m.is_default && (
                 <button onClick={() => setDefault(m.id)}>设为默认</button>
               )}
+              <button onClick={() => setVisible(m.id, !m.visible)}>
+                {m.visible ? "隐藏" : "显示"}
+              </button>
               {m.role !== "cheap" && (
                 <button onClick={() => setRole(m.id, "cheap")}>设为 cheap</button>
               )}

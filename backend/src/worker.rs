@@ -120,6 +120,7 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
             api_base: String,
             api_key: String,
             extra_body: Value,
+            kind: String,
         ) -> ModelConfig {
             let provider_parsed = serde_json::from_value::<crate::config::Provider>(
                 serde_json::Value::String(provider.clone()),
@@ -135,12 +136,13 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
                     .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
                     .unwrap_or_default(),
                 max_tokens: None,
+                kind,
             }
         }
 
         // 1. conversation-level model_id
-        let conv_model: Option<(String, String, String, String, Value)> = sqlx::query_as(
-            "SELECT m.provider, m.model_name, m.api_base, m.api_key, m.extra_body
+        let conv_model: Option<(String, String, String, String, Value, String)> = sqlx::query_as(
+            "SELECT m.provider, m.model_name, m.api_base, m.api_key, m.extra_body, m.kind
              FROM conversations c
              JOIN models m ON m.id = c.model_id
              WHERE c.id = $1",
@@ -150,20 +152,20 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
         .await
         .unwrap_or(None);
 
-        if let Some((provider, name, api_base, api_key, extra_body)) = conv_model {
-            model_from_row(provider, name, api_base, api_key, extra_body)
+        if let Some((provider, name, api_base, api_key, extra_body, kind)) = conv_model {
+            model_from_row(provider, name, api_base, api_key, extra_body, kind)
         } else {
             // 2. global default model
-            let default_model: Option<(String, String, String, String, Value)> = sqlx::query_as(
-                "SELECT provider, model_name, api_base, api_key, extra_body
+            let default_model: Option<(String, String, String, String, Value, String)> = sqlx::query_as(
+                "SELECT provider, model_name, api_base, api_key, extra_body, kind
                  FROM models WHERE scope = 'global' AND is_default = true LIMIT 1",
             )
             .fetch_optional(&ctx.pool)
             .await
             .unwrap_or(None);
 
-            if let Some((provider, name, api_base, api_key, extra_body)) = default_model {
-                model_from_row(provider, name, api_base, api_key, extra_body)
+            if let Some((provider, name, api_base, api_key, extra_body, kind)) = default_model {
+                model_from_row(provider, name, api_base, api_key, extra_body, kind)
             } else {
                 // 3. fallback: cheap_model
                 cheap_cfg.clone()
@@ -276,8 +278,6 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
         ));
     }
 
-    // ── Build Request ─────────────────────────────────────────────────────
-    let request = frontier_cfg.to_request().system_prompt(system_prompt);
 
     // ── Load history from DB ──────────────────────────────────────────────
     let t_restore = std::time::Instant::now();
@@ -359,8 +359,16 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
     }
 
     // ── Run the LLM ↔ tool-call loop ─────────────────────────────────────
-    let http = reqwest::Client::new();
-    generation_loop(ctx, &http, &request, messages, &bundle, cheap_cfg).await
+    // Branch on model kind: API providers run the in-process loop via HTTP
+    // streaming; 'claude-code' drives `claude -p` subprocess and consumes
+    // its AgentEvent stream.
+    if frontier_cfg.kind == "claude-code" {
+        generation_loop_claude_code(ctx, &frontier_cfg, system_prompt, messages, bundle).await
+    } else {
+        let request = frontier_cfg.to_request().system_prompt(system_prompt);
+        let http = reqwest::Client::new();
+        generation_loop(ctx, &http, &request, messages, &bundle, cheap_cfg).await
+    }
 }
 
 // ── Generation loop ───────────────────────────────────────────────────────────
@@ -781,6 +789,362 @@ async fn generation_loop(
     }
 
     // Sync accumulated token usage to token_usage_log so stats survive conversation deletion.
+    if acc_total > 0 {
+        let _ = sqlx::query(
+            r#"INSERT INTO token_usage_log
+                   (conversation_id, user_id, conversation_name,
+                    prompt_tokens, completion_tokens, total_tokens,
+                    cache_read_tokens, cache_creation_tokens, recorded_at)
+               SELECT $1, user_id, name, $2, $3, $4, $5, $6, EXTRACT(EPOCH FROM NOW())::bigint
+               FROM conversations WHERE id = $1
+               ON CONFLICT (conversation_id) DO UPDATE
+                 SET conversation_name    = EXCLUDED.conversation_name,
+                     prompt_tokens        = token_usage_log.prompt_tokens + EXCLUDED.prompt_tokens,
+                     completion_tokens    = token_usage_log.completion_tokens + EXCLUDED.completion_tokens,
+                     total_tokens         = token_usage_log.total_tokens + EXCLUDED.total_tokens,
+                     cache_read_tokens    = token_usage_log.cache_read_tokens + EXCLUDED.cache_read_tokens,
+                     cache_creation_tokens = token_usage_log.cache_creation_tokens + EXCLUDED.cache_creation_tokens,
+                     recorded_at          = EXCLUDED.recorded_at"#,
+        )
+        .bind(ctx.conversation_id)
+        .bind(acc_prompt)
+        .bind(acc_completion)
+        .bind(acc_total)
+        .bind(acc_cache_read)
+        .bind(acc_cache_creation)
+        .execute(&ctx.pool)
+        .await;
+    }
+
+    Ok(())
+}
+
+// ── claude-code generation loop ───────────────────────────────────────────────
+//
+// For kind='claude-code' models: drive `claude -p` (via agentix's
+// `agent_claude_code`) instead of a native HTTP stream. The agentic loop lives
+// inside the subprocess; we just consume its AgentEvent stream and persist /
+// emit the same SSE shape as `generation_loop` so frontend code doesn't care.
+//
+// Turn boundary: claude emits Token… ToolCallStart… ToolResult… then more
+// Token…; when a Token arrives after a ToolResult it belongs to a new
+// assistant turn. We seal the previous streaming row at that transition.
+async fn generation_loop_claude_code(
+    ctx: &WorkerContext,
+    frontier_cfg: &ModelConfig,
+    system_prompt: String,
+    mut messages: Vec<Message>,
+    bundle: ToolBundle,
+) -> anyhow::Result<()> {
+    use agentix::{AgentEvent, ClaudeCodeConfig, agent_claude_code};
+
+    agentix::truncate_to_token_budget(&mut messages, HISTORY_TOKEN_BUDGET);
+
+    let cc_config = ClaudeCodeConfig::new().model(&frontier_cfg.name);
+
+    let mut stream = agent_claude_code(bundle, system_prompt, cc_config, messages);
+
+    // Current assistant-turn accumulators.
+    let mut streaming_msg_id = ctx
+        .db
+        .append_streaming(ctx.conversation_id, ctx.job_id)
+        .await
+        .map_err(|e| anyhow::anyhow!("append_streaming failed: {e}"))?;
+    let mut reply_buf = String::new();
+    let mut reasoning_buf = String::new();
+    let mut tool_calls_buf: Vec<agentix::ToolCall> = Vec::new();
+    let mut token_count: u32 = 0;
+    let mut new_turn_pending = false;
+
+    // Usage accumulators (same shape as generation_loop).
+    let mut acc_prompt: i64 = 0;
+    let mut acc_completion: i64 = 0;
+    let mut acc_total: i64 = 0;
+    let mut acc_cache_read: i64 = 0;
+    let mut acc_cache_creation: i64 = 0;
+    let mut usage = UsageStats::default();
+    let mut ttft_logged = false;
+    let t_llm = std::time::Instant::now();
+
+    loop {
+        // Interleave abort checks with stream reads — a claude tool turn can
+        // stall the stream for seconds while our MCP server runs a spell.
+        let next = tokio::select! {
+            biased;
+            ev = stream.next() => ev,
+            _ = tokio::time::sleep(Duration::from_millis(500)) => {
+                if check_stop_reason(&ctx.pool, ctx.job_id).await.is_some() {
+                    let _ = ctx
+                        .db
+                        .seal_streaming_message(
+                            streaming_msg_id,
+                            if reply_buf.is_empty() { None } else { Some(&reply_buf) },
+                            if reasoning_buf.is_empty() { None } else { Some(&reasoning_buf) },
+                            None,
+                        )
+                        .await;
+                    emit(ctx, json!({"type": "aborted"})).await;
+                    set_job_status(&ctx.pool, ctx.job_id, "aborted", None).await;
+                    // Dropping the stream aborts the subprocess + MCP server.
+                    drop(stream);
+                    return Ok(());
+                }
+                continue;
+            }
+        };
+
+        let Some(event) = next else { break };
+
+        // New-turn transition: Token/Reasoning after a ToolResult means claude
+        // started a fresh assistant turn. Seal the previous streaming row
+        // before we append to the new turn.
+        if new_turn_pending
+            && matches!(event, AgentEvent::Token(_) | AgentEvent::Reasoning(_))
+        {
+            // Drop tool calls whose arguments aren't complete JSON objects.
+            tool_calls_buf.retain(|tc| {
+                serde_json::from_str::<serde_json::Value>(&tc.arguments)
+                    .map(|v| v.is_object())
+                    .unwrap_or(false)
+            });
+            let tc_json = if tool_calls_buf.is_empty() {
+                None
+            } else {
+                serde_json::to_string(&tool_calls_buf).ok()
+            };
+            let _ = ctx
+                .db
+                .seal_streaming_message(
+                    streaming_msg_id,
+                    if reply_buf.is_empty() { None } else { Some(&reply_buf) },
+                    if reasoning_buf.is_empty() { None } else { Some(&reasoning_buf) },
+                    tc_json.as_deref(),
+                )
+                .await;
+            if !reply_buf.is_empty() {
+                embed_message_async(ctx, streaming_msg_id, reply_buf.clone());
+            }
+            reply_buf.clear();
+            reasoning_buf.clear();
+            tool_calls_buf.clear();
+            token_count = 0;
+            new_turn_pending = false;
+            streaming_msg_id = ctx
+                .db
+                .append_streaming(ctx.conversation_id, ctx.job_id)
+                .await
+                .map_err(|e| anyhow::anyhow!("append_streaming failed: {e}"))?;
+        }
+
+        match event {
+            AgentEvent::Token(t) => {
+                if !ttft_logged {
+                    ttft_logged = true;
+                    let ttft = t_llm.elapsed().as_millis() as i64;
+                    info!(ms = ttft, "⏱ TTFT (first token, claude-code)");
+                    record_job_latency(&ctx.pool, ctx.job_id, Some(ttft), None, None, None).await;
+                }
+                reply_buf.push_str(&t);
+                emit(ctx, json!({"type": "token", "content": t})).await;
+                token_count += 1;
+                if token_count.is_multiple_of(10) {
+                    let _ = ctx
+                        .db
+                        .update_streaming_content(streaming_msg_id, &reply_buf, &reasoning_buf)
+                        .await;
+                }
+            }
+            AgentEvent::Reasoning(t) => {
+                reasoning_buf.push_str(&t);
+                emit(ctx, json!({"type": "reasoning_token", "content": t})).await;
+            }
+            AgentEvent::ToolCallChunk(c) => {
+                emit(
+                    ctx,
+                    json!({"type": "tool_call", "id": c.id, "name": c.name, "delta": c.delta}),
+                )
+                .await;
+            }
+            AgentEvent::ToolCallStart(tc) => {
+                emit(
+                    ctx,
+                    json!({"type": "tool_call_complete", "id": tc.id, "name": tc.name}),
+                )
+                .await;
+                tool_calls_buf.push(tc);
+            }
+            AgentEvent::ToolProgress { id, name, progress } => {
+                emit(
+                    ctx,
+                    json!({"type": "tool_progress", "id": id, "name": name, "progress": progress}),
+                )
+                .await;
+            }
+            AgentEvent::ToolResult { id, name, content } => {
+                let tool_result_msg = Message::ToolResult {
+                    call_id: id.clone(),
+                    content: content.clone(),
+                };
+                persist_msg(ctx, &tool_result_msg).await;
+
+                let result_json: Value = content
+                    .iter()
+                    .find_map(|p| {
+                        if let agentix::Content::Text { text } = p {
+                            serde_json::from_str(text).ok()
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or(Value::Null);
+
+                let mut sse_images: Vec<Value> = Vec::new();
+                for part in &content {
+                    if let agentix::Content::Image(img) = part {
+                        use base64::Engine as _;
+                        let data_uri = match &img.data {
+                            agentix::request::ImageData::Url(u)
+                                if u.starts_with("__sandbox__:") =>
+                            {
+                                let filename = &u["__sandbox__:".len()..];
+                                let file_path = ctx
+                                    .sandbox
+                                    .get_conversation_dir(ctx.user_id, ctx.conversation_id)
+                                    .join(filename);
+                                match tokio::fs::read(&file_path).await {
+                                    Ok(bytes) => Some(format!(
+                                        "data:{};base64,{}",
+                                        img.mime_type,
+                                        base64::engine::general_purpose::STANDARD.encode(&bytes)
+                                    )),
+                                    Err(_) => None,
+                                }
+                            }
+                            agentix::request::ImageData::Url(u) => Some(u.clone()),
+                            agentix::request::ImageData::Base64(b) => {
+                                Some(format!("data:{};base64,{}", img.mime_type, b))
+                            }
+                        };
+                        if let Some(uri) = data_uri {
+                            sse_images.push(json!({"url": uri, "mime_type": img.mime_type}));
+                        }
+                    }
+                }
+
+                let mut payload =
+                    json!({"type": "tool_result", "id": id, "name": name, "result": result_json});
+                if !sse_images.is_empty() {
+                    payload["images"] = Value::Array(sse_images);
+                }
+                emit(ctx, payload).await;
+
+                if result_json.get("__ask__").and_then(|v| v.as_bool()) == Some(true) {
+                    emit(
+                        ctx,
+                        json!({
+                            "type": "ask",
+                            "question": result_json.get("question").and_then(|v| v.as_str()).unwrap_or(""),
+                            "description": result_json.get("description"),
+                            "options": result_json.get("options"),
+                        }),
+                    )
+                    .await;
+                    let _ = ctx
+                        .db
+                        .seal_streaming_message(
+                            streaming_msg_id,
+                            if reply_buf.is_empty() { None } else { Some(&reply_buf) },
+                            if reasoning_buf.is_empty() { None } else { Some(&reasoning_buf) },
+                            None,
+                        )
+                        .await;
+                    drop(stream);
+                    return Ok(());
+                }
+
+                new_turn_pending = true;
+            }
+            AgentEvent::Usage(u) => {
+                usage += u.clone();
+                acc_prompt += u.prompt_tokens as i64;
+                acc_completion += u.completion_tokens as i64;
+                acc_total += u.total_tokens as i64;
+                acc_cache_read += u.cache_read_tokens as i64;
+                acc_cache_creation += u.cache_creation_tokens as i64;
+                let pool = ctx.pool.clone();
+                let conv_id = ctx.conversation_id;
+                tokio::spawn(async move {
+                    let _ = sqlx::query(
+                        r#"UPDATE conversations
+                           SET token_usage = token_usage || jsonb_build_object(
+                               'prompt_tokens',     (COALESCE((token_usage->>'prompt_tokens')::bigint, 0) + $1),
+                               'completion_tokens', (COALESCE((token_usage->>'completion_tokens')::bigint, 0) + $2),
+                               'total_tokens',      (COALESCE((token_usage->>'total_tokens')::bigint, 0) + $3)
+                           )
+                           WHERE id = $4"#,
+                    )
+                    .bind(u.prompt_tokens as i64)
+                    .bind(u.completion_tokens as i64)
+                    .bind(u.total_tokens as i64)
+                    .bind(conv_id)
+                    .execute(&pool)
+                    .await;
+                });
+            }
+            AgentEvent::Warning(w) => {
+                warn!(conversation = %ctx.conversation_id, "claude-code warning: {w}");
+            }
+            AgentEvent::Done(_) => {
+                break;
+            }
+            AgentEvent::Error(e) => {
+                error!(conversation = %ctx.conversation_id, "claude-code error: {e}");
+                let _ = ctx
+                    .db
+                    .seal_streaming_message(streaming_msg_id, None, None, None)
+                    .await;
+                return Err(anyhow::anyhow!("{e}"));
+            }
+        }
+    }
+
+    // Seal the final assistant turn.
+    tool_calls_buf.retain(|tc| {
+        serde_json::from_str::<serde_json::Value>(&tc.arguments)
+            .map(|v| v.is_object())
+            .unwrap_or(false)
+    });
+    let tc_json = if tool_calls_buf.is_empty() {
+        None
+    } else {
+        serde_json::to_string(&tool_calls_buf).ok()
+    };
+    let _ = ctx
+        .db
+        .seal_streaming_message(
+            streaming_msg_id,
+            if reply_buf.is_empty() { None } else { Some(&reply_buf) },
+            if reasoning_buf.is_empty() { None } else { Some(&reasoning_buf) },
+            tc_json.as_deref(),
+        )
+        .await;
+    if !reply_buf.is_empty() {
+        embed_message_async(ctx, streaming_msg_id, reply_buf);
+    }
+
+    if usage.total_tokens > 0 {
+        emit(
+            ctx,
+            json!({
+                "type": "usage",
+                "prompt_tokens": usage.prompt_tokens,
+                "completion_tokens": usage.completion_tokens,
+                "total_tokens": usage.total_tokens,
+            }),
+        )
+        .await;
+    }
+
     if acc_total > 0 {
         let _ = sqlx::query(
             r#"INSERT INTO token_usage_log

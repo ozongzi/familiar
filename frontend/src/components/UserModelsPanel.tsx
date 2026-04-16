@@ -48,6 +48,7 @@ export function UserModelsPanel({ token }: Props) {
       model_name: m.model_name,
       api_base: m.api_base,
       api_key: "",
+      kind: m.kind,
     });
     setEditing(m.id);
     setError("");

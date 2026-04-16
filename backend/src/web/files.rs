@@ -319,6 +319,33 @@ fn ext_to_lang(ext: &str) -> &'static str {
     }
 }
 
+/// Detect image MIME type from magic bytes. Returns `None` for non-image data.
+fn mime_from_bytes(data: &[u8]) -> Option<&'static str> {
+    if data.len() >= 3 && data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF {
+        return Some("image/jpeg");
+    }
+    if data.len() >= 8
+        && data[0] == 0x89
+        && &data[1..4] == b"PNG"
+        && data[4] == 0x0D
+        && data[5] == 0x0A
+        && data[6] == 0x1A
+        && data[7] == 0x0A
+    {
+        return Some("image/png");
+    }
+    if data.len() >= 6 && (&data[..6] == b"GIF87a" || &data[..6] == b"GIF89a") {
+        return Some("image/gif");
+    }
+    if data.len() >= 12
+        && &data[0..4] == b"RIFF"
+        && &data[8..12] == b"WEBP"
+    {
+        return Some("image/webp");
+    }
+    None
+}
+
 fn mime_from_filename(name: &str) -> &'static str {
     let ext = std::path::Path::new(name)
         .extension()
@@ -479,7 +506,14 @@ pub async fn upload_file(
     // Persist a User-role message so DeepSeek's API is not violated
     // (Tool messages must follow assistant tool_calls; a spontaneous
     // Tool message would cause a 400 Bad Request).
-    let mime = mime_from_filename(&file_name);
+    // Derive MIME type: prefer magic-byte detection for images so the declared
+    // type always matches the actual file content (prevents provider 400 errors).
+    let mime_from_name = mime_from_filename(&file_name);
+    let mime = if mime_from_name.starts_with("image/") {
+        mime_from_bytes(&data).unwrap_or(mime_from_name)
+    } else {
+        mime_from_name
+    };
     let content_str = json!({
         "__type": "file_upload",
         "filename": unique_name,

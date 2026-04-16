@@ -37,6 +37,14 @@ pub struct ModelConfig {
     pub extra_body: HashMap<String, Value>,
     #[serde(default)]
     pub max_tokens: Option<u32>,
+    /// Backend dispatch kind: "api" (default) → HTTP provider via `to_request`,
+    /// "claude-code" → subprocess `claude -p` via `agent_claude_code`.
+    #[serde(default = "default_model_kind")]
+    pub kind: String,
+}
+
+fn default_model_kind() -> String {
+    "api".to_string()
 }
 
 impl ModelConfig {
@@ -107,6 +115,7 @@ fn default_model() -> ModelConfig {
         provider: Provider::DeepSeek,
         extra_body: HashMap::new(),
         max_tokens: None,
+        kind: "api".to_string(),
     }
 }
 
@@ -186,6 +195,7 @@ impl Config {
                     .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
                     .unwrap_or_default(),
                 max_tokens: None,
+                kind: "api".to_string(),
             };
         }
 
@@ -209,6 +219,7 @@ impl Config {
                     .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
                     .unwrap_or_default(),
                 max_tokens: None,
+                kind: "api".to_string(),
             };
         }
 

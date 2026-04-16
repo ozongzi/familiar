@@ -580,6 +580,30 @@ pub fn to_vector(v: Vec<f32>) -> Vector {
     Vector::from(v)
 }
 
+/// Detect image MIME type from magic bytes. Returns `None` for non-image data.
+fn mime_from_bytes(data: &[u8]) -> Option<&'static str> {
+    if data.len() >= 3 && data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF {
+        return Some("image/jpeg");
+    }
+    if data.len() >= 8
+        && data[0] == 0x89
+        && &data[1..4] == b"PNG"
+        && data[4] == 0x0D
+        && data[5] == 0x0A
+        && data[6] == 0x1A
+        && data[7] == 0x0A
+    {
+        return Some("image/png");
+    }
+    if data.len() >= 6 && (&data[..6] == b"GIF87a" || &data[..6] == b"GIF89a") {
+        return Some("image/gif");
+    }
+    if data.len() >= 12 && &data[0..4] == b"RIFF" && &data[8..12] == b"WEBP" {
+        return Some("image/webp");
+    }
+    None
+}
+
 /// Map a MIME type to a short file extension for sandbox image files.
 fn ext_from_mime(mime: &str) -> &'static str {
     match mime {
@@ -640,6 +664,12 @@ async fn resolve_sandbox_images(
                         let path = conv_dir.join(filename);
                         match tokio::fs::read(&path).await {
                             Ok(bytes) => {
+                                // Re-detect mime type from magic bytes so a
+                                // mismatched stored type (e.g. image/png for a
+                                // JPEG file) doesn't cause provider 400 errors.
+                                if let Some(detected) = mime_from_bytes(&bytes) {
+                                    img.mime_type = detected.to_string();
+                                }
                                 img.data = ImageData::Base64(
                                     base64::engine::general_purpose::STANDARD.encode(&bytes),
                                 );

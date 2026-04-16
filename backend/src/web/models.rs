@@ -25,6 +25,8 @@ pub struct ModelRow {
     pub extra_body: Value,
     pub is_default: bool,
     pub role: Option<String>,
+    pub visible: bool,
+    pub kind: String,
     pub created_at: sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc>,
 }
 
@@ -38,6 +40,8 @@ pub struct ModelResponse {
     pub api_base: String,
     pub is_default: bool,
     pub role: Option<String>,
+    pub visible: bool,
+    pub kind: String,
     pub created_at: String,
     // api_key intentionally omitted from responses
 }
@@ -53,9 +57,15 @@ impl From<ModelRow> for ModelResponse {
             api_base: r.api_base,
             is_default: r.is_default,
             role: r.role,
+            visible: r.visible,
+            kind: r.kind,
             created_at: r.created_at.to_rfc3339(),
         }
     }
+}
+
+fn default_kind() -> String {
+    "api".to_string()
 }
 
 #[derive(Deserialize)]
@@ -69,6 +79,8 @@ pub struct UpsertModelRequest {
     pub api_key: String,
     #[serde(default)]
     pub extra_body: Value,
+    #[serde(default = "default_kind")]
+    pub kind: String,
 }
 
 // ── User endpoints ────────────────────────────────────────────────────────────
@@ -79,7 +91,9 @@ pub async fn list_models(
     auth: AuthUser,
 ) -> AppResult<Json<Vec<ModelResponse>>> {
     let rows = sqlx::query_as::<_, ModelRow>(
-        "SELECT * FROM models WHERE scope = 'global' OR user_id = $1 ORDER BY scope DESC, created_at ASC",
+        "SELECT * FROM models
+         WHERE (scope = 'global' OR user_id = $1) AND visible = true
+         ORDER BY scope DESC, created_at ASC",
     )
     .bind(auth.user_id)
     .fetch_all(&state.pool)
@@ -95,8 +109,8 @@ pub async fn create_model(
     Json(req): Json<UpsertModelRequest>,
 ) -> AppResult<Json<ModelResponse>> {
     let row = sqlx::query_as::<_, ModelRow>(
-        "INSERT INTO models (user_id, scope, label, provider, model_name, api_base, api_key, extra_body)
-         VALUES ($1, 'user', $2, $3, $4, $5, $6, $7)
+        "INSERT INTO models (user_id, scope, label, provider, model_name, api_base, api_key, extra_body, kind)
+         VALUES ($1, 'user', $2, $3, $4, $5, $6, $7, $8)
          RETURNING *",
     )
     .bind(auth.user_id)
@@ -106,6 +120,7 @@ pub async fn create_model(
     .bind(&req.api_base)
     .bind(&req.api_key)
     .bind(&req.extra_body)
+    .bind(&req.kind)
     .fetch_one(&state.pool)
     .await?;
 
@@ -122,8 +137,8 @@ pub async fn update_model(
     let row = sqlx::query_as::<_, ModelRow>(
         "UPDATE models SET label=$1, provider=$2, model_name=$3, api_base=$4,
          api_key = CASE WHEN $5 = '' THEN api_key ELSE $5 END,
-         extra_body=$6
-         WHERE id=$7 AND user_id=$8 AND scope='user'
+         extra_body=$6, kind=$7
+         WHERE id=$8 AND user_id=$9 AND scope='user'
          RETURNING *",
     )
     .bind(&req.label)
@@ -132,6 +147,7 @@ pub async fn update_model(
     .bind(&req.api_base)
     .bind(&req.api_key)
     .bind(&req.extra_body)
+    .bind(&req.kind)
     .bind(id)
     .bind(auth.user_id)
     .fetch_optional(&state.pool)
@@ -192,8 +208,8 @@ pub async fn admin_create_model(
 ) -> AppResult<Json<ModelResponse>> {
     guard_admin(&auth)?;
     let row = sqlx::query_as::<_, ModelRow>(
-        "INSERT INTO models (user_id, scope, label, provider, model_name, api_base, api_key, extra_body)
-         VALUES (NULL, 'global', $1, $2, $3, $4, $5, $6)
+        "INSERT INTO models (user_id, scope, label, provider, model_name, api_base, api_key, extra_body, kind)
+         VALUES (NULL, 'global', $1, $2, $3, $4, $5, $6, $7)
          RETURNING *",
     )
     .bind(&req.label)
@@ -202,6 +218,7 @@ pub async fn admin_create_model(
     .bind(&req.api_base)
     .bind(&req.api_key)
     .bind(&req.extra_body)
+    .bind(&req.kind)
     .fetch_one(&state.pool)
     .await?;
 
@@ -219,8 +236,8 @@ pub async fn admin_update_model(
     let row = sqlx::query_as::<_, ModelRow>(
         "UPDATE models SET label=$1, provider=$2, model_name=$3, api_base=$4,
          api_key = CASE WHEN $5 = '' THEN api_key ELSE $5 END,
-         extra_body=$6
-         WHERE id=$7 AND scope='global'
+         extra_body=$6, kind=$7
+         WHERE id=$8 AND scope='global'
          RETURNING *",
     )
     .bind(&req.label)
@@ -229,6 +246,7 @@ pub async fn admin_update_model(
     .bind(&req.api_base)
     .bind(&req.api_key)
     .bind(&req.extra_body)
+    .bind(&req.kind)
     .bind(id)
     .fetch_optional(&state.pool)
     .await?
@@ -294,6 +312,33 @@ pub async fn admin_set_model_role(
 #[derive(Deserialize)]
 pub struct SetRoleRequest {
     pub role: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct SetVisibleRequest {
+    pub visible: bool,
+}
+
+/// Admin: toggle per-model visibility for the user-facing model picker.
+pub async fn admin_set_model_visible(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(id): Path<Uuid>,
+    Json(req): Json<SetVisibleRequest>,
+) -> AppResult<Json<Value>> {
+    guard_admin(&auth)?;
+
+    let rows = sqlx::query("UPDATE models SET visible = $1 WHERE id = $2 AND scope = 'global'")
+        .bind(req.visible)
+        .bind(id)
+        .execute(&state.pool)
+        .await?;
+
+    if rows.rows_affected() == 0 {
+        return Err(AppError::not_found("模型不存在"));
+    }
+
+    Ok(Json(json!({ "ok": true })))
 }
 
 /// Admin: set a global model as default (clears any existing default first).
