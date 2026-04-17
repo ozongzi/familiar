@@ -27,6 +27,7 @@ pub struct ModelRow {
     pub role: Option<String>,
     pub visible: bool,
     pub kind: String,
+    pub admin_only: bool,
     pub created_at: sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc>,
 }
 
@@ -42,6 +43,7 @@ pub struct ModelResponse {
     pub role: Option<String>,
     pub visible: bool,
     pub kind: String,
+    pub admin_only: bool,
     pub created_at: String,
     // api_key intentionally omitted from responses
 }
@@ -59,6 +61,7 @@ impl From<ModelRow> for ModelResponse {
             role: r.role,
             visible: r.visible,
             kind: r.kind,
+            admin_only: r.admin_only,
             created_at: r.created_at.to_rfc3339(),
         }
     }
@@ -68,6 +71,10 @@ fn default_kind() -> String {
     "api".to_string()
 }
 
+/// Used by user-scoped and admin-scoped upsert endpoints.
+/// Admin-only fields (role/visible/is_default/admin_only) are accepted on the
+/// admin PUT but ignored by the user PUT — keeping a single request struct
+/// keeps the frontend types flat.
 #[derive(Deserialize)]
 pub struct UpsertModelRequest {
     pub label: String,
@@ -81,21 +88,35 @@ pub struct UpsertModelRequest {
     pub extra_body: Value,
     #[serde(default = "default_kind")]
     pub kind: String,
+    // Admin-only knobs (optional; admin PUT applies them, user PUT ignores).
+    #[serde(default)]
+    pub role: Option<String>,
+    #[serde(default)]
+    pub visible: Option<bool>,
+    #[serde(default)]
+    pub is_default: Option<bool>,
+    #[serde(default)]
+    pub admin_only: Option<bool>,
 }
 
 // ── User endpoints ────────────────────────────────────────────────────────────
 
 /// List models visible to the current user: global + their own.
+/// admin_only models are filtered out for non-admins (ToS compliance for
+/// provider credentials that can only be shared with the instance operator).
 pub async fn list_models(
     State(state): State<AppState>,
     auth: AuthUser,
 ) -> AppResult<Json<Vec<ModelResponse>>> {
     let rows = sqlx::query_as::<_, ModelRow>(
         "SELECT * FROM models
-         WHERE (scope = 'global' OR user_id = $1) AND visible = true
+         WHERE (scope = 'global' OR user_id = $1)
+           AND visible = true
+           AND (NOT admin_only OR $2)
          ORDER BY scope DESC, created_at ASC",
     )
     .bind(auth.user_id)
+    .bind(auth.is_admin)
     .fetch_all(&state.pool)
     .await?;
 
@@ -201,15 +222,37 @@ pub async fn admin_list_models(
 }
 
 /// Admin: create a global model.
+///
+/// Admin-only knobs (role/visible/is_default/admin_only) fall back to column
+/// defaults (NULL role, visible=true, is_default=false, admin_only=false)
+/// when omitted — matching the legacy two-step create-then-set flow.
 pub async fn admin_create_model(
     State(state): State<AppState>,
     auth: AuthUser,
     Json(req): Json<UpsertModelRequest>,
 ) -> AppResult<Json<ModelResponse>> {
     guard_admin(&auth)?;
+
+    let mut tx = state.pool.begin().await?;
+
+    if req.is_default == Some(true) {
+        sqlx::query("UPDATE models SET is_default = false WHERE scope = 'global'")
+            .execute(&mut *tx)
+            .await?;
+    }
+    if let Some(ref role) = req.role {
+        sqlx::query("UPDATE models SET role = NULL WHERE scope = 'global' AND role = $1")
+            .bind(role)
+            .execute(&mut *tx)
+            .await?;
+    }
+
     let row = sqlx::query_as::<_, ModelRow>(
-        "INSERT INTO models (user_id, scope, label, provider, model_name, api_base, api_key, extra_body, kind)
-         VALUES (NULL, 'global', $1, $2, $3, $4, $5, $6, $7)
+        "INSERT INTO models
+           (user_id, scope, label, provider, model_name, api_base, api_key,
+            extra_body, kind, role, visible, is_default, admin_only)
+         VALUES (NULL, 'global', $1, $2, $3, $4, $5, $6, $7,
+                 $8, COALESCE($9, true), COALESCE($10, false), COALESCE($11, false))
          RETURNING *",
     )
     .bind(&req.label)
@@ -219,13 +262,24 @@ pub async fn admin_create_model(
     .bind(&req.api_key)
     .bind(&req.extra_body)
     .bind(&req.kind)
-    .fetch_one(&state.pool)
+    .bind(&req.role)
+    .bind(req.visible)
+    .bind(req.is_default)
+    .bind(req.admin_only)
+    .fetch_one(&mut *tx)
     .await?;
+
+    tx.commit().await?;
 
     Ok(Json(ModelResponse::from(row)))
 }
 
 /// Admin: update a global model.
+///
+/// Applies every field the admin form sends in a single transaction:
+/// base fields (label/provider/…/kind), role, visibility, default flag, and
+/// admin_only. If is_default=true is set here, all other global defaults are
+/// cleared atomically. Same single-winner semantics apply to role.
 pub async fn admin_update_model(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -233,11 +287,35 @@ pub async fn admin_update_model(
     Json(req): Json<UpsertModelRequest>,
 ) -> AppResult<Json<ModelResponse>> {
     guard_admin(&auth)?;
+
+    let mut tx = state.pool.begin().await?;
+
+    // Single-winner maintenance before we write the target row.
+    if req.is_default == Some(true) {
+        sqlx::query("UPDATE models SET is_default = false WHERE scope = 'global'")
+            .execute(&mut *tx)
+            .await?;
+    }
+    if let Some(ref role) = req.role {
+        sqlx::query("UPDATE models SET role = NULL WHERE scope = 'global' AND role = $1")
+            .bind(role)
+            .execute(&mut *tx)
+            .await?;
+    }
+
+    // The admin form is always a full-form submit, so we write the four
+    // admin-scoped fields directly. COALESCE wouldn't work for role: Option's
+    // None ↔ JSON null conflation means sending `role: null` (to clear a
+    // role) would read as "field omitted" and keep the old value.
     let row = sqlx::query_as::<_, ModelRow>(
         "UPDATE models SET label=$1, provider=$2, model_name=$3, api_base=$4,
          api_key = CASE WHEN $5 = '' THEN api_key ELSE $5 END,
-         extra_body=$6, kind=$7
-         WHERE id=$8 AND scope='global'
+         extra_body=$6, kind=$7,
+         role       = $8,
+         visible    = COALESCE($9,  visible),
+         is_default = COALESCE($10, is_default),
+         admin_only = COALESCE($11, admin_only)
+         WHERE id=$12 AND scope='global'
          RETURNING *",
     )
     .bind(&req.label)
@@ -247,10 +325,16 @@ pub async fn admin_update_model(
     .bind(&req.api_key)
     .bind(&req.extra_body)
     .bind(&req.kind)
+    .bind(&req.role)
+    .bind(req.visible)
+    .bind(req.is_default)
+    .bind(req.admin_only)
     .bind(id)
-    .fetch_optional(&state.pool)
+    .fetch_optional(&mut *tx)
     .await?
     .ok_or_else(|| AppError::not_found("模型不存在"))?;
+
+    tx.commit().await?;
 
     Ok(Json(ModelResponse::from(row)))
 }
@@ -274,97 +358,3 @@ pub async fn admin_delete_model(
     Ok(Json(json!({ "ok": true })))
 }
 
-/// Admin: assign or clear a role ('cheap' / 'embedding') on a global model.
-/// Setting a role clears it from any other global model that held it.
-pub async fn admin_set_model_role(
-    State(state): State<AppState>,
-    auth: AuthUser,
-    Path(id): Path<Uuid>,
-    Json(req): Json<SetRoleRequest>,
-) -> AppResult<Json<Value>> {
-    guard_admin(&auth)?;
-
-    let mut tx = state.pool.begin().await?;
-
-    if let Some(ref role) = req.role {
-        // Clear this role from all other global models first
-        sqlx::query("UPDATE models SET role = NULL WHERE scope = 'global' AND role = $1")
-            .bind(role)
-            .execute(&mut *tx)
-            .await?;
-    }
-
-    let rows = sqlx::query("UPDATE models SET role = $1 WHERE id = $2 AND scope = 'global'")
-        .bind(&req.role)
-        .bind(id)
-        .execute(&mut *tx)
-        .await?;
-
-    tx.commit().await?;
-
-    if rows.rows_affected() == 0 {
-        return Err(AppError::not_found("模型不存在"));
-    }
-
-    Ok(Json(json!({ "ok": true })))
-}
-
-#[derive(Deserialize)]
-pub struct SetRoleRequest {
-    pub role: Option<String>,
-}
-
-#[derive(Deserialize)]
-pub struct SetVisibleRequest {
-    pub visible: bool,
-}
-
-/// Admin: toggle per-model visibility for the user-facing model picker.
-pub async fn admin_set_model_visible(
-    State(state): State<AppState>,
-    auth: AuthUser,
-    Path(id): Path<Uuid>,
-    Json(req): Json<SetVisibleRequest>,
-) -> AppResult<Json<Value>> {
-    guard_admin(&auth)?;
-
-    let rows = sqlx::query("UPDATE models SET visible = $1 WHERE id = $2 AND scope = 'global'")
-        .bind(req.visible)
-        .bind(id)
-        .execute(&state.pool)
-        .await?;
-
-    if rows.rows_affected() == 0 {
-        return Err(AppError::not_found("模型不存在"));
-    }
-
-    Ok(Json(json!({ "ok": true })))
-}
-
-/// Admin: set a global model as default (clears any existing default first).
-pub async fn admin_set_default_model(
-    State(state): State<AppState>,
-    auth: AuthUser,
-    Path(id): Path<Uuid>,
-) -> AppResult<Json<Value>> {
-    guard_admin(&auth)?;
-
-    let mut tx = state.pool.begin().await?;
-
-    sqlx::query("UPDATE models SET is_default = false WHERE scope = 'global'")
-        .execute(&mut *tx)
-        .await?;
-
-    let rows = sqlx::query("UPDATE models SET is_default = true WHERE id=$1 AND scope='global'")
-        .bind(id)
-        .execute(&mut *tx)
-        .await?;
-
-    tx.commit().await?;
-
-    if rows.rows_affected() == 0 {
-        return Err(AppError::not_found("模型不存在"));
-    }
-
-    Ok(Json(json!({ "ok": true })))
-}

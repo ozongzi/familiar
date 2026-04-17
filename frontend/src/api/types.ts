@@ -61,6 +61,7 @@ export interface Model {
   role: "cheap" | "embedding" | null;
   visible: boolean;
   kind: ModelKind;
+  admin_only: boolean;
   created_at: string;
 }
 
@@ -72,6 +73,10 @@ export interface UpsertModelRequest {
   api_key?: string;
   extra_body?: Record<string, unknown>;
   kind?: ModelKind;
+  role?: "cheap" | "embedding" | null;
+  visible?: boolean;
+  is_default?: boolean;
+  admin_only?: boolean;
 }
 
 export interface RenameConversationRequest {

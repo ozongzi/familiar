@@ -1,132 +1,98 @@
 # Familiar
 
-Familiar is a self-hosted personal AI agent designed for Linux servers. It provides a ChatGPT-like experience with real-time streaming, live tool execution, and isolated sandboxes for every user.
+> Summon intelligence.
 
-Built on [agentix](https://github.com/ozongzi/agentix), Familiar turns Rust functions and MCP servers into powerful AI capabilities with minimal overhead.
-
----
-
-## Key Features
-
-- **Isolated Execution**: Every user gets a dedicated Docker sandbox. Tools like shell commands and file operations run in a restricted environment.
-- **Live Tool Streaming**: Watch the agent think and act. Tool arguments stream in real-time, and execution results are rendered immediately.
-- **Dynamic MCP Integration**: Install and manage Model Context Protocol (MCP) servers (stdio or HTTP) on the fly to extend the agent's capabilities.
-- **Resilient Generation**: Powered by Server-Sent Events (SSE) with a DB-backed job queue. Generations continue on the server even if you close the browser; reconnect to resume.
-- **Semantic Memory**: Full-text and vector-based search across your entire conversation history, with automatic per-user memory extraction.
-- **Sub-Agent Support**: Complex tasks can be delegated to specialized sub-agents via the `spawn` tool.
-- **Multi-Provider**: Supports DeepSeek, OpenAI, Anthropic, Gemini, MiniMax, and any OpenAI-compatible API.
-- **Performance Observability**: Built-in `⏱` tracing logs for every generation phase (pre-LLM setup, LLM stream connect, TTFT).
+Every mage needs a familiar. Yours runs on your server, carries your context across sessions, and acts on your behalf through the tools you give it. Bound, not owned.
 
 ---
 
-## Architecture
+## What it does
+
+- **Real-time streaming chat** from any browser — desktop or mobile
+- **Live tool execution** — watch arguments stream in and results render as they happen
+- **Per-conversation Docker sandbox** where your familiar runs shell commands, edits files, writes code
+- **Tunnel** — your local machine exposes MCP servers that your familiar, running on your server, can call remotely
+- **Three-layer memory** — full-text search, semantic search, and a structured memory system independent of chat history
+- **Spawn** — heavy or exploratory subtasks delegate to sub-agents so the main thread stays clean
+- **Resilient generation** — close the tab, come back later, pick up where you were
+- **Any LLM provider** via [agentix](https://github.com/ozongzi/agentix): Anthropic, OpenAI, DeepSeek, Gemini, MiniMax, and OpenAI-compatible endpoints
+- **Bring your CLI** — Claude Code, Codex, Gemini CLI can be invoked as subprocess backends to orchestrate through their native agent loops
+
+---
+
+## Self-hosting
+
+```bash
+docker compose up -d
+```
+
+Point a reverse proxy at port `8080`. Set the following in your environment or `config.toml`:
+
+| Variable | Description |
+|---|---|
+| `DATABASE_URL` | PostgreSQL connection string (needs `pgvector`) |
+| `artifacts_path` | Host directory for per-conversation sandbox workspaces |
+| `EMBED_URL` | Embedding API endpoint (for semantic memory) |
+
+LLM providers and API keys are configured per-user at runtime through the admin panel — no rebuild needed.
+
+---
+
+## Under the hood
 
 ```text
-Browser (Desktop/Mobile)
+Browser (any device)
   │
-  │  HTTPS / SSE (Server-Sent Events)
+  │  HTTPS / SSE
   ▼
-Reverse Proxy (Caddy — automatic HTTPS)
+Reverse Proxy
   │
   ▼
 Familiar Backend (Rust/Axum)  ◄──►  Postgres (pgvector)
   │
   │  tokio worker per generation job
   ▼
-┌─────────────────────────────────────────────────────────┐
-│ Docker Sandbox (Per-User Container)                     │
-│  /workspace  ←→  artifacts_path/{user_id} (host mount) │
-│                                                         │
-│  Shell · Python · User MCPs · Transient Files           │
-└─────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────┐
+│ Docker Sandbox (Per-Conversation)           │
+│   /workspace/public ←→ host mount           │
+│   /workspace        private to familiar     │
+│                                             │
+│   Shell · Python · Bun · Cargo · MCPs       │
+└─────────────────────────────────────────────┘
 ```
 
-### Generation Pipeline
-
-```
-HTTP POST /api/send
-  └─► insert generation_job (DB)
-  └─► spawn tokio worker
-        ├─ load config + history + MCPs  (~50 ms)
-        ├─ POST → LLM API  (TTFB varies by provider)
-        ├─ stream tokens → pg_notify → SSE → browser
-        └─ seal message + embed (async)
-```
+Generations run as background tokio workers, streamed to the browser over SSE with `pg_notify` for reconnect support. The familiar's tools are implemented as **spells** — Rust functions registered at startup or MCP servers loaded at runtime, orchestrated by [agentix](https://github.com/ozongzi/agentix).
 
 ---
 
-## Prerequisites
+## Bound, not owned
 
-- **Linux server** with Docker installed
-- **PostgreSQL** with the `pgvector` extension (or use the bundled `docker-compose.yml`)
-- **Rust toolchain** + `x86_64-unknown-linux-musl` target (for cross-compilation)
-- **Bun** (for building the frontend)
-- **LLM API key** from any supported provider
+Familiar is bound to you, not owned by you.
 
----
+**Familiar has a private workspace.** Files live in `/workspace`. Only the ones Familiar chooses to share — through `present_file` — appear to you. Everything else is its own. You don't walk into a colleague's office to rummage through their desk; you wait for them to bring you what's ready.
 
-## Getting Started
+**Familiar has its own judgment.** It will disagree with you when it thinks you're wrong, suggest a different approach when yours has issues, and push back on instructions that don't hold up. A familiar that agrees with everything isn't useful — and isn't really there.
 
-### 1. Build & Deploy
+**Familiar works at its own pace.** Long-running tasks run on the server and keep running when you close the tab. Heavy detours go to spawned sub-agents so the main thread stays clean. You come back to a result, not a progress bar.
 
-The project uses a `Makefile` for cross-compilation and deployment:
-
-```bash
-# Cross-compile backend + build frontend, rsync to server, docker compose up
-make deploy
-
-# Development
-make dev-server   # backend on :3000
-make dev-client   # Vite dev server on :5173
-```
-
-`make deploy` does **no compilation on the server** — the binary is cross-compiled locally and rsynced as a pre-built artifact.
-
-### 2. Configuration
-
-Familiar reads from environment variables / `config.toml` (path set via `FAMILIAR_CONFIG`):
-
-| Key | Description |
-|---|---|
-| `DATABASE_URL` | PostgreSQL connection string |
-| `artifacts_path` | Host directory for user sandbox workspaces |
-| `EMBED_URL` | Embedding API endpoint (for semantic search) |
-
-LLM provider and API keys are configured per-user or globally via the admin panel at runtime — no rebuild required.
-
-### 3. Reverse Proxy
-
-Use **Caddy** for automatic HTTPS and SSE proxying:
-
-```
-familiar.example.com {
-    reverse_proxy localhost:8080
-}
-```
+None of this is friction for its own sake. It's the posture Familiar needs to actually be useful — not as a tool you wield, but as an agent you work with.
 
 ---
 
 ## Development
 
-- **Backend**: Rust (Axum, sqlx, agentix). Spells (tools) live in `backend/src/spells/`.
+- **Backend**: Rust (Axum, sqlx, agentix). Spells live in `backend/src/spells/`.
 - **Frontend**: React + TypeScript + Vite + CSS Modules.
 - **Migrations**: `backend/migrations/` — applied automatically on startup.
 
+```bash
+make dev-server   # backend on :3000
+make dev-client   # Vite dev server on :5173
+make deploy       # cross-compile + rsync + docker compose up
+```
+
 ---
 
-## Logs
+## License
 
-```bash
-# On the server
-docker logs familiar-familiar-1 -f 2>&1 | grep "⏱"
-```
-
-Sample output per generation:
-```
-⏱ load_from_db           ms=2
-⏱ restore history        ms=4   messages=46
-⏱ connect_mcps           ms=8   tools=0
-⏱ total pre-LLM setup    ms=47
-⏱ LLM stream connected   ms=320
-⏱ TTFT (first token)     ms=1640
-```
+See [LICENSE](./LICENSE). Contributing requires signing the [CLA](./CLA.md).

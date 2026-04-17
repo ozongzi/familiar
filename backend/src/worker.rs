@@ -141,11 +141,16 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
         }
 
         // 1. conversation-level model_id
+        // Defense-in-depth: silently ignore admin_only models dispatched by
+        // non-admins. The UI filter + create_conversation guard should catch
+        // this upstream; here we fall through to the default-model branch so
+        // the job still completes rather than 500-ing.
         let conv_model: Option<(String, String, String, String, Value, String)> = sqlx::query_as(
             "SELECT m.provider, m.model_name, m.api_base, m.api_key, m.extra_body, m.kind
              FROM conversations c
              JOIN models m ON m.id = c.model_id
-             WHERE c.id = $1",
+             JOIN users u ON u.id = c.user_id
+             WHERE c.id = $1 AND (NOT m.admin_only OR u.is_admin)",
         )
         .bind(ctx.conversation_id)
         .fetch_optional(&ctx.pool)
@@ -966,6 +971,15 @@ async fn generation_loop_claude_code(
                 .await;
             }
             AgentEvent::ToolCallStart(tc) => {
+                // Claude-code's stream-json doesn't chunk tool args — we get
+                // a single completed ToolCall. Emit tool_call with the full
+                // arguments as `delta` so the frontend creates a bubble (its
+                // handler only runs on tool_call, not tool_call_complete).
+                emit(
+                    ctx,
+                    json!({"type": "tool_call", "id": tc.id, "name": tc.name, "delta": tc.arguments}),
+                )
+                .await;
                 emit(
                     ctx,
                     json!({"type": "tool_call_complete", "id": tc.id, "name": tc.name}),

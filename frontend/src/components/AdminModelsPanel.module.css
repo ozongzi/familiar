@@ -47,6 +47,49 @@
   gap: 10px;
 }
 
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 6px;
+}
+
+.section + .section {
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 12px;
+  margin-top: 6px;
+}
+
+.sectionTitle {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-tertiary, #888);
+}
+
+.checkRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.checkRow input[type="checkbox"] {
+  margin: 0;
+  width: 14px;
+  height: 14px;
+  accent-color: var(--accent, #6366f1);
+}
+
+.checkRow .hint {
+  color: var(--text-tertiary);
+  font-size: 12px;
+  margin-left: 4px;
+}
+
 .row {
   display: flex;
   flex-direction: column;
