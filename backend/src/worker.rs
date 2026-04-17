@@ -453,6 +453,7 @@ async fn generation_loop(
         let mut usage = UsageStats::default();
         let mut token_count: u32 = 0;
         let mut ttft_logged = false;
+        let mut ttfa_logged = false; // first event of any kind (content, reasoning, tool call)
 
         // ── Consume stream ────────────────────────────────────────────────
         loop {
@@ -482,6 +483,20 @@ async fn generation_loop(
             }
 
             let event = stream.next().await;
+            if !ttfa_logged {
+                if let Some(ev) = &event {
+                    if matches!(
+                        ev,
+                        LlmEvent::Token(_)
+                            | LlmEvent::Reasoning(_)
+                            | LlmEvent::ToolCallChunk(_)
+                            | LlmEvent::ToolCall(_)
+                    ) {
+                        ttfa_logged = true;
+                        info!(ms = t_llm.elapsed().as_millis(), "⏱ TTFA (first event of any kind)");
+                    }
+                }
+            }
             match event {
                 None | Some(LlmEvent::Done) => break,
 
