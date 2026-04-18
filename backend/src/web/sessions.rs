@@ -22,7 +22,7 @@ pub async fn login(
     headers: HeaderMap,
     Json(req): Json<LoginRequest>,
 ) -> AppResult<Json<LoginResponse>> {
-    let row = sqlx::query("SELECT id, password_hash FROM users WHERE name = $1")
+    let row = sqlx::query("SELECT id, password_hash, is_banned FROM users WHERE name = $1")
         .bind(&req.name)
         .fetch_optional(&state.pool)
         .await?
@@ -38,6 +38,11 @@ pub async fn login(
     let valid = bcrypt::verify(&req.password, &password_hash)?;
     if !valid {
         return Err(AppError::bad_request("用户名或密码错误"));
+    }
+
+    let is_banned: bool = row.try_get("is_banned").unwrap_or(false);
+    if is_banned {
+        return Err(AppError::forbidden("账号已被封禁"));
     }
 
     let token = generate_token();

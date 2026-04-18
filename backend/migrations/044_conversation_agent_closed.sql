@@ -1,0 +1,1 @@
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS agent_closed BOOLEAN NOT NULL DEFAULT false;

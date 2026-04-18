@@ -1,3 +1,4 @@
+mod admin_spells;
 mod generate_image_spell;
 mod history_spell;
 mod manage_mcp_spell;
@@ -10,6 +11,7 @@ mod spawn_spell;
 mod tavily_spell;
 mod ui_spells;
 
+use admin_spells::AdminSpells;
 use generate_image_spell::GenerateImageSpell;
 use history_spell::HistorySpell;
 use memory_spell::MemorySpell;
@@ -130,10 +132,14 @@ pub fn build_all_spells(deps: SpellDeps) -> impl agentix::Tool {
             conversation_id: deps.conversation_id,
         }
         + MemorySpell {
-            pool: deps.pool,
+            pool: deps.pool.clone(),
             user_id: deps.user_id,
             conversation_id: deps.conversation_id,
             embed: deps.embed,
+        }
+        + AdminSpells {
+            pool: deps.pool,
+            conversation_id: deps.conversation_id,
         };
 
     let mut tb = agentix::ToolBundle::new();

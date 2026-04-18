@@ -48,15 +48,19 @@ async fn verify_conversation_owner(
     conversation_id: Uuid,
     user_id: Uuid,
 ) -> Result<(), AppError> {
-    let row = sqlx::query("SELECT user_id FROM conversations WHERE id = $1")
-        .bind(conversation_id)
-        .fetch_optional(&state.pool)
-        .await
-        .map_err(|e| {
-            tracing::error!("conversation owner lookup: {e}");
-            AppError::internal("数据库错误")
-        })?
-        .ok_or_else(|| AppError::not_found("对话不存在"))?;
+    let row = sqlx::query(
+        "SELECT c.user_id, c.agent_closed, u.is_banned
+         FROM conversations c JOIN users u ON u.id = c.user_id
+         WHERE c.id = $1",
+    )
+    .bind(conversation_id)
+    .fetch_optional(&state.pool)
+    .await
+    .map_err(|e| {
+        tracing::error!("conversation owner lookup: {e}");
+        AppError::internal("数据库错误")
+    })?
+    .ok_or_else(|| AppError::not_found("对话不存在"))?;
 
     let owner: Uuid = row
         .try_get("user_id")
@@ -64,6 +68,17 @@ async fn verify_conversation_owner(
     if owner != user_id {
         return Err(AppError::forbidden("无权访问该对话"));
     }
+
+    let is_banned: bool = row.try_get("is_banned").unwrap_or(false);
+    if is_banned {
+        return Err(AppError::forbidden("账号已被封禁"));
+    }
+
+    let agent_closed: bool = row.try_get("agent_closed").unwrap_or(false);
+    if agent_closed {
+        return Err(AppError::forbidden("对话已关闭"));
+    }
+
     Ok(())
 }
 
