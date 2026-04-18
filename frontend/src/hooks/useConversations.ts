@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api/client";
 import type { Conversation } from "../api/types";
+import { toast } from "../store/toast";
 
 export function useConversations(token: string | null) {
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -36,7 +37,8 @@ export function useConversations(token: string | null) {
         });
         setConversations((prev) => [conv, ...prev]);
         return conv;
-      } catch {
+      } catch (e) {
+        toast.error((e as Error).message ?? "创建对话失败");
         return null;
       }
     },
@@ -50,7 +52,8 @@ export function useConversations(token: string | null) {
         await api.deleteConversation(token, id);
         setConversations((prev) => prev.filter((c) => c.id !== id));
         return true;
-      } catch {
+      } catch (e) {
+        toast.error((e as Error).message ?? "删除失败");
         return false;
       }
     },

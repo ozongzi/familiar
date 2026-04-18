@@ -6,6 +6,7 @@ import { ChatPage } from "./pages/ChatPage";
 import { AdminPage } from "./pages/AdminPage";
 import { PrivacyConsentModal } from "./components/PrivacyConsentModal";
 import { PrivacyPage } from "./pages/PrivacyPage";
+import { Toaster } from "./components/Toaster";
 import { Routes, Route, Navigate } from "react-router-dom";
 
 export function App() {
@@ -63,6 +64,8 @@ export function App() {
   }
 
   return (
+    <>
+    <Toaster />
     <Routes>
       <Route path="/" element={<ChatPage />} />
       <Route path="/:conversationId" element={<ChatPage />} />
@@ -73,5 +76,6 @@ export function App() {
       <Route path="/privacy" element={<PrivacyPage />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
+    </>
   );
 }

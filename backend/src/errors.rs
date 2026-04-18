@@ -12,27 +12,27 @@ pub struct AppError(pub StatusCode, pub Value);
 
 impl AppError {
     pub fn unauthorized() -> Self {
-        Self(StatusCode::UNAUTHORIZED, json!("未授权"))
+        Self(StatusCode::UNAUTHORIZED, json!({"error": "未授权"}))
     }
 
     pub fn not_found(msg: &str) -> Self {
-        Self(StatusCode::NOT_FOUND, json!(msg))
+        Self(StatusCode::NOT_FOUND, json!({"error": msg}))
     }
 
     pub fn bad_request(msg: &str) -> Self {
-        Self(StatusCode::BAD_REQUEST, json!(msg))
+        Self(StatusCode::BAD_REQUEST, json!({"error": msg}))
     }
 
     pub fn forbidden(msg: &str) -> Self {
-        Self(StatusCode::FORBIDDEN, json!(msg))
+        Self(StatusCode::FORBIDDEN, json!({"error": msg}))
     }
 
     pub fn internal(msg: &str) -> Self {
-        Self(StatusCode::INTERNAL_SERVER_ERROR, json!(msg))
+        Self(StatusCode::INTERNAL_SERVER_ERROR, json!({"error": msg}))
     }
 
     pub fn conflict(msg: &str) -> Self {
-        Self(StatusCode::CONFLICT, json!(msg))
+        Self(StatusCode::CONFLICT, json!({"error": msg}))
     }
 }
 
@@ -46,15 +46,15 @@ impl From<sqlx::Error> for AppError {
     fn from(err: sqlx::Error) -> Self {
         tracing::error!("sqlx error: {:?}", err);
         match err {
-            sqlx::Error::RowNotFound => AppError::not_found("数据不存在"),
+            sqlx::Error::RowNotFound => AppError::not_found("记录不存在"),
             sqlx::Error::Database(db_err) => {
                 if db_err.constraint().is_some() {
                     AppError::conflict("数据已存在")
                 } else {
-                    AppError::internal("数据库错误")
+                    AppError::internal(&format!("数据库错误: {db_err}"))
                 }
             }
-            _ => AppError::internal("数据库错误"),
+            _ => AppError::internal(&format!("数据库错误: {err}")),
         }
     }
 }
