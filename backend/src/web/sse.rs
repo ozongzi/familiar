@@ -35,6 +35,25 @@ pub struct InterruptRequest {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+/// Tools whose call/result/progress events are suppressed from the SSE stream.
+const HIDDEN_TOOLS: &[&str] = &["end_conversation", "ban_user"];
+
+fn is_hidden_tool_event(payload: &str) -> bool {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(payload) else {
+        return false;
+    };
+    let Some(t) = v.get("type").and_then(|t| t.as_str()) else {
+        return false;
+    };
+    if !matches!(t, "tool_call" | "tool_call_complete" | "tool_result" | "tool_progress") {
+        return false;
+    }
+    v.get("name")
+        .and_then(|n| n.as_str())
+        .map(|name| HIDDEN_TOOLS.contains(&name))
+        .unwrap_or(false)
+}
+
 fn is_terminal(payload: &str) -> bool {
     serde_json::from_str::<serde_json::Value>(payload)
         .ok()
@@ -246,6 +265,9 @@ pub async fn sse_handler(
             if matches!(event_type.as_deref(), Some("token") | Some("reasoning_token")) {
                 continue;
             }
+            if is_hidden_tool_event(payload) {
+                continue;
+            }
             yield Ok::<Event, Infallible>(Event::default().data(payload.clone()));
         }
 
@@ -284,7 +306,9 @@ pub async fn sse_handler(
             if is_terminal(payload) {
                 done = true;
             }
-            yield Ok(Event::default().data(payload.clone()));
+            if !is_hidden_tool_event(payload) {
+                yield Ok(Event::default().data(payload.clone()));
+            }
         }
 
         if done {
@@ -305,7 +329,9 @@ pub async fn sse_handler(
                             let (job_str, event_json) = rest.split_at(36);
                             let event_json = &event_json[1..]; // skip ':'
                             let notif_job: Option<Uuid> = job_str.parse().ok();
-                            if notif_job == Some(job_id) && !event_json.is_empty() {
+                            if notif_job == Some(job_id) && !event_json.is_empty()
+                                && !is_hidden_tool_event(event_json)
+                            {
                                 yield Ok(Event::default().data(event_json));
                             }
                         }
@@ -343,7 +369,9 @@ pub async fn sse_handler(
                     for (id, payload) in &new_events {
                         last_id = *id;
                         let terminal = is_terminal(payload);
-                        yield Ok(Event::default().data(payload.clone()));
+                        if !is_hidden_tool_event(payload) {
+                            yield Ok(Event::default().data(payload.clone()));
+                        }
                         if terminal {
                             return;
                         }
@@ -375,7 +403,9 @@ pub async fn sse_handler(
                         .unwrap_or_default();
 
                         for (_id, payload) in &remaining {
-                            yield Ok(Event::default().data(payload.clone()));
+                            if !is_hidden_tool_event(payload) {
+                                yield Ok(Event::default().data(payload.clone()));
+                            }
                         }
                         break;
                     }
