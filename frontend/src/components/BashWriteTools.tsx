@@ -230,19 +230,8 @@ export function MultiWriteTool({ bubble }: { bubble: ToolBubble }) {
 
   const entries: WriteEntry[] = (() => {
     const parsed = argsView.parsed;
-    // writes は直接配列として渡される
-    if (Array.isArray(parsed?.writes)) {
-      return parsed.writes as WriteEntry[];
-    }
-    // fallback: writes_json 文字列
-    const raw = typeof parsed?.writes_json === "string" ? parsed.writes_json : null;
-    if (!raw) return [];
-    try {
-      const arr = JSON.parse(raw);
-      return Array.isArray(arr) ? arr : [];
-    } catch {
-      return [];
-    }
+    if (!Array.isArray(parsed?.writes)) return [];
+    return parsed.writes as WriteEntry[];
   })();
 
   const resultObj = (() => {
