@@ -489,6 +489,46 @@ pub async fn branch_handler(
     Ok(StatusCode::OK)
 }
 
+// ── POST /api/conversations/{id}/activate ────────────────────────────────────
+//
+// Point the conversation at the subtree rooted at `message_id`. The active
+// leaf becomes the deepest descendant (picking the highest-id child at each
+// level, i.e. the most recently written branch). Used by the branch switcher
+// UI to flip between siblings.
+
+#[derive(Deserialize)]
+pub struct ActivateRequest {
+    pub message_id: i64,
+}
+
+pub async fn activate_handler(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(conversation_id): Path<Uuid>,
+    Json(body): Json<ActivateRequest>,
+) -> Result<impl IntoResponse, AppError> {
+    verify_conversation_owner(&state, conversation_id, auth.user_id).await?;
+
+    // The message must belong to this conversation.
+    let conv_of_msg: Option<Uuid> =
+        sqlx::query_scalar("SELECT conversation_id FROM messages WHERE id = $1")
+            .bind(body.message_id)
+            .fetch_optional(&state.pool)
+            .await
+            .map_err(|e| AppError::internal(&e.to_string()))?;
+    if conv_of_msg != Some(conversation_id) {
+        return Err(AppError::not_found("消息不存在"));
+    }
+
+    let leaf = state
+        .db
+        .activate(conversation_id, body.message_id)
+        .await
+        .map_err(|e| AppError::internal(&e.to_string()))?;
+
+    Ok(Json(serde_json::json!({ "active_message_id": leaf })))
+}
+
 // ── POST /api/stream/{stream_id}/abort ───────────────────────────────────────
 
 pub async fn stream_abort_handler(

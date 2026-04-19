@@ -290,6 +290,7 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
     let t_restore = std::time::Instant::now();
     let mut messages = match crate::compact::load_for_generation(
         &ctx.db,
+        &frontier_cfg,
         ctx.conversation_id,
         ctx.user_id,
     )
@@ -373,6 +374,7 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
         if crate::compact::maybe_compact(ctx, &frontier_cfg, &http).await {
             messages = crate::compact::load_for_generation(
                 &ctx.db,
+                &frontier_cfg,
                 ctx.conversation_id,
                 ctx.user_id,
             )
@@ -423,6 +425,7 @@ async fn generation_loop(
         if crate::compact::maybe_compact(ctx, &compact_model, http).await {
             messages = crate::compact::load_for_generation(
                 &ctx.db,
+                &compact_model,
                 ctx.conversation_id,
                 ctx.user_id,
             )
