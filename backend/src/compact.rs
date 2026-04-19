@@ -31,7 +31,9 @@
 //! boundary message's `summary_text`. The old anchor remains valid for any
 //! branch that still traverses it.
 
-use agentix::{LlmEvent, Message, UserContent};
+use agentix::{
+    AgentEvent, ClaudeCodeConfig, LlmEvent, Message, ToolBundle, UserContent, agent_claude_code,
+};
 use futures::StreamExt;
 use sqlx::PgPool;
 use tracing::{info, warn};
@@ -352,11 +354,16 @@ pub async fn maybe_compact(
 
 // ── Internal: boundary search ─────────────────────────────────────────────────
 
-/// Latest provider-reported prompt_tokens on an assistant message — this is
-/// the current context size the LLM sees.
+/// Latest provider-reported context size on an assistant message. With
+/// Anthropic prompt caching, `prompt_tokens` alone only counts non-cached
+/// input — cached content is reported separately. The actual context the
+/// model processes is the sum of all three.
 async fn latest_context_tokens(pool: &PgPool, conv_id: Uuid) -> i64 {
     sqlx::query_scalar::<_, Option<i64>>(
-        "SELECT prompt_tokens FROM messages
+        "SELECT COALESCE(prompt_tokens, 0)
+              + COALESCE(cache_read_tokens, 0)
+              + COALESCE(cache_creation_tokens, 0)
+         FROM messages
          WHERE conversation_id = $1
            AND role = 'assistant'
            AND prompt_tokens IS NOT NULL
@@ -426,18 +433,16 @@ fn snap_boundary(delta: &[Message], start: usize) -> usize {
 
 // ── Internal: summariser ──────────────────────────────────────────────────────
 
-async fn run_summariser(
+async fn run_summariser_http(
     ctx: &WorkerContext,
     model: &ModelConfig,
     http: &reqwest::Client,
-    input: &[Message],
+    messages: Vec<Message>,
 ) -> Option<String> {
-    let compact_messages = strip_images(input);
-
     let request = model
         .to_request()
         .system_prompt(build_compact_system_prompt())
-        .messages(compact_messages)
+        .messages(messages)
         .max_tokens(COMPACT_MAX_OUTPUT_TOKENS);
 
     let mut stream = match request.stream(http).await {
@@ -459,6 +464,58 @@ async fn run_summariser(
             _ => {}
         }
     }
+    Some(raw)
+}
+
+/// Drive `claude -p` (subprocess) with no tools and collect its text output.
+/// Used when the frontier model itself is `kind=claude-code` and has no
+/// HTTP credentials of its own.
+async fn run_summariser_claude_code(
+    ctx: &WorkerContext,
+    model: &ModelConfig,
+    mut messages: Vec<Message>,
+) -> Option<String> {
+    // agent_claude_code requires the last message to be a User turn — append
+    // a trigger asking for the summary now.
+    messages.push(Message::User(vec![UserContent::Text {
+        text: "Now produce the summary as instructed.".to_string(),
+    }]));
+
+    let cc_config = ClaudeCodeConfig::new().model(&model.name);
+    let mut stream = agent_claude_code(
+        ToolBundle::new(),
+        build_compact_system_prompt(),
+        cc_config,
+        messages,
+    );
+
+    let mut raw = String::new();
+    while let Some(event) = stream.next().await {
+        match event {
+            AgentEvent::Token(t) => raw.push_str(&t),
+            AgentEvent::Error(e) => {
+                warn!(conversation = %ctx.conversation_id, "compact (claude-code) error: {e}");
+                return None;
+            }
+            _ => {}
+        }
+    }
+    Some(raw)
+}
+
+async fn run_summariser(
+    ctx: &WorkerContext,
+    model: &ModelConfig,
+    http: &reqwest::Client,
+    input: &[Message],
+) -> Option<String> {
+    let compact_messages = strip_images(input);
+
+    let raw = if model.kind == "claude-code" {
+        run_summariser_claude_code(ctx, model, compact_messages).await?
+    } else {
+        run_summariser_http(ctx, model, http, compact_messages).await?
+    };
 
     if raw.trim().is_empty() {
         warn!(conversation = %ctx.conversation_id, "compact produced empty output");

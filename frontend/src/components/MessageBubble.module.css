@@ -1215,11 +1215,9 @@
 .widgetBubble {
     width: 100%;
     max-width: 760px;
-    background: var(--bg-base);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
+    background: transparent;
+    border: none;
     overflow: hidden;
-    padding: 4px 0;
 }
 
 .widgetLoading {

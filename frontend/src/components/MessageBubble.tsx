@@ -132,12 +132,19 @@ function buildWidgetSrcdoc(code: string): string {
       @import url("https://cdn.jsdelivr.net/npm/@fontsource/fira-code@5/index.css");
       html, body {
         margin: 0;
-        padding: 12px 16px;
+        padding: 0;
         font-family: var(--font-sans);
         font-size: 15px;
         color: var(--text-primary);
         background: transparent;
         overflow-x: hidden;
+      }
+      body {
+        /* flow-root prevents child margins from collapsing out of body,
+           so scrollHeight accurately reflects the visible content height
+           and the parent iframe doesn't end up scrollable. */
+        display: flow-root;
+        padding: 12px 16px;
       }
     </style>
   `;
@@ -204,8 +211,10 @@ function WidgetChatBubble({ bubble }: { bubble: ToolBubble }) {
     const poll = () => {
       try {
         const doc = iframe.contentDocument;
-        if (doc?.body) {
-          const h = doc.body.scrollHeight;
+        if (doc?.body && doc.documentElement) {
+          // documentElement covers the case where body margins would otherwise
+          // escape the scrollHeight calculation and leave the iframe scrollable.
+          const h = Math.max(doc.body.scrollHeight, doc.documentElement.scrollHeight);
           if (h > 20 && h !== prevH) {
             prevH = h;
             setHeight(Math.min(Math.max(h, 60), 2000));
@@ -1037,6 +1046,13 @@ function DiagramBubble({ bubble }: { bubble: ToolBubble }) {
         mermaid.initialize({
           startOnLoad: false,
           theme: "base",
+          themeCSS: `
+            .edgeLabel { background-color: transparent !important; }
+            .edgeLabel rect { fill: transparent !important; }
+            .edgeLabel .labelBkg { fill: transparent !important; opacity: 0 !important; }
+            .edgeLabel foreignObject > div,
+            .edgeLabel foreignObject > div > span { background-color: transparent !important; }
+          `,
           themeVariables: {
             primaryColor: "#f0ede6",
             primaryTextColor: "#1a1915",
@@ -1065,7 +1081,7 @@ function DiagramBubble({ bubble }: { bubble: ToolBubble }) {
 
   return (
     <div className={styles.row} style={{ justifyContent: "flex-start" }}>
-      <div className={styles.widgetBubble} style={{ padding: "16px 20px" }}>
+      <div className={styles.widgetBubble}>
         {bubble.pending && (
           <div className={styles.widgetLoading}>
             <span className={styles.widgetLoadingDot} />
