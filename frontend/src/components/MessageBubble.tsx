@@ -72,11 +72,62 @@ function buildWidgetSrcdoc(code: string): string {
   const baseStyle = `
     <style>
       *, *::before, *::after { box-sizing: border-box; }
+      :root {
+        --bg-base: #faf9f5;
+        --bg-surface: #ffffff;
+        --bg-elevated: #f0ede6;
+        --bg-hover: #ebe7de;
+        --bg-active: #e4dfd4;
+        --border: #ddd8ce;
+        --border-subtle: #e8e4db;
+        --text-primary: #1a1915;
+        --text-secondary: #6b6651;
+        --text-muted: #73726c;
+        --text-link: #b85c3a;
+        --accent: #c96442;
+        --accent-dim: #f5ede8;
+        --accent-glow: rgba(201, 100, 66, 0.12);
+        --accent-hover: #b85539;
+        --danger: #c0392b;
+        --danger-dim: rgba(192, 57, 43, 0.08);
+        --success: #2d7a4f;
+        --radius-sm: 8px;
+        --radius-md: 12px;
+        --radius-lg: 20px;
+        --radius-full: 999px;
+        --font-sans: "LXGW WenKai", system-ui, -apple-system, sans-serif;
+        --font-mono: "Fira Code", ui-monospace, monospace;
+        --font-serif: "LXGW WenKai", Georgia, serif;
+        /* visualizer compat aliases */
+        --color-background-primary: #ffffff;
+        --color-background-secondary: #f0ede6;
+        --color-background-tertiary: #faf9f5;
+        --color-background-info: #e8f0fb;
+        --color-background-danger: rgba(192, 57, 43, 0.08);
+        --color-background-success: rgba(45, 122, 79, 0.08);
+        --color-background-warning: #fdf3e0;
+        --color-text-primary: #1a1915;
+        --color-text-secondary: #6b6651;
+        --color-text-tertiary: #73726c;
+        --color-text-info: #185fa5;
+        --color-text-danger: #c0392b;
+        --color-text-success: #2d7a4f;
+        --color-text-warning: #854f0b;
+        --color-border-tertiary: rgba(26, 25, 21, 0.15);
+        --color-border-secondary: rgba(26, 25, 21, 0.3);
+        --color-border-primary: rgba(26, 25, 21, 0.4);
+        --border-radius-md: 8px;
+        --border-radius-lg: 12px;
+        --border-radius-xl: 16px;
+      }
+      @import url("https://cdn.jsdelivr.net/npm/lxgw-wenkai-webfont@1.7.0/style.css");
+      @import url("https://cdn.jsdelivr.net/npm/@fontsource/fira-code@5/index.css");
       body {
         margin: 0;
-        font-family: system-ui, -apple-system, sans-serif;
+        padding: 12px 16px;
+        font-family: var(--font-sans);
         font-size: 15px;
-        color: #1a1915;
+        color: var(--text-primary);
         background: transparent;
         overflow-x: hidden;
       }
