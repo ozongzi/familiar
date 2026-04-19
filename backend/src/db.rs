@@ -43,6 +43,12 @@ pub struct MessageRow {
     pub parent_id: Option<i64>,
     pub streaming: bool,
     pub job_id: Option<Uuid>,
+    /// Non-null when this message is a compact summary anchor: it means
+    /// "the path root..this message has been condensed into `summary_text`".
+    /// Any branch whose ancestor chain includes this message can reuse the
+    /// summary; branches that don't traverse it fall back to raw history.
+    pub summary_text: Option<String>,
+    pub summary_tokens: Option<i32>,
 }
 
 /// Provider-reported token counts for a single assistant message.
@@ -368,6 +374,138 @@ impl Db {
         Ok(())
     }
 
+    /// Descend from `message_id` to its deepest descendant, always picking
+    /// the highest-id child (most recent). Returns `message_id` itself if it
+    /// has no children.
+    pub async fn walk_to_leaf(&self, message_id: i64) -> anyhow::Result<i64> {
+        let leaf: Option<i64> = sqlx::query_scalar(
+            r#"
+            WITH RECURSIVE descent AS (
+                SELECT id, 0 AS depth FROM messages WHERE id = $1
+                UNION ALL
+                SELECT child.id, d.depth + 1
+                FROM descent d
+                CROSS JOIN LATERAL (
+                    SELECT id FROM messages
+                    WHERE parent_id = d.id
+                    ORDER BY id DESC
+                    LIMIT 1
+                ) child
+            )
+            SELECT id FROM descent ORDER BY depth DESC LIMIT 1
+            "#,
+        )
+        .bind(message_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(leaf.unwrap_or(message_id))
+    }
+
+    /// Point the conversation at a specific subtree. Walks `message_id`
+    /// to its deepest descendant and sets that as `active_message_id`.
+    /// Returns the new active leaf id.
+    pub async fn activate(
+        &self,
+        conversation_id: Uuid,
+        message_id: i64,
+    ) -> anyhow::Result<i64> {
+        let leaf = self.walk_to_leaf(message_id).await?;
+        sqlx::query("UPDATE conversations SET active_message_id = $1 WHERE id = $2")
+            .bind(leaf)
+            .bind(conversation_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(leaf)
+    }
+
+    /// Persist a compact summary anchored on a specific message.
+    pub async fn set_summary(
+        &self,
+        message_id: i64,
+        summary: &str,
+        tokens: i32,
+    ) -> anyhow::Result<()> {
+        sqlx::query(
+            "UPDATE messages SET summary_text = $1, summary_tokens = $2 WHERE id = $3",
+        )
+        .bind(summary)
+        .bind(tokens)
+        .bind(message_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// For each message on the active branch, return its sibling ids
+    /// (messages sharing the same `parent_id` in this conversation, in id
+    /// order, including the message itself). Used by the UI to render a
+    /// `‹ 2/3 ›` branch switcher on messages that have alternatives.
+    pub async fn list_active_with_siblings(
+        &self,
+        conversation_id: Uuid,
+    ) -> anyhow::Result<Vec<(MessageRow, Vec<i64>)>> {
+        // Single round-trip: walk the active branch + compute siblings per row.
+        let rows: Vec<(MessageRow, Vec<i64>)> = sqlx::query_as::<_, SiblingRow>(
+            r#"
+            WITH RECURSIVE branch AS (
+                SELECT m.id, m.conversation_id, m.role, m.name, m.content,
+                       m.spell_casts, m.spell_cast_id, m.reasoning,
+                       m.created_at, m.parent_id, m.streaming, m.job_id,
+                       m.summary_text, m.summary_tokens
+                FROM messages m
+                JOIN conversations c ON c.id = $1
+                WHERE m.id = c.active_message_id
+                UNION ALL
+                SELECT m.id, m.conversation_id, m.role, m.name, m.content,
+                       m.spell_casts, m.spell_cast_id, m.reasoning,
+                       m.created_at, m.parent_id, m.streaming, m.job_id,
+                       m.summary_text, m.summary_tokens
+                FROM messages m
+                JOIN branch b ON m.id = b.parent_id
+            )
+            SELECT b.id, b.conversation_id, b.role, b.name, b.content,
+                   b.spell_casts, b.spell_cast_id, b.reasoning, b.created_at,
+                   b.parent_id, b.streaming, b.job_id,
+                   b.summary_text, b.summary_tokens,
+                   COALESCE(
+                       (SELECT array_agg(s.id ORDER BY s.id ASC)
+                        FROM messages s
+                        WHERE s.conversation_id = b.conversation_id
+                          AND s.parent_id IS NOT DISTINCT FROM b.parent_id),
+                       ARRAY[b.id]
+                   ) AS siblings
+            FROM branch b
+            ORDER BY b.id ASC
+            "#,
+        )
+        .bind(conversation_id)
+        .fetch_all(&self.pool)
+        .await?
+        .into_iter()
+        .map(|r| (
+            MessageRow {
+                id: r.id,
+                conversation_id: r.conversation_id,
+                role: r.role,
+                name: r.name,
+                content: r.content,
+                spell_casts: r.spell_casts,
+                spell_cast_id: r.spell_cast_id,
+                reasoning: r.reasoning,
+                created_at: r.created_at,
+                parent_id: r.parent_id,
+                streaming: r.streaming,
+                job_id: r.job_id,
+                summary_text: r.summary_text,
+                summary_tokens: r.summary_tokens,
+            },
+            r.siblings,
+        ))
+        .collect();
+
+        Ok(rows)
+    }
+
     pub async fn set_embedding(&self, row_id: i64, embedding: Vector) -> anyhow::Result<()> {
         sqlx::query("UPDATE messages SET embedding = $1 WHERE id = $2")
             .bind(&embedding)
@@ -377,43 +515,57 @@ impl Db {
         Ok(())
     }
 
-    pub async fn restore(
-        &self,
-        conversation_id: Uuid,
-        user_id: Uuid,
-    ) -> anyhow::Result<Vec<Message>> {
-        self.restore_after(conversation_id, user_id, None).await
-    }
-
-    /// Like `restore`, but only returns messages with `id > after_msg_id` on
-    /// the active branch. Pass `None` to get the full history.
-    pub async fn restore_after(
+    /// Active-branch history rows paired with their converted `Message`s,
+    /// so callers (e.g. `compact.rs`) can inspect per-message `id`,
+    /// `summary_text`, etc. alongside the LLM-facing history.
+    ///
+    /// Filters: streaming rows are excluded; empty assistant rows with no
+    /// tool calls are excluded. Pass `after_msg_id = Some(id)` to restrict
+    /// to rows with `id > after_msg_id` on the active branch.
+    pub async fn restore_after_rows(
         &self,
         conversation_id: Uuid,
         user_id: Uuid,
         after_msg_id: Option<i64>,
-    ) -> anyhow::Result<Vec<Message>> {
+    ) -> anyhow::Result<(Vec<MessageRow>, Vec<Message>)> {
+        let rows = self
+            .load_active_rows_filtered(conversation_id, after_msg_id)
+            .await?;
+        let mut messages: Vec<Message> =
+            rows.iter().cloned().map(row_to_message).collect();
+        resolve_sandbox_images(&mut messages, &self.sandbox, user_id, conversation_id)
+            .await;
+        Ok((rows, messages))
+    }
+
+    async fn load_active_rows_filtered(
+        &self,
+        conversation_id: Uuid,
+        after_msg_id: Option<i64>,
+    ) -> anyhow::Result<Vec<MessageRow>> {
         let after = after_msg_id.unwrap_or(i64::MIN);
         let rows: Vec<MessageRow> = sqlx::query_as(
             r#"
             WITH RECURSIVE branch AS (
                 SELECT m.id, m.conversation_id, m.role, m.name, m.content,
                        m.spell_casts, m.spell_cast_id, m.reasoning,
-                       m.created_at, m.parent_id, m.streaming, m.job_id
+                       m.created_at, m.parent_id, m.streaming, m.job_id,
+                       m.summary_text, m.summary_tokens
                 FROM messages m
                 JOIN conversations c ON c.id = $1
                 WHERE m.id = c.active_message_id AND m.id > $2
                 UNION ALL
                 SELECT m.id, m.conversation_id, m.role, m.name, m.content,
                        m.spell_casts, m.spell_cast_id, m.reasoning,
-                       m.created_at, m.parent_id, m.streaming, m.job_id
+                       m.created_at, m.parent_id, m.streaming, m.job_id,
+                       m.summary_text, m.summary_tokens
                 FROM messages m
                 JOIN branch b ON m.id = b.parent_id
                 WHERE m.id > $2
             )
             SELECT id, conversation_id, role, name, content,
                    spell_casts, spell_cast_id, reasoning, created_at, parent_id,
-                   streaming, job_id
+                   streaming, job_id, summary_text, summary_tokens
             FROM branch
             WHERE streaming = false
               AND NOT (role = 'assistant'
@@ -426,10 +578,7 @@ impl Db {
         .bind(after)
         .fetch_all(&self.pool)
         .await?;
-
-        let mut messages: Vec<Message> = rows.into_iter().map(row_to_message).collect();
-        resolve_sandbox_images(&mut messages, &self.sandbox, user_id, conversation_id).await;
-        Ok(messages)
+        Ok(rows)
     }
 
     pub async fn fts_search(
@@ -442,7 +591,7 @@ impl Db {
             r#"
             SELECT id, conversation_id, role, name, content,
                    spell_casts, spell_cast_id, reasoning, created_at,
-                   parent_id, streaming, job_id
+                   parent_id, streaming, job_id, summary_text, summary_tokens
             FROM messages
             WHERE conversation_id = $1
               AND content_tsv @@ plainto_tsquery('simple', $2)
@@ -469,7 +618,7 @@ impl Db {
             r#"
             SELECT id, conversation_id, role, name, content,
                    spell_casts, spell_cast_id, reasoning, created_at,
-                   parent_id, streaming, job_id,
+                   parent_id, streaming, job_id, summary_text, summary_tokens,
                    (1 - (embedding <=> $2))::float4 AS similarity
             FROM messages
             WHERE conversation_id = $1
@@ -499,6 +648,8 @@ impl Db {
                     parent_id: r.parent_id,
                     streaming: r.streaming,
                     job_id: r.job_id,
+                    summary_text: r.summary_text,
+                    summary_tokens: r.summary_tokens,
                 },
                 r.similarity,
             )
@@ -508,39 +659,28 @@ impl Db {
         Ok(rows)
     }
 
-    pub async fn list_messages(&self, conversation_id: Uuid) -> anyhow::Result<Vec<MessageRow>> {
-        let rows: Vec<MessageRow> = sqlx::query_as(
-            r#"
-            WITH RECURSIVE branch AS (
-                SELECT m.id, m.conversation_id, m.role, m.name, m.content,
-                       m.spell_casts, m.spell_cast_id, m.reasoning,
-                       m.created_at, m.parent_id, m.streaming, m.job_id
-                FROM messages m
-                JOIN conversations c ON c.id = $1
-                WHERE m.id = c.active_message_id
-                UNION ALL
-                SELECT m.id, m.conversation_id, m.role, m.name, m.content,
-                       m.spell_casts, m.spell_cast_id, m.reasoning,
-                       m.created_at, m.parent_id, m.streaming, m.job_id
-                FROM messages m
-                JOIN branch b ON m.id = b.parent_id
-            )
-            SELECT id, conversation_id, role, name, content,
-                   spell_casts, spell_cast_id, reasoning, created_at, parent_id,
-                   streaming, job_id
-            FROM branch
-            ORDER BY id ASC
-            "#,
-        )
-        .bind(conversation_id)
-        .fetch_all(&self.pool)
-        .await?;
-
-        Ok(rows)
-    }
 }
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
+
+#[derive(sqlx::FromRow)]
+struct SiblingRow {
+    id: i64,
+    conversation_id: Uuid,
+    role: String,
+    name: Option<String>,
+    content: Option<String>,
+    spell_casts: Option<String>,
+    spell_cast_id: Option<String>,
+    reasoning: Option<String>,
+    created_at: i64,
+    parent_id: Option<i64>,
+    streaming: bool,
+    job_id: Option<Uuid>,
+    summary_text: Option<String>,
+    summary_tokens: Option<i32>,
+    siblings: Vec<i64>,
+}
 
 #[derive(sqlx::FromRow)]
 struct SemanticRow {
@@ -556,6 +696,8 @@ struct SemanticRow {
     parent_id: Option<i64>,
     streaming: bool,
     job_id: Option<Uuid>,
+    summary_text: Option<String>,
+    summary_tokens: Option<i32>,
     similarity: f32,
 }
 

@@ -30,6 +30,7 @@ interface Props {
   onAnswer?: (text: string) => void;
   conversationId?: string | null;
   onBranch?: (msgId: number, bubbleKey: string, newText: string) => void;
+  onSwitchSibling?: (targetMsgId: number) => void;
 }
 
 export const MessageBubble = memo(function MessageBubble({
@@ -37,6 +38,7 @@ export const MessageBubble = memo(function MessageBubble({
   onAnswer,
   conversationId,
   onBranch,
+  onSwitchSibling,
 }: Props) {
   if (bubble.kind === "tool") {
     return (
@@ -50,7 +52,13 @@ export const MessageBubble = memo(function MessageBubble({
   if (bubble.kind === "upload") {
     return <UploadChatBubble bubble={bubble} />;
   }
-  return <TextChatBubble bubble={bubble} onBranch={onBranch} />;
+  return (
+    <TextChatBubble
+      bubble={bubble}
+      onBranch={onBranch}
+      onSwitchSibling={onSwitchSibling}
+    />
+  );
 });
 
 // ─── Widget bubble ────────────────────────────────────────────────────────────
@@ -188,9 +196,11 @@ function WidgetChatBubble({ bubble }: { bubble: ToolBubble }) {
 function TextChatBubble({
   bubble,
   onBranch,
+  onSwitchSibling,
 }: {
   bubble: Extract<ChatBubble, { kind: "text" }>;
   onBranch?: (msgId: number, bubbleKey: string, newText: string) => void;
+  onSwitchSibling?: (targetMsgId: number) => void;
 }) {
   const isUser = bubble.role === "user";
   const hasReasoning = bubble.reasoning && bubble.reasoning.length > 0;
@@ -201,6 +211,20 @@ function TextChatBubble({
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const canEdit = isUser && !bubble.streaming && bubble.msgId != null && onBranch != null;
+
+  // Branch switcher: show `‹ idx/N ›` when this message has siblings.
+  const siblings = bubble.siblings ?? [];
+  const siblingIdx = bubble.msgId != null ? siblings.indexOf(bubble.msgId) : -1;
+  const canSwitch =
+    !bubble.streaming &&
+    onSwitchSibling != null &&
+    siblings.length > 1 &&
+    siblingIdx >= 0;
+  const switchTo = (offset: -1 | 1) => {
+    if (!canSwitch) return;
+    const next = siblings[(siblingIdx + offset + siblings.length) % siblings.length];
+    onSwitchSibling!(next);
+  };
 
   const handleTouchStart = () => {
     if (!canEdit) return;
@@ -350,6 +374,32 @@ function TextChatBubble({
         >
           <EditIcon />
         </button>
+      )}
+      {canSwitch && !editing && (
+        <div
+          className={styles.branchSwitcher}
+          aria-label={`分支 ${siblingIdx + 1} / ${siblings.length}`}
+        >
+          <button
+            type="button"
+            className={styles.branchArrow}
+            onClick={() => switchTo(-1)}
+            aria-label="上一个分支"
+          >
+            ‹
+          </button>
+          <span className={styles.branchCount}>
+            {siblingIdx + 1}/{siblings.length}
+          </span>
+          <button
+            type="button"
+            className={styles.branchArrow}
+            onClick={() => switchTo(1)}
+            aria-label="下一个分支"
+          >
+            ›
+          </button>
+        </div>
       )}
     </div>
   );
