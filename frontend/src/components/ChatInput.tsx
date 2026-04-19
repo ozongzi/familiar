@@ -45,7 +45,6 @@ export function ChatInput({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
-  const wrapperRef = useRef<HTMLDivElement>(null);
   const [hasText, setHasText] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -61,16 +60,6 @@ export function ChatInput({
   useEffect(() => {
     resize();
   }, [resize]);
-
-  useEffect(() => {
-    const vv = window.visualViewport;
-    if (!vv) return;
-    const onResize = () => {
-      wrapperRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
-    };
-    vv.addEventListener("resize", onResize);
-    return () => vv.removeEventListener("resize", onResize);
-  }, []);
 
   const uploadFiles = useCallback(async (files: File[]) => {
     if (files.length === 0 || !onUpload) return;
@@ -195,7 +184,7 @@ export function ChatInput({
   const btnDisabled = disabled || (isSendMode && !hasText);
 
   return (
-    <div ref={wrapperRef} className={styles.wrapper}>
+    <div className={styles.wrapper}>
       <div className={`${styles.box} ${disabled ? styles.boxDisabled : ""}`}>
         <input
           ref={fileInputRef}
