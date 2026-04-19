@@ -991,7 +991,25 @@ function DiagramBubble({ bubble }: { bubble: ToolBubble }) {
       try {
         // Dynamically import mermaid to avoid bloating the initial bundle
         const mermaid = (await import("mermaid")).default;
-        mermaid.initialize({ startOnLoad: false, theme: "neutral" });
+        mermaid.initialize({
+          startOnLoad: false,
+          theme: "base",
+          themeVariables: {
+            primaryColor: "#f0ede6",
+            primaryTextColor: "#1a1915",
+            primaryBorderColor: "transparent",
+            lineColor: "#b8a99a",
+            secondaryColor: "#f5ede8",
+            tertiaryColor: "#faf9f5",
+            edgeLabelBackground: "transparent",
+            background: "#faf9f5",
+            mainBkg: "#f0ede6",
+            nodeBorder: "transparent",
+            clusterBkg: "#f0ede6",
+            titleColor: "#1a1915",
+            fontFamily: "LXGW WenKai, system-ui, sans-serif",
+          },
+        });
         const id = `mermaid-${bubble.key.replace(/[^a-z0-9]/gi, "-")}`;
         const { svg: rendered } = await mermaid.render(id, bubble.diagramCode!);
         if (!cancelled) setSvg(rendered);
