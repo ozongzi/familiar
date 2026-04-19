@@ -122,7 +122,7 @@ function buildWidgetSrcdoc(code: string): string {
       }
       @import url("https://cdn.jsdelivr.net/npm/lxgw-wenkai-webfont@1.7.0/style.css");
       @import url("https://cdn.jsdelivr.net/npm/@fontsource/fira-code@5/index.css");
-      body {
+      html, body {
         margin: 0;
         padding: 12px 16px;
         font-family: var(--font-sans);
@@ -230,6 +230,7 @@ function WidgetChatBubble({ bubble }: { bubble: ToolBubble }) {
         <iframe
           ref={iframeRef}
           sandbox="allow-scripts allow-same-origin"
+          allowTransparency={true}
           className={styles.widgetIframe}
           style={{
             height,
