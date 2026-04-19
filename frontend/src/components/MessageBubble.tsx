@@ -381,11 +381,10 @@ function TextChatBubble({
                   onClick={() => setReasoningOpen((o) => !o)}
                   aria-expanded={reasoningOpen}
                 >
-                  <span className={styles.reasoningIcon}>💭</span>
                   <span className={styles.reasoningLabel}>
                     {bubble.streaming && bubble.content.length === 0
-                      ? "思考中…"
-                      : "思考过程"}
+                      ? "思绪…"
+                      : "思绪"}
                   </span>
                   <span className={styles.reasoningChevron}>
                     {reasoningOpen ? "▲" : "▼"}

@@ -332,10 +332,6 @@
     color: var(--text-secondary);
 }
 
-.reasoningIcon {
-    font-size: 1em;
-    flex-shrink: 0;
-}
 
 .reasoningLabel {
     flex: 1;
@@ -349,7 +345,6 @@
 
 .reasoningContent {
     padding: 10px 14px 12px;
-    border-top: 1px solid var(--border-subtle);
     font-size: 0.88em;
     color: var(--text-muted);
     line-height: 1.6;
