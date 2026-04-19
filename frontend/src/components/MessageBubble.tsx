@@ -31,6 +31,12 @@ interface Props {
   conversationId?: string | null;
   onBranch?: (msgId: number, bubbleKey: string, newText: string) => void;
   onSwitchSibling?: (targetMsgId: number) => void;
+  /// When set, this bubble is the last assistant text bubble of a
+  /// completed reply; the copy button on this bubble copies the full
+  /// reply (concatenation of all text fragments in the reply) rather
+  /// than this fragment alone. Unset for user bubbles, mid-reply
+  /// fragments, and mid-stream assistant bubbles.
+  fullReplyContent?: string;
 }
 
 export const MessageBubble = memo(function MessageBubble({
@@ -39,6 +45,7 @@ export const MessageBubble = memo(function MessageBubble({
   conversationId,
   onBranch,
   onSwitchSibling,
+  fullReplyContent,
 }: Props) {
   if (bubble.kind === "tool") {
     return (
@@ -57,6 +64,7 @@ export const MessageBubble = memo(function MessageBubble({
       bubble={bubble}
       onBranch={onBranch}
       onSwitchSibling={onSwitchSibling}
+      fullReplyContent={fullReplyContent}
     />
   );
 });
@@ -249,10 +257,12 @@ function TextChatBubble({
   bubble,
   onBranch,
   onSwitchSibling,
+  fullReplyContent,
 }: {
   bubble: Extract<ChatBubble, { kind: "text" }>;
   onBranch?: (msgId: number, bubbleKey: string, newText: string) => void;
   onSwitchSibling?: (targetMsgId: number) => void;
+  fullReplyContent?: string;
 }) {
   const isUser = bubble.role === "user";
   const hasReasoning = bubble.reasoning && bubble.reasoning.length > 0;
@@ -263,6 +273,26 @@ function TextChatBubble({
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const canEdit = isUser && !bubble.streaming && bubble.msgId != null && onBranch != null;
+
+  // Copy target differs by role:
+  //   - User bubbles are atomic: copy this bubble's content.
+  //   - Assistant bubbles belong to a multi-fragment reply interleaved with
+  //     tool bubbles; ChatPage passes `fullReplyContent` only to the LAST
+  //     text fragment of a completed reply, and we copy that concatenation.
+  //     Mid-reply fragments and mid-stream bubbles receive no content, so
+  //     no copy button surfaces there.
+  const [copied, setCopied] = useState(false);
+  const copyText = isUser
+    ? (!bubble.streaming && bubble.content.length > 0 ? stripTimestamp(bubble.content) : null)
+    : (fullReplyContent ?? null);
+  const canCopy = !editing && copyText != null && copyText.length > 0;
+  const copyMessage = useCallback(() => {
+    if (copyText == null) return;
+    navigator.clipboard.writeText(copyText).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }, [copyText]);
 
   // Branch switcher: show `‹ idx/N ›` when this message has siblings.
   const siblings = bubble.siblings ?? [];
