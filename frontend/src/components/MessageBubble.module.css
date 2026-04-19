@@ -304,10 +304,9 @@
 
 .reasoningBlock {
     margin-bottom: 12px;
-    border: 1px solid var(--border);
     border-radius: var(--radius-md);
     overflow: hidden;
-    background: var(--bg-surface);
+    background: var(--bg-base);
 }
 
 .reasoningToggle {
