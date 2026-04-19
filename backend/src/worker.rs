@@ -200,10 +200,6 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
         crate::spells::load_memories_for_prompt(&ctx.pool, ctx.user_id, ctx.conversation_id).await;
     let has_memory = mem_section.is_some();
 
-    // Compact summary — injected as first user message, not into system prompt
-    let compact_summary =
-        crate::compact::load_compact_summary(&ctx.pool, ctx.conversation_id).await;
-
     // ── Build base system prompt via PromptEngine or custom override ───────
     let mut system_prompt: String = if let Some(ref custom) = custom_system_prompt {
         // User has provided a fully custom system prompt — use it as-is.
@@ -284,9 +280,15 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
     }
 
 
-    // ── Load history from DB ──────────────────────────────────────────────
+    // ── Load history from DB (summary + recent tail, transparently) ──────
     let t_restore = std::time::Instant::now();
-    let mut messages = match ctx.db.restore(ctx.conversation_id, ctx.user_id).await {
+    let mut messages = match crate::compact::load_for_generation(
+        &ctx.db,
+        ctx.conversation_id,
+        ctx.user_id,
+    )
+    .await
+    {
         Ok(h) => {
             let h = sanitize_history(h);
             info!(conversation = %ctx.conversation_id, messages = h.len(), ms = t_restore.elapsed().as_millis(), "⏱ restore history");
@@ -352,22 +354,26 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
         }
     }
 
-    // ── Prepend compact summary as first user message ─────────────────────
-    // Summary lives in conversations.compact_summary, never in messages table.
-    // Always prepend unconditionally — no sentinel message, no duplicate check needed.
-    if let Some(ref summary) = compact_summary {
-        let section = crate::compact::compact_summary_to_user_message(summary);
-        messages.insert(
-            0,
-            agentix::Message::User(vec![agentix::UserContent::Text { text: section }]),
-        );
-    }
-
     // ── Run the LLM ↔ tool-call loop ─────────────────────────────────────
     // Branch on model kind: API providers run the in-process loop via HTTP
     // streaming; 'claude-code' drives `claude -p` subprocess and consumes
     // its AgentEvent stream.
+    //
+    // Compact runs at turn boundaries inside generation_loop for the API
+    // path; for claude-code (subprocess owns the tool loop) it fires once
+    // before the run.
     if frontier_cfg.kind == "claude-code" {
+        let http = reqwest::Client::new();
+        if crate::compact::maybe_compact(ctx, &cheap_cfg, &http).await {
+            messages = crate::compact::load_for_generation(
+                &ctx.db,
+                ctx.conversation_id,
+                ctx.user_id,
+            )
+            .await
+            .map(sanitize_history)
+            .unwrap_or(messages);
+        }
         generation_loop_claude_code(ctx, &frontier_cfg, system_prompt, messages, bundle).await
     } else {
         let request = frontier_cfg.to_request().system_prompt(system_prompt);
@@ -406,12 +412,19 @@ async fn generation_loop(
             return Ok(());
         }
 
-        // ── Auto-compact before truncation ────────────────────────────────
-        if crate::compact::should_compact(&messages) {
-            // Fire-and-forget: summary is persisted to conversations.compact_summary.
-            // The next worker invocation will load it and prepend it automatically.
-            // No history rebuild needed here — just truncate to budget as usual.
-            let _ = crate::compact::try_compact(ctx, &messages, &cheap_model, http).await;
+        // ── Auto-compact at turn boundary ─────────────────────────────────
+        // Compact module checks provider-reported token counts from DB and
+        // decides whether to summarise. If it ran, reload messages via the
+        // unified loader so the worker sees the fresh [summary + tail].
+        if crate::compact::maybe_compact(ctx, &cheap_model, http).await {
+            messages = crate::compact::load_for_generation(
+                &ctx.db,
+                ctx.conversation_id,
+                ctx.user_id,
+            )
+            .await
+            .map(sanitize_history)
+            .unwrap_or(messages);
         }
         // ── Truncate history to token budget ──────────────────────────────
         let before = messages.len();
@@ -440,7 +453,7 @@ async fn generation_loop(
             Err(e) => {
                 let _ = ctx
                     .db
-                    .seal_streaming_message(streaming_msg_id, None, None, None)
+                    .seal_streaming_message(streaming_msg_id, None, None, None, None)
                     .await;
                 return Err(anyhow::anyhow!("LLM stream failed: {e}"));
             }
@@ -475,6 +488,7 @@ async fn generation_loop(
                             Some(&reasoning_buf)
                         },
                         None,
+                        crate::db::MessageTokens::from_usage(&usage),
                     )
                     .await;
                 emit(ctx, json!({"type": "aborted"})).await;
@@ -582,7 +596,7 @@ async fn generation_loop(
                     }
                     let _ = ctx
                         .db
-                        .seal_streaming_message(streaming_msg_id, None, None, None)
+                        .seal_streaming_message(streaming_msg_id, None, None, None, None)
                         .await;
                     return Err(anyhow::anyhow!("{err_msg}"));
                 }
@@ -633,6 +647,7 @@ async fn generation_loop(
                     Some(&reasoning_buf)
                 },
                 tc_json.as_deref(),
+                crate::db::MessageTokens::from_usage(&usage),
             )
             .await;
 
@@ -901,6 +916,7 @@ async fn generation_loop_claude_code(
                             if reply_buf.is_empty() { None } else { Some(&reply_buf) },
                             if reasoning_buf.is_empty() { None } else { Some(&reasoning_buf) },
                             None,
+                            crate::db::MessageTokens::from_usage(&usage),
                         )
                         .await;
                     emit(ctx, json!({"type": "aborted"})).await;
@@ -939,6 +955,7 @@ async fn generation_loop_claude_code(
                     if reply_buf.is_empty() { None } else { Some(&reply_buf) },
                     if reasoning_buf.is_empty() { None } else { Some(&reasoning_buf) },
                     tc_json.as_deref(),
+                    crate::db::MessageTokens::from_usage(&usage),
                 )
                 .await;
             if !reply_buf.is_empty() {
@@ -1085,6 +1102,7 @@ async fn generation_loop_claude_code(
                             if reply_buf.is_empty() { None } else { Some(&reply_buf) },
                             if reasoning_buf.is_empty() { None } else { Some(&reasoning_buf) },
                             None,
+                            crate::db::MessageTokens::from_usage(&usage),
                         )
                         .await;
                     drop(stream);
@@ -1130,7 +1148,7 @@ async fn generation_loop_claude_code(
                 error!(conversation = %ctx.conversation_id, "claude-code error: {e}");
                 let _ = ctx
                     .db
-                    .seal_streaming_message(streaming_msg_id, None, None, None)
+                    .seal_streaming_message(streaming_msg_id, None, None, None, None)
                     .await;
                 return Err(anyhow::anyhow!("{e}"));
             }
@@ -1155,6 +1173,7 @@ async fn generation_loop_claude_code(
             if reply_buf.is_empty() { None } else { Some(&reply_buf) },
             if reasoning_buf.is_empty() { None } else { Some(&reasoning_buf) },
             tc_json.as_deref(),
+            crate::db::MessageTokens::from_usage(&usage),
         )
         .await;
     if !reply_buf.is_empty() {

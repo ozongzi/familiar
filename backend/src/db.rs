@@ -45,6 +45,31 @@ pub struct MessageRow {
     pub job_id: Option<Uuid>,
 }
 
+/// Provider-reported token counts for a single assistant message.
+#[derive(Debug, Clone, Copy)]
+pub struct MessageTokens {
+    pub prompt: i64,
+    pub completion: i64,
+    pub cache_read: i64,
+    pub cache_creation: i64,
+}
+
+impl MessageTokens {
+    /// Build from an `agentix::UsageStats`.  Returns `None` if no tokens were
+    /// recorded (e.g., stream failed before any Usage event arrived).
+    pub fn from_usage(u: &agentix::types::UsageStats) -> Option<Self> {
+        if u.prompt_tokens == 0 && u.completion_tokens == 0 {
+            return None;
+        }
+        Some(Self {
+            prompt: u.prompt_tokens as i64,
+            completion: u.completion_tokens as i64,
+            cache_read: u.cache_read_tokens as i64,
+            cache_creation: u.cache_creation_tokens as i64,
+        })
+    }
+}
+
 // ── Db handle ─────────────────────────────────────────────────────────────────
 
 #[derive(Clone)]
@@ -122,19 +147,28 @@ impl Db {
         content: Option<&str>,
         reasoning: Option<&str>,
         tool_calls_json: Option<&str>,
+        tokens: Option<MessageTokens>,
     ) -> anyhow::Result<()> {
         sqlx::query(
             "UPDATE messages
-             SET streaming    = false,
-                 content      = COALESCE($2, content),
-                 reasoning    = COALESCE($3, reasoning),
-                 spell_casts  = $4
+             SET streaming             = false,
+                 content               = COALESCE($2, content),
+                 reasoning             = COALESCE($3, reasoning),
+                 spell_casts           = $4,
+                 prompt_tokens         = $5,
+                 completion_tokens     = $6,
+                 cache_read_tokens     = $7,
+                 cache_creation_tokens = $8
              WHERE id = $1",
         )
         .bind(message_id)
         .bind(content)
         .bind(reasoning)
         .bind(tool_calls_json)
+        .bind(tokens.map(|t| t.prompt))
+        .bind(tokens.map(|t| t.completion))
+        .bind(tokens.map(|t| t.cache_read))
+        .bind(tokens.map(|t| t.cache_creation))
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -348,6 +382,18 @@ impl Db {
         conversation_id: Uuid,
         user_id: Uuid,
     ) -> anyhow::Result<Vec<Message>> {
+        self.restore_after(conversation_id, user_id, None).await
+    }
+
+    /// Like `restore`, but only returns messages with `id > after_msg_id` on
+    /// the active branch. Pass `None` to get the full history.
+    pub async fn restore_after(
+        &self,
+        conversation_id: Uuid,
+        user_id: Uuid,
+        after_msg_id: Option<i64>,
+    ) -> anyhow::Result<Vec<Message>> {
+        let after = after_msg_id.unwrap_or(i64::MIN);
         let rows: Vec<MessageRow> = sqlx::query_as(
             r#"
             WITH RECURSIVE branch AS (
@@ -356,13 +402,14 @@ impl Db {
                        m.created_at, m.parent_id, m.streaming, m.job_id
                 FROM messages m
                 JOIN conversations c ON c.id = $1
-                WHERE m.id = c.active_message_id
+                WHERE m.id = c.active_message_id AND m.id > $2
                 UNION ALL
                 SELECT m.id, m.conversation_id, m.role, m.name, m.content,
                        m.spell_casts, m.spell_cast_id, m.reasoning,
                        m.created_at, m.parent_id, m.streaming, m.job_id
                 FROM messages m
                 JOIN branch b ON m.id = b.parent_id
+                WHERE m.id > $2
             )
             SELECT id, conversation_id, role, name, content,
                    spell_casts, spell_cast_id, reasoning, created_at, parent_id,
@@ -376,6 +423,7 @@ impl Db {
             "#,
         )
         .bind(conversation_id)
+        .bind(after)
         .fetch_all(&self.pool)
         .await?;
 
