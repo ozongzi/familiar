@@ -106,6 +106,30 @@ export function ChatPage() {
   const messagesRef = useRef<HTMLDivElement>(null);
   const lastUserBubbleRef = useRef<HTMLDivElement>(null);
   const lastBubbleRef = useRef<HTMLDivElement>(null);
+  const [showScrollDown, setShowScrollDown] = useState(false);
+
+  // Watch whether the last bubble is inside the scroll viewport. When it
+  // scrolls out of view (user scrolled up, or assistant reply grew past the
+  // fold), surface a jump-to-bottom button.
+  const lastBubbleKey = bubbles.length > 0 ? bubbles[bubbles.length - 1].key : null;
+  useEffect(() => {
+    const target = lastBubbleRef.current;
+    const root = messagesRef.current;
+    if (!target || !root) {
+      setShowScrollDown(false);
+      return;
+    }
+    const io = new IntersectionObserver(
+      (entries) => setShowScrollDown(!entries[0].isIntersecting),
+      { root, threshold: 0, rootMargin: "0px 0px -40px 0px" },
+    );
+    io.observe(target);
+    return () => io.disconnect();
+  }, [lastBubbleKey]);
+
+  const handleScrollToBottom = useCallback(() => {
+    lastBubbleRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
+  }, []);
 
   // When a new user bubble appears during connecting/streaming, scroll it to top
   const lastUserBubbleKey = (() => {
@@ -385,6 +409,16 @@ export function ChatPage() {
 
         {/* Message area */}
         <div className={styles.messagesWrapper}>
+        {showScrollDown && (
+          <button
+            type="button"
+            className={styles.scrollToBottomBtn}
+            onClick={handleScrollToBottom}
+            aria-label="滚动到最新消息"
+          >
+            <ScrollDownIcon />
+          </button>
+        )}
         <div ref={messagesRef} className={styles.messages}>
           {isDraft && bubbles.length === 0 && (
             <div className={styles.empty}>
@@ -544,6 +578,24 @@ function NewChatIcon() {
       aria-hidden="true"
     >
       <path d="M12 5v14M5 12h14" />
+    </svg>
+  );
+}
+
+function ScrollDownIcon() {
+  return (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M12 5v14M5 12l7 7 7-7" />
     </svg>
   );
 }
