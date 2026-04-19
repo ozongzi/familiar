@@ -137,6 +137,50 @@
     font-variant-numeric: tabular-nums;
 }
 
+/* ─── Bubble footer actions (copy, etc.) ─────────────────────────────────── */
+/* Sits inside the bubble, below the text, aligned to the content's left
+ * edge. Subtle by default; the icon gains contrast on hover. On touch
+ * devices (no hover state) we nudge opacity up so the button is tappable
+ * without a reveal trigger.
+ */
+
+.bubbleFooter {
+    margin-top: 6px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.footerAction {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    background: none;
+    border: none;
+    padding: 4px 6px;
+    cursor: pointer;
+    color: var(--text-muted);
+    border-radius: 6px;
+    opacity: 0.45;
+    transition:
+        opacity var(--transition),
+        color var(--transition),
+        background var(--transition);
+}
+
+.footerAction:hover {
+    opacity: 1;
+    color: var(--text-secondary);
+    background: var(--bg-hover);
+}
+
+@media (hover: none) {
+    .footerAction {
+        opacity: 0.7;
+    }
+}
+
 /* ─── Inline edit ────────────────────────────────────────────────────────── */
 
 .editBtn {
