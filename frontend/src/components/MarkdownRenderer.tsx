@@ -54,7 +54,7 @@ function buildRenderer(): Partial<Renderer> {
 
 // Build once, reuse across renders.
 const renderer = buildRenderer();
-marked.use(markedKatex({ throwOnError: false, output: "html" }));
+marked.use(markedKatex({ throwOnError: false, output: "html", nonStandard: true }));
 marked.use({
   renderer,
   breaks: true,
