@@ -68,3 +68,7 @@ dashmap = "6"
 tera = "1"
 regex = "1"
 similar = "2"
+
+# Integration tests against a live Postgres. Set DATABASE_URL_TEST to the
+# admin connection string (e.g. postgres://postgres:postgres@localhost/postgres)
+# — tests provision and drop a per-run database and run all migrations.
