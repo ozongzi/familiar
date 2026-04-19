@@ -212,6 +212,7 @@ export function WriteTool({ bubble }: { bubble: ToolBubble }) {
 
 interface WriteEntry {
   path: string;
+  new_string?: string;
   new_content?: string;
   old_string?: string;
   shebang?: string;
@@ -229,6 +230,11 @@ export function MultiWriteTool({ bubble }: { bubble: ToolBubble }) {
 
   const entries: WriteEntry[] = (() => {
     const parsed = argsView.parsed;
+    // writes は直接配列として渡される
+    if (Array.isArray(parsed?.writes)) {
+      return parsed.writes as WriteEntry[];
+    }
+    // fallback: writes_json 文字列
     const raw = typeof parsed?.writes_json === "string" ? parsed.writes_json : null;
     if (!raw) return [];
     try {
@@ -312,7 +318,7 @@ export function MultiWriteTool({ bubble }: { bubble: ToolBubble }) {
           {entries.map((entry, i) => {
             const res = results[i] as WriteEntryResult | undefined;
             const isDiff = !!entry.old_string;
-            const newContent = entry.new_content ?? "";
+            const newContent = entry.new_string ?? entry.new_content ?? "";
             const ext = entry.path.split(".").pop() ?? "";
             const addedLines = newContent.split("\n").length;
             const run = res?.run;
