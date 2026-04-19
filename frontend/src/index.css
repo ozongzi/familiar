@@ -109,7 +109,17 @@ body {
     box-sizing: border-box;
 }
 
-/* Use the registered serif for prose (assistant / model content) and the empty title */
+/* ─── Mermaid diagram overrides ──────────────────────────────────────────── */
+.mermaid .edgeLabel rect,
+svg .edgeLabel rect {
+    fill: transparent !important;
+    stroke: none !important;
+}
+.mermaid .edgeLabel,
+svg .edgeLabel {
+    background: transparent !important;
+}
+
 .prose {
     font-family: var(--font-serif);
 }
