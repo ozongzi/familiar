@@ -1,49 +1,7 @@
-/* ─── Anthropic Fonts ───────────────────────────────────────────────────── */
-@font-face {
-    font-family: "AnthropicSans";
-    src: url("/fonts/69971a00a3295036497e1a28_AnthropicSans-Roman-Web.woff2")
-        format("woff2");
-    font-weight: 400;
-    font-style: normal;
-    font-display: swap;
-}
-
-@font-face {
-    font-family: "AnthropicSans";
-    src: url("/fonts/69971a016067bf14b9b8f48d_AnthropicSans-Italic-Web.woff2")
-        format("woff2");
-    font-weight: 400;
-    font-style: italic;
-    font-display: swap;
-}
-
-@font-face {
-    font-family: "AnthropicMono";
-    src: url("/fonts/69971a2e55d24d61bc045b1a_AnthropicMono-Roman-Web.woff2")
-        format("woff2");
-    font-weight: 400;
-    font-style: normal;
-    font-display: swap;
-}
-
-/* Anthropic Serif (registered) */
-@font-face {
-    font-family: "AnthropicSerif";
-    src: url("/fonts/69971a1551eb6cda0d656e8a_AnthropicSerif-Roman-Web.woff2")
-        format("woff2");
-    font-weight: 400;
-    font-style: normal;
-    font-display: swap;
-}
-
-@font-face {
-    font-family: "AnthropicSerif";
-    src: url("/fonts/69971a15a9fb8c1107a3570e_AnthropicSerif-Italic-Web.woff2")
-        format("woff2");
-    font-weight: 400;
-    font-style: italic;
-    font-display: swap;
-}
+/* ─── LXGW WenKai ────────────────────────────────────────────────────────── */
+@import url("https://cdn.jsdelivr.net/npm/lxgw-wenkai-webfont@1.7.0/style.css");
+/* ─── Fira Code ──────────────────────────────────────────────────────────── */
+@import url("https://cdn.jsdelivr.net/npm/@fontsource/fira-code@5/index.css");
 
 /* ─── CSS Variables ──────────────────────────────────────────────────────── */
 :root {
@@ -84,11 +42,9 @@
     --radius-full: 999px;
 
     /* Typography */
-    --font-sans: "AnthropicSans", "Geist", system-ui, -apple-system, sans-serif;
-    --font-mono:
-        "AnthropicMono", "Geist Mono", "Cascadia Code", "JetBrains Mono",
-        monospace;
-    --font-serif: "AnthropicSerif", Georgia, "Times New Roman", serif;
+    --font-sans: "LXGW WenKai", system-ui, -apple-system, sans-serif;
+    --font-mono: "Fira Code", ui-monospace, monospace;
+    --font-serif: "LXGW WenKai", Georgia, serif;
 
     /* Layout */
     --sidebar-width: 280px;
