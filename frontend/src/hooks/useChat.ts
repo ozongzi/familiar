@@ -553,6 +553,7 @@ export function useChat(
                 streaming: false,
                 images: images.length > 0 ? images : undefined,
                 msgId: m.id,
+                siblings: m.siblings,
               });
               continue;
             } catch {
@@ -570,6 +571,7 @@ export function useChat(
           reasoning: m.reasoning ?? "",
           streaming: m.streaming,
           msgId: m.id,
+          siblings: m.siblings,
         });
         if (m.role === "assistant" && m.streaming) activeTextKeyRef.current = key;
       }
@@ -1235,6 +1237,32 @@ export function useChat(
     [token, conversationId, send],
   );
 
+  const switchSibling = useCallback(
+    async (targetMsgId: number) => {
+      if (!token || !conversationId) return;
+      const res = await fetch(
+        `${BASE()}/api/conversations/${conversationId}/activate`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ message_id: targetMsgId }),
+        },
+      );
+      if (!res.ok) return;
+      const refreshed = await fetch(
+        `${BASE()}/api/conversations/${conversationId}/messages`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      if (!refreshed.ok) return;
+      const msgs: Message[] = await refreshed.json();
+      setHistory(msgs);
+    },
+    [token, conversationId, setHistory],
+  );
+
   return {
     bubbles,
     status,
@@ -1248,5 +1276,6 @@ export function useChat(
     clearBubbles,
     addUploadBubble,
     branch,
+    switchSibling,
   };
 }

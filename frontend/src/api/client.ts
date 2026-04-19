@@ -204,6 +204,18 @@ export const api = {
     );
   },
 
+  activateMessage(
+    token: string,
+    conversationId: string,
+    messageId: number,
+  ) {
+    return post<{ active_message_id: number }>(
+      `/api/conversations/${conversationId}/activate`,
+      { message_id: messageId },
+      token,
+    );
+  },
+
   searchMessages(token: string, q: string, limit = 20) {
     const params = new URLSearchParams({ q, limit: String(limit) });
     return get<{ results: SearchResult[] }>(`/api/search?${params}`, token);

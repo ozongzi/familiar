@@ -96,6 +96,7 @@ export function ChatPage() {
     clearBubbles,
     addUploadBubble,
     branch,
+    switchSibling,
   } = useChat(
     activeId === DRAFT_ID ? null : activeId,
     token,
@@ -465,6 +466,7 @@ export function ChatPage() {
                   onAnswer={answerQuestion}
                   conversationId={activeId === DRAFT_ID ? null : activeId}
                   onBranch={branch}
+                  onSwitchSibling={switchSibling}
                 />
               </div>
             );
