@@ -1,26 +1,35 @@
-//! Conversation compaction — self-contained summary generation + unified load.
+//! Conversation compaction — per-message summaries with raw-first loading.
 //!
 //! # DB schema
 //!
-//! `conversations.compact_summary`    — the summary text (covers all messages
-//!                                       up to compact_until_msg_id)
-//! `conversations.compact_until_msg_id` — boundary: messages with id <= this
-//!                                       are summarised; id > this is the
-//!                                       recent tail kept raw
-//! `messages.prompt_tokens` + friends — per-assistant-message provider tokens,
-//!                                       used to locate the boundary precisely
+//! `messages.summary_text`   — non-NULL on a "summary anchor" message. The
+//!                             text summarises the path from the root of
+//!                             the conversation up to and including this
+//!                             message. Any branch whose ancestor chain
+//!                             includes this message can reuse the summary.
+//! `messages.summary_tokens` — estimated token count of `summary_text`,
+//!                             used to decide if the summary + tail fits
+//!                             when raw history doesn't.
+//! `messages.prompt_tokens`  — provider-reported context size on the
+//!                             latest assistant message, used only to
+//!                             decide whether to trigger compaction.
 //!
-//! # Entry points
+//! # Loading policy
 //!
-//! - [`load_for_generation`] returns the message history the worker should
-//!   feed to the LLM: `[summary_msg?] + recent_tail`.  No other code needs to
-//!   know the summary exists.
-//! - [`maybe_compact`] runs compaction if the current context exceeds the
-//!   trigger threshold, updates the DB, and emits an SSE event.  Incremental:
-//!   each run summarises `prev_summary + messages_since_last_compact`.
+//! [`load_for_generation`] is **raw-first**. It returns the unaltered active
+//! path unless the total tokens exceed `model.compact_trigger_tokens`; only
+//! then does it substitute the tail with the nearest ancestor summary.
+//! Consequence: editing a message earlier than the current tip produces a
+//! shorter branch that stays in raw form, without losing fidelity to the
+//! summary.
 //!
-//! All constants (trigger, budgets, max output) live here; the worker doesn't
-//! know or care.
+//! # Compaction policy
+//!
+//! [`maybe_compact`] **never deletes** raw messages. On trigger it finds the
+//! most recent ancestor anchor (if any), summarises `prev_summary + new
+//! messages since anchor`, and writes the resulting summary onto the new
+//! boundary message's `summary_text`. The old anchor remains valid for any
+//! branch that still traverses it.
 
 use agentix::{LlmEvent, Message, UserContent};
 use futures::StreamExt;
@@ -29,7 +38,7 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::config::ModelConfig;
-use crate::db::Db;
+use crate::db::{Db, MessageRow};
 use crate::worker::WorkerContext;
 
 // ── Token thresholds ──────────────────────────────────────────────────────────
@@ -39,9 +48,9 @@ use crate::worker::WorkerContext;
 const COMPACT_MAX_OUTPUT_TOKENS: u32 = 8_000;
 
 // Per-model thresholds live on `ModelConfig`:
-//   - compact_trigger_tokens: prompt_tokens at which a compact fires
+//   - compact_trigger_tokens: prompt_tokens at which a compact fires AND the
+//                             budget below which raw history is preferred
 //   - compact_tail_tokens:    recent tail kept raw after compact
-// The worker derives its truncate safety ceiling from the trigger.
 
 // ── Compact prompt ────────────────────────────────────────────────────────────
 
@@ -199,32 +208,57 @@ fn strip_images(messages: &[Message]) -> Vec<Message> {
 // ── Public API: unified loader ────────────────────────────────────────────────
 
 /// Load the message history the worker should feed to the LLM.
-/// Transparently prepends the compact summary (if any) and returns only the
-/// recent tail — worker doesn't need to know compaction happened.
+///
+/// Raw-first: if the full active path fits under `model.compact_trigger_tokens`,
+/// return it as-is. Otherwise walk the active path from the tip backward,
+/// find the nearest ancestor that carries a stored summary, and splice it
+/// in as a synthetic opening user message followed by every message after
+/// the anchor. Falls back to raw (trusting the worker's token-budget
+/// truncation) if no usable summary exists on the active path.
 pub async fn load_for_generation(
     db: &Db,
+    model: &ModelConfig,
     conversation_id: Uuid,
     user_id: Uuid,
 ) -> anyhow::Result<Vec<Message>> {
-    let state = load_compact_state(&db.pool, conversation_id).await;
-    match state {
-        Some((summary, until_id)) => {
-            let recent = db
-                .restore_after(conversation_id, user_id, Some(until_id))
-                .await?;
-            let mut out = Vec::with_capacity(recent.len() + 1);
-            out.push(summary_to_message(&summary));
-            out.extend(recent);
-            Ok(out)
-        }
-        None => db.restore(conversation_id, user_id).await,
+    let (rows, messages) = db.restore_after_rows(conversation_id, user_id, None).await?;
+    debug_assert_eq!(rows.len(), messages.len());
+
+    let budget = model.compact_trigger_tokens;
+    let raw_total: i64 = messages.iter().map(|m| m.estimate_tokens() as i64).sum();
+
+    if raw_total <= budget {
+        return Ok(messages);
     }
+
+    // Walk from the tip back to the root; use the first anchor whose
+    // (summary + strictly-after-tail) fits the budget.
+    for i in (0..rows.len()).rev() {
+        let Some(summary_text) = rows[i].summary_text.as_ref() else { continue };
+        let summary_tokens = rows[i]
+            .summary_tokens
+            .map(i64::from)
+            .unwrap_or_else(|| summary_to_message(summary_text).estimate_tokens() as i64);
+        let tail = &messages[i + 1..];
+        let tail_tokens: i64 = tail.iter().map(|m| m.estimate_tokens() as i64).sum();
+        if summary_tokens + tail_tokens <= budget {
+            let mut out = Vec::with_capacity(tail.len() + 1);
+            out.push(summary_to_message(summary_text));
+            out.extend_from_slice(tail);
+            return Ok(out);
+        }
+    }
+
+    // No summary small enough; hand back raw and let the worker truncate.
+    Ok(messages)
 }
 
 // ── Public API: compaction ────────────────────────────────────────────────────
 
 /// Check if the conversation exceeds the compact trigger and, if so, run
-/// incremental summarisation + update DB.  Returns `true` if a compact ran.
+/// incremental summarisation + write a new anchor on the boundary message.
+/// Raw messages are never deleted: any existing anchor stays valid for
+/// branches that still traverse it.
 pub async fn maybe_compact(
     ctx: &WorkerContext,
     model: &ModelConfig,
@@ -241,69 +275,58 @@ pub async fn maybe_compact(
         "⚡ compaction threshold reached"
     );
 
-    // Load state needed for incremental summarisation.
-    let prev_state = load_compact_state(&ctx.pool, ctx.conversation_id).await;
-    let prev_until = prev_state.as_ref().map(|(_, id)| *id);
-    let prev_summary = prev_state.as_ref().map(|(s, _)| s.clone());
-
-    // All messages since the last compact boundary (or the whole conversation
-    // if no prior compact).
-    let delta = match ctx
+    // Full active path + the latest anchor on that path (if any).
+    let (rows, messages) = match ctx
         .db
-        .restore_after(ctx.conversation_id, ctx.user_id, prev_until)
+        .restore_after_rows(ctx.conversation_id, ctx.user_id, None)
         .await
     {
         Ok(v) => v,
         Err(e) => {
-            warn!(conversation = %ctx.conversation_id, "restore_after failed: {e}");
+            warn!(conversation = %ctx.conversation_id, "restore failed: {e}");
             return false;
         }
     };
 
-    // Pick a new boundary: keep `RECENT_MESSAGES_BUDGET` tokens of delta as
-    // recent tail, summarise everything before.  Returns the new boundary
-    // msg_id and the slice of delta to feed into the summariser.
-    let (new_until_id, to_summarise_range) =
-        match compute_new_boundary(&ctx.pool, ctx.conversation_id, prev_until, &delta, model.compact_tail_tokens).await {
-            Some(v) => v,
-            None => {
-                info!(
-                    conversation = %ctx.conversation_id,
-                    "nothing to summarise after boundary search"
-                );
-                return false;
-            }
-        };
+    let prev_anchor_idx = rows.iter().rposition(|r| r.summary_text.is_some());
+    let prev_summary = prev_anchor_idx.and_then(|i| rows[i].summary_text.clone());
+    let delta_start = prev_anchor_idx.map(|i| i + 1).unwrap_or(0);
+    let delta_rows: &[MessageRow] = &rows[delta_start..];
+    let delta_msgs: &[Message] = &messages[delta_start..];
 
-    // Build input to the summariser: prev_summary (if any) + the messages up
-    // to the new boundary.  prev_summary replaces the old history so this is
-    // incremental.
+    let split_idx = match compute_new_boundary(delta_msgs, model.compact_tail_tokens) {
+        Some(v) => v,
+        None => {
+            info!(
+                conversation = %ctx.conversation_id,
+                delta_len = delta_msgs.len(),
+                "nothing to summarise after boundary search"
+            );
+            return false;
+        }
+    };
+
+    let new_until_msg_id = delta_rows[split_idx - 1].id;
+
+    // Build summariser input: [prev_summary?, delta[..split_idx]].
     let mut input: Vec<Message> = Vec::new();
     if let Some(ref s) = prev_summary {
         input.push(summary_to_message(s));
     }
-    input.extend_from_slice(&delta[..to_summarise_range]);
+    input.extend_from_slice(&delta_msgs[..split_idx]);
 
     let Some(new_summary) = run_summariser(ctx, model, http, &input).await else {
         return false;
     };
 
-    // Persist to DB
-    let res = sqlx::query(
-        "UPDATE conversations
-         SET compact_summary      = $1,
-             compact_until_msg_id = $2,
-             compact_at           = NOW()
-         WHERE id = $3",
-    )
-    .bind(&new_summary)
-    .bind(new_until_id)
-    .bind(ctx.conversation_id)
-    .execute(&ctx.pool)
-    .await;
+    let summary_tokens = summary_to_message(&new_summary).estimate_tokens() as i32;
 
-    if let Err(e) = res {
-        warn!(conversation = %ctx.conversation_id, "compact DB update failed: {e}");
+    if let Err(e) = ctx
+        .db
+        .set_summary(new_until_msg_id, &new_summary, summary_tokens)
+        .await
+    {
+        warn!(conversation = %ctx.conversation_id, "set_summary failed: {e}");
         return false;
     }
 
@@ -318,30 +341,16 @@ pub async fn maybe_compact(
 
     info!(
         conversation = %ctx.conversation_id,
-        new_until_msg_id = new_until_id,
+        anchor_msg_id = new_until_msg_id,
         summary_chars = new_summary.len(),
+        summary_tokens,
         "✅ compaction done"
     );
 
     true
 }
 
-// ── Internal: DB queries ──────────────────────────────────────────────────────
-
-async fn load_compact_state(pool: &PgPool, conv_id: Uuid) -> Option<(String, i64)> {
-    let row: Option<(Option<String>, Option<i64>)> = sqlx::query_as(
-        "SELECT compact_summary, compact_until_msg_id FROM conversations WHERE id = $1",
-    )
-    .bind(conv_id)
-    .fetch_optional(pool)
-    .await
-    .ok()
-    .flatten();
-    match row {
-        Some((Some(s), Some(id))) => Some((s, id)),
-        _ => None,
-    }
-}
+// ── Internal: boundary search ─────────────────────────────────────────────────
 
 /// Latest provider-reported prompt_tokens on an assistant message — this is
 /// the current context size the LLM sees.
@@ -362,109 +371,42 @@ async fn latest_context_tokens(pool: &PgPool, conv_id: Uuid) -> i64 {
     .unwrap_or(0)
 }
 
-/// Walk the delta from the back, accumulating per-message tokens (provider
-/// counts where available, tiktoken estimate otherwise), until we fill
-/// `RECENT_MESSAGES_BUDGET`.  Returns `(new_until_msg_id, split_index)` where
-/// `delta[..split_index]` is what gets summarised.
+/// Walk `delta` from the back, accumulating per-message tokens, until
+/// `tail_budget_tokens` is filled. Returns the split index: `delta[..split]`
+/// gets summarised, `delta[split..]` stays as recent tail.
 ///
-/// The boundary is snapped so the recent tail always starts with a User
-/// message (never splits a tool_use/tool_result pair or starts mid-group).
-async fn compute_new_boundary(
-    pool: &PgPool,
-    conv_id: Uuid,
-    prev_until: Option<i64>,
-    delta: &[Message],
-    tail_budget_tokens: i64,
-) -> Option<(i64, usize)> {
+/// Boundary is snapped forward to a User-message boundary so the tail never
+/// begins mid-turn (straddling a tool_use/tool_result pair). Returns None if
+/// the whole delta fits within the tail budget (nothing to summarise) or if
+/// no clean snap point exists.
+fn compute_new_boundary(delta: &[Message], tail_budget_tokens: i64) -> Option<usize> {
     if delta.is_empty() {
         return None;
     }
 
-    // Fetch ids + per-msg tokens for the delta in order.  We rebuild this
-    // mapping rather than trusting array alignment because restore_after
-    // filters out streaming / empty rows.
-    let rows: Vec<(i64, String, Option<i64>, Option<i64>)> = sqlx::query_as(
-        r#"
-        WITH RECURSIVE branch AS (
-            SELECT m.id, m.role, m.parent_id, m.prompt_tokens, m.completion_tokens,
-                   m.streaming, m.content, m.spell_casts
-            FROM messages m
-            JOIN conversations c ON c.id = $1
-            WHERE m.id = c.active_message_id AND m.id > $2
-            UNION ALL
-            SELECT m.id, m.role, m.parent_id, m.prompt_tokens, m.completion_tokens,
-                   m.streaming, m.content, m.spell_casts
-            FROM messages m
-            JOIN branch b ON m.id = b.parent_id
-            WHERE m.id > $2
-        )
-        SELECT id, role, prompt_tokens, completion_tokens
-        FROM branch
-        WHERE streaming = false
-          AND NOT (role = 'assistant'
-                   AND (content IS NULL OR content = '')
-                   AND spell_casts IS NULL)
-        ORDER BY id ASC
-        "#,
-    )
-    .bind(conv_id)
-    .bind(prev_until.unwrap_or(i64::MIN))
-    .fetch_all(pool)
-    .await
-    .ok()?;
-
-    if rows.len() != delta.len() {
-        warn!(
-            conv_id = %conv_id,
-            rows = rows.len(),
-            delta = delta.len(),
-            "row/delta length mismatch; aborting compact"
-        );
-        return None;
-    }
-
-    // Walk from the back, estimating per-message tokens.
-    // For assistant: use (next_assistant.prompt_tokens - this.prompt_tokens)
-    // as the size of (this assistant's output + user/tool msgs in between).
-    // Simpler: use completion_tokens + tiktoken(everything between). But
-    // tiktoken is available as agentix::Message::estimate_tokens, so just use
-    // that per-message. Provider counts are used for the trigger; boundary
-    // accuracy doesn't need to be exact.
     let mut acc: i64 = 0;
     let mut split_idx = delta.len();
     for (i, msg) in delta.iter().enumerate().rev() {
-        let est = msg.estimate_tokens() as i64;
-        acc += est;
+        acc += msg.estimate_tokens() as i64;
         if acc >= tail_budget_tokens {
             split_idx = i;
             break;
         }
     }
 
-    // split_idx == 0 means even the whole delta fits within the recent budget
-    // — nothing to summarise this round.
     if split_idx == 0 {
         return None;
     }
 
-    // Snap forward to a clean boundary: prefer a User message (cleanest —
-    // recent starts with a new user turn).  If no User is reachable (e.g.,
-    // a long agent tool chain with no user intervention), fall back to
-    // skipping past orphan ToolResults so the tool_use/tool_result pair
-    // doesn't straddle the summary/recent boundary.
     let snapped = snap_boundary(delta, split_idx);
     if snapped >= delta.len() {
-        // The whole tail was ToolResults; can't split cleanly this round.
         return None;
     }
-
-    // new_until_msg_id = last message that gets summarised (id of delta[snapped - 1]).
-    let new_until_id = rows[snapped - 1].0;
-    Some((new_until_id, snapped))
+    Some(snapped)
 }
 
-/// Find a safe cut point forward of `start`.  Prefers a User message; falls
-/// back to the first non-ToolResult if no User is reachable.  Returns
+/// Find a safe cut point forward of `start`. Prefers a User message; falls
+/// back to the first non-ToolResult if no User is reachable. Returns
 /// `delta.len()` if every message from `start` onwards is a ToolResult.
 fn snap_boundary(delta: &[Message], start: usize) -> usize {
     for i in start..delta.len() {

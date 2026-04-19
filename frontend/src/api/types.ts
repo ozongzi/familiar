@@ -108,9 +108,12 @@ export interface Message {
   tool_calls: string | null;
   tool_call_id: string | null;
   reasoning: string | null;
-  is_summary: boolean;
   created_at: number;
   streaming: boolean;
+  parent_id: number | null;
+  /// Ids of messages sharing this one's parent (including self), in id
+  /// order. When length > 1, this message has alternative branches.
+  siblings: number[];
 }
 
 // ─── WebSocket events ─────────────────────────────────────────────────────
@@ -153,6 +156,9 @@ export interface TextBubble {
   streaming: boolean;
   images?: string[];
   msgId?: number;
+  /// All messages that share this message's parent, ordered by id.
+  /// The UI shows a `‹ idx/N ›` switcher when `siblings.length > 1`.
+  siblings?: number[];
 }
 
 export type SpawnEvent =

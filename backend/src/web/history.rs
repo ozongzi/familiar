@@ -20,6 +20,12 @@ pub struct MessageResponse {
     pub created_at: i64,
     pub streaming: bool,
     pub reasoning: Option<String>,
+    /// Parent message id — lets the client reconstruct the tree.
+    pub parent_id: Option<i64>,
+    /// Ids of all messages sharing this one's `parent_id` (including self),
+    /// in id order. When `siblings.len() > 1`, the UI renders branch
+    /// switcher arrows on this message.
+    pub siblings: Vec<i64>,
 }
 
 #[derive(Deserialize)]
@@ -102,11 +108,11 @@ pub async fn list_messages(
         return Err(AppError::not_found("对话不存在"));
     }
 
-    let rows = state.db.list_messages(id).await?;
+    let rows = state.db.list_active_with_siblings(id).await?;
 
     Ok(Json(
         rows.into_iter()
-            .map(|r| MessageResponse {
+            .map(|(r, siblings)| MessageResponse {
                 id: r.id,
                 role: r.role,
                 name: r.name,
@@ -116,6 +122,8 @@ pub async fn list_messages(
                 created_at: r.created_at,
                 streaming: r.streaming,
                 reasoning: r.reasoning,
+                parent_id: r.parent_id,
+                siblings,
             })
             .collect(),
     ))
