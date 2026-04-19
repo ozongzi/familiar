@@ -1181,6 +1181,7 @@
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
     overflow: hidden;
+    padding: 4px 0;
 }
 
 .widgetLoading {
