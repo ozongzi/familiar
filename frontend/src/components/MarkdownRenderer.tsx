@@ -61,13 +61,37 @@ marked.use({
   gfm: true,
 });
 
+// ─── Math delimiter normalization ─────────────────────────────────────────────
+// LLMs frequently emit MathJax-style `\(...\)` and `\[...\]` instead of
+// `$...$` / `$$...$$`. Rewrite them before handing to marked, but shield
+// code spans and fenced blocks so real backslashes inside code survive.
+
+function normalizeMath(src: string): string {
+  const stash: string[] = [];
+  const placeholder = (m: string) => {
+    const token = `\uE000${stash.length}\uE001`;
+    stash.push(m);
+    return token;
+  };
+
+  let s = src
+      .replace(/```[\s\S]*?```/g, placeholder)
+      .replace(/(?<!`)`[^`\n]+`(?!`)/g, placeholder);
+
+  s = s
+      .replace(/\\\[([\s\S]+?)\\\]/g, (_, body) => `$$${body}$$`)
+      .replace(/\\\(([\s\S]+?)\\\)/g, (_, body) => `$${body}$`);
+
+  return s.replace(/\uE000(\d+)\uE001/g, (_, i) => stash[Number(i)]);
+}
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export function MarkdownRenderer({ content, className }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
 
   const html = useMemo(() => {
-    const raw = marked.parse(content) as string;
+    const raw = marked.parse(normalizeMath(content)) as string;
     return DOMPurify.sanitize(raw, {
       ALLOWED_TAGS: [
         "p",
