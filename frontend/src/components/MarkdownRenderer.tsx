@@ -1,190 +1,133 @@
-import { useEffect, useMemo, useRef } from "react";
-import { marked, type Renderer } from "marked";
-import markedKatex from "marked-katex-extension";
-import hljs from "highlight.js";
-import DOMPurify from "dompurify";
+import { memo, useCallback, useState, type ReactNode } from "react";
+import ReactMarkdown, { type Components } from "react-markdown";
+import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+import remarkBreaks from "remark-breaks";
+import rehypeKatex from "rehype-katex";
+import rehypeHighlight from "rehype-highlight";
 
 interface Props {
   content: string;
   className?: string;
 }
 
-// ─── Custom marked renderer ───────────────────────────────────────────────────
+// ─── Copy button (React, not imperative) ─────────────────────────────────────
 
-function buildRenderer(): Partial<Renderer> {
-  return {
-    code({ text, lang }) {
-      const language = lang && hljs.getLanguage(lang) ? lang : "";
-      const highlighted = language
-          ? hljs.highlight(text, { language }).value
-          : text
-              .replace(/&/g, "&amp;")
-              .replace(/</g, "&lt;")
-              .replace(/>/g, "&gt;");
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
 
-      const langLabel = language
-          ? `<span class="code-lang">${language}</span>`
-          : "";
+  const onClick = useCallback(() => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }, [text]);
 
-      // The copy button uses a data attribute; the actual click handler is
-      // wired up imperatively in a useEffect after the HTML is injected.
-      return `
-<div class="code-block">
-  <div class="code-header">
-    ${langLabel}
-    <button class="code-copy-btn" data-code="${encodeURIComponent(text)}" aria-label="复制代码">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
-        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-        aria-hidden="true">
-        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
-        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
-      </svg>
-      <span>复制</span>
-    </button>
-  </div>
-  <pre class="code-pre"><code class="hljs ${language ? `language-${language}` : ""}">${highlighted}</code></pre>
-</div>`.trim();
-    },
-
-    codespan({ text }) {
-      return `<code class="inline-code">${text}</code>`;
-    },
-  };
+  return (
+      <button
+          type="button"
+          className={`code-copy-btn${copied ? " copied" : ""}`}
+          onClick={onClick}
+          aria-label="复制代码"
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+             stroke="currentColor" strokeWidth="2" strokeLinecap="round"
+             strokeLinejoin="round" aria-hidden="true">
+          <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+        </svg>
+        <span>{copied ? "已复制" : "复制"}</span>
+      </button>
+  );
 }
 
-// Build once, reuse across renders.
-const renderer = buildRenderer();
-marked.use(markedKatex({ throwOnError: false, output: "html" }));
-marked.use({
-  renderer,
-  breaks: true,
-  gfm: true,
-});
+// ─── Code block wrapper ──────────────────────────────────────────────────────
+// react-markdown gives us the <pre><code class="language-xxx hljs">...</code></pre>
+// subtree already syntax-highlighted by rehype-highlight. We wrap it in our
+// chrome (header + copy button) matching the existing .code-block CSS.
+
+function extractText(node: ReactNode): string {
+  if (node == null || typeof node === "boolean") return "";
+  if (typeof node === "string" || typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(extractText).join("");
+  if (typeof node === "object" && "props" in node) {
+    return extractText((node as { props: { children?: ReactNode } }).props.children);
+  }
+  return "";
+}
+
+function extractLanguage(node: ReactNode): string {
+  if (node == null || typeof node === "boolean") return "";
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const lang = extractLanguage(child);
+      if (lang) return lang;
+    }
+    return "";
+  }
+  if (typeof node === "object" && "props" in node) {
+    const props = (node as { props: { className?: string; children?: ReactNode } }).props;
+    const m = /language-([\w-]+)/.exec(props.className ?? "");
+    if (m) return m[1];
+    return extractLanguage(props.children);
+  }
+  return "";
+}
+
+const components: Components = {
+  pre({ children }) {
+    const lang = extractLanguage(children);
+    const raw = extractText(children);
+    return (
+        <div className="code-block">
+          <div className="code-header">
+            {lang ? <span className="code-lang">{lang}</span> : <span className="code-lang" />}
+            <CopyButton text={raw} />
+          </div>
+          <pre className="code-pre">{children}</pre>
+        </div>
+    );
+  },
+  code({ className, children, ...rest }) {
+    // Inline code: no language class, no <pre> parent (handled by `pre`).
+    const isInline = !/language-/.test(className ?? "");
+    if (isInline) {
+      return <code className="inline-code">{children}</code>;
+    }
+    // Block code: let rehype-highlight's className (language-xxx, hljs) pass through.
+    return (
+        <code className={className} {...rest}>
+          {children}
+        </code>
+    );
+  },
+  a({ href, children }) {
+    return (
+        <a href={href} target="_blank" rel="noopener noreferrer">
+          {children}
+        </a>
+    );
+  },
+};
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export function MarkdownRenderer({ content, className }: Props) {
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  const html = useMemo(() => {
-    const raw = marked.parse(content) as string;
-    return DOMPurify.sanitize(raw, {
-      ALLOWED_TAGS: [
-        "p",
-        "br",
-        "strong",
-        "em",
-        "del",
-        "s",
-        "code",
-        "pre",
-        "h1",
-        "h2",
-        "h3",
-        "h4",
-        "h5",
-        "h6",
-        "ul",
-        "ol",
-        "li",
-        "blockquote",
-        "hr",
-        "a",
-        "img",
-        "table",
-        "thead",
-        "tbody",
-        "tr",
-        "th",
-        "td",
-        "span",
-        "div",
-        "button",
-        "annotation",
-        "semantics",
-        "math",
-        "mrow",
-        "mi",
-        "mn",
-        "mo",
-        "msup",
-        "msub",
-        "mfrac",
-        "msqrt",
-        "mtable",
-        "mtr",
-        "mtd",
-        "svg",
-        "path",
-        "rect",
-      ],
-      ALLOWED_ATTR: [
-        "href",
-        "src",
-        "alt",
-        "title",
-        "class",
-        "target",
-        "rel",
-        "width",
-        "height",
-        "viewBox",
-        "fill",
-        "stroke",
-        "stroke-width",
-        "stroke-linecap",
-        "stroke-linejoin",
-        "aria-label",
-        "aria-hidden",
-        "x",
-        "y",
-        "rx",
-        "ry",
-        "d",
-        "data-code",
-        "style",
-      ],
-      FORCE_BODY: false,
-      RETURN_DOM_FRAGMENT: false,
-    });
-  }, [content]);
-
-  // Wire up copy buttons after DOM injection.
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
-
-    const buttons =
-        container.querySelectorAll<HTMLButtonElement>(".code-copy-btn");
-
-    function handleCopy(e: MouseEvent) {
-      const btn = e.currentTarget as HTMLButtonElement;
-      const encoded = btn.getAttribute("data-code") ?? "";
-      const code = decodeURIComponent(encoded);
-      navigator.clipboard.writeText(code).then(() => {
-        const span = btn.querySelector("span");
-        if (!span) return;
-        const original = span.textContent;
-        span.textContent = "已复制";
-        btn.classList.add("copied");
-        setTimeout(() => {
-          span.textContent = original;
-          btn.classList.remove("copied");
-        }, 2000);
-      });
-    }
-
-    buttons.forEach((btn) => btn.addEventListener("click", handleCopy));
-    return () => {
-      buttons.forEach((btn) => btn.removeEventListener("click", handleCopy));
-    };
-  }, [html]);
-
+export const MarkdownRenderer = memo(function MarkdownRenderer({
+  content,
+  className,
+}: Props) {
   return (
-      <div
-          ref={containerRef}
-          className={`prose${className ? ` ${className}` : ""}`}
-          dangerouslySetInnerHTML={{ __html: html }}
-      />
+      <div className={`prose${className ? ` ${className}` : ""}`}>
+        <ReactMarkdown
+            remarkPlugins={[remarkGfm, remarkBreaks, remarkMath]}
+            rehypePlugins={[
+              [rehypeHighlight, { detect: true, ignoreMissing: true }],
+              [rehypeKatex, { throwOnError: false, output: "html" }],
+            ]}
+            components={components}
+        >
+          {content}
+        </ReactMarkdown>
+      </div>
   );
-}
+});
