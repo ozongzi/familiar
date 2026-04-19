@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { api } from "../api/client";
 import type { Model, UpsertModelRequest } from "../api/types";
 import { ProviderSelector } from "./ProviderSelector";
@@ -11,6 +12,8 @@ const EMPTY_FORM: UpsertModelRequest = {
   model_name: "",
   api_base: "",
   api_key: "",
+  compact_trigger_tokens: 50000,
+  compact_tail_tokens: 16000,
 };
 
 interface Props {
@@ -35,6 +38,15 @@ export function UserModelsPanel({ token }: Props) {
 
   useEffect(() => { load(); }, [token]);
 
+  useEffect(() => {
+    if (!editing) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") cancel();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [editing]);
+
   function startNew() {
     setForm(EMPTY_FORM);
     setEditing("new");
@@ -49,6 +61,8 @@ export function UserModelsPanel({ token }: Props) {
       api_base: m.api_base,
       api_key: "",
       kind: m.kind,
+      compact_trigger_tokens: m.compact_trigger_tokens,
+      compact_tail_tokens: m.compact_tail_tokens,
     });
     setEditing(m.id);
     setError("");
@@ -96,6 +110,78 @@ export function UserModelsPanel({ token }: Props) {
     }
   }
 
+  const formBody = editing && (
+    <div className={styles.form}>
+      <div className={styles.row}>
+        <label>显示名称</label>
+        <input
+          value={form.label}
+          onChange={(e) => setForm({ ...form, label: e.target.value })}
+          placeholder="e.g. My GPT-4o"
+        />
+      </div>
+      <div className={styles.row}>
+        <label>Provider</label>
+        <ProviderSelector value={form.provider} onChange={(p) => setForm({ ...form, provider: p })} />
+      </div>
+      <div className={styles.row}>
+        <label>Model Name</label>
+        <input
+          value={form.model_name}
+          onChange={(e) => setForm({ ...form, model_name: e.target.value })}
+          placeholder="e.g. gpt-4o"
+        />
+      </div>
+      <div className={styles.row}>
+        <label>API Base</label>
+        <input
+          value={form.api_base}
+          onChange={(e) => setForm({ ...form, api_base: e.target.value })}
+          placeholder="留空使用默认"
+        />
+      </div>
+      <div className={styles.row}>
+        <label>API Key</label>
+        <input
+          type="password"
+          value={form.api_key}
+          onChange={(e) => setForm({ ...form, api_key: e.target.value })}
+          placeholder={editing !== "new" ? "不修改则留空" : "sk-..."}
+        />
+      </div>
+      <div className={styles.row}>
+        <label>Compact trigger</label>
+        <input
+          type="number"
+          min={1000}
+          value={form.compact_trigger_tokens}
+          onChange={(e) =>
+            setForm({ ...form, compact_trigger_tokens: Number(e.target.value) || 0 })
+          }
+          placeholder="50000"
+        />
+      </div>
+      <div className={styles.row}>
+        <label>Recent tail</label>
+        <input
+          type="number"
+          min={1000}
+          value={form.compact_tail_tokens}
+          onChange={(e) =>
+            setForm({ ...form, compact_tail_tokens: Number(e.target.value) || 0 })
+          }
+          placeholder="16000"
+        />
+      </div>
+      <div className={styles.actions}>
+        <button className={styles.saveBtn} onClick={save} disabled={saving}>
+          {saving ? "保存中…" : "保存"}
+        </button>
+        <button className={styles.cancelBtn} onClick={cancel}>取消</button>
+      </div>
+    </div>
+  );
+
   return (
     <div className={styles.panel}>
       <div className={styles.header}>
@@ -105,61 +191,13 @@ export function UserModelsPanel({ token }: Props) {
 
       {error && <p className={styles.error}>{error}</p>}
 
-      {editing && (
-        <div className={styles.form}>
-          <div className={styles.row}>
-            <label>显示名称</label>
-            <input
-              value={form.label}
-              onChange={(e) => setForm({ ...form, label: e.target.value })}
-              placeholder="e.g. My GPT-4o"
-            />
-          </div>
-          <div className={styles.row}>
-            <label>Provider</label>
-            <ProviderSelector value={form.provider} onChange={(p) => setForm({ ...form, provider: p })} />
-          </div>
-          <div className={styles.row}>
-            <label>Model Name</label>
-            <input
-              value={form.model_name}
-              onChange={(e) => setForm({ ...form, model_name: e.target.value })}
-              placeholder="e.g. gpt-4o"
-            />
-          </div>
-          <div className={styles.row}>
-            <label>API Base</label>
-            <input
-              value={form.api_base}
-              onChange={(e) => setForm({ ...form, api_base: e.target.value })}
-              placeholder="留空使用默认"
-            />
-          </div>
-          <div className={styles.row}>
-            <label>API Key</label>
-            <input
-              type="password"
-              value={form.api_key}
-              onChange={(e) => setForm({ ...form, api_key: e.target.value })}
-              placeholder={editing !== "new" ? "不修改则留空" : "sk-..."}
-            />
-          </div>
-          <div className={styles.actions}>
-            <button className={styles.saveBtn} onClick={save} disabled={saving}>
-              {saving ? "保存中…" : "保存"}
-            </button>
-            <button className={styles.cancelBtn} onClick={cancel}>取消</button>
-          </div>
-        </div>
-      )}
-
       <div className={styles.list}>
-        {models.length === 0 && !editing && (
+        {models.length === 0 && (
           <p className={styles.empty}>暂无自定义模型，点击"添加"创建</p>
         )}
         {models.map((m) => (
           <div key={m.id} className={styles.item}>
-            <div className={styles.itemInfo}>
+            <div className={styles.itemHeader}>
               <span className={styles.itemLabel}>{m.label}</span>
               <span className={styles.itemMeta}>{m.provider} · {m.model_name}</span>
             </div>
@@ -170,6 +208,24 @@ export function UserModelsPanel({ token }: Props) {
           </div>
         ))}
       </div>
+
+      {editing &&
+        createPortal(
+          <div
+            className={styles.modalOverlay}
+            onClick={(e) => {
+              if (e.target === e.currentTarget) cancel();
+            }}
+          >
+            <div className={styles.modal}>
+              <h4 className={styles.modalTitle}>
+                {editing === "new" ? "添加模型" : "编辑模型"}
+              </h4>
+              {formBody}
+            </div>
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }

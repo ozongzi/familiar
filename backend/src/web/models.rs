@@ -29,6 +29,8 @@ pub struct ModelRow {
     pub kind: String,
     pub admin_only: bool,
     pub created_at: sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc>,
+    pub compact_trigger_tokens: i64,
+    pub compact_tail_tokens: i64,
 }
 
 #[derive(Debug, Serialize)]
@@ -45,6 +47,8 @@ pub struct ModelResponse {
     pub kind: String,
     pub admin_only: bool,
     pub created_at: String,
+    pub compact_trigger_tokens: i64,
+    pub compact_tail_tokens: i64,
     // api_key intentionally omitted from responses
 }
 
@@ -63,6 +67,8 @@ impl From<ModelRow> for ModelResponse {
             kind: r.kind,
             admin_only: r.admin_only,
             created_at: r.created_at.to_rfc3339(),
+            compact_trigger_tokens: r.compact_trigger_tokens,
+            compact_tail_tokens: r.compact_tail_tokens,
         }
     }
 }
@@ -88,6 +94,8 @@ pub struct UpsertModelRequest {
     pub extra_body: Value,
     #[serde(default = "default_kind")]
     pub kind: String,
+    pub compact_trigger_tokens: i64,
+    pub compact_tail_tokens: i64,
     // Admin-only knobs (optional; admin PUT applies them, user PUT ignores).
     #[serde(default)]
     pub role: Option<String>,
@@ -130,8 +138,9 @@ pub async fn create_model(
     Json(req): Json<UpsertModelRequest>,
 ) -> AppResult<Json<ModelResponse>> {
     let row = sqlx::query_as::<_, ModelRow>(
-        "INSERT INTO models (user_id, scope, label, provider, model_name, api_base, api_key, extra_body, kind)
-         VALUES ($1, 'user', $2, $3, $4, $5, $6, $7, $8)
+        "INSERT INTO models (user_id, scope, label, provider, model_name, api_base, api_key, extra_body, kind,
+                             compact_trigger_tokens, compact_tail_tokens)
+         VALUES ($1, 'user', $2, $3, $4, $5, $6, $7, $8, $9, $10)
          RETURNING *",
     )
     .bind(auth.user_id)
@@ -142,6 +151,8 @@ pub async fn create_model(
     .bind(&req.api_key)
     .bind(&req.extra_body)
     .bind(&req.kind)
+    .bind(req.compact_trigger_tokens)
+    .bind(req.compact_tail_tokens)
     .fetch_one(&state.pool)
     .await?;
 
@@ -158,8 +169,9 @@ pub async fn update_model(
     let row = sqlx::query_as::<_, ModelRow>(
         "UPDATE models SET label=$1, provider=$2, model_name=$3, api_base=$4,
          api_key = CASE WHEN $5 = '' THEN api_key ELSE $5 END,
-         extra_body=$6, kind=$7
-         WHERE id=$8 AND user_id=$9 AND scope='user'
+         extra_body=$6, kind=$7,
+         compact_trigger_tokens=$8, compact_tail_tokens=$9
+         WHERE id=$10 AND user_id=$11 AND scope='user'
          RETURNING *",
     )
     .bind(&req.label)
@@ -169,6 +181,8 @@ pub async fn update_model(
     .bind(&req.api_key)
     .bind(&req.extra_body)
     .bind(&req.kind)
+    .bind(req.compact_trigger_tokens)
+    .bind(req.compact_tail_tokens)
     .bind(id)
     .bind(auth.user_id)
     .fetch_optional(&state.pool)
@@ -250,9 +264,11 @@ pub async fn admin_create_model(
     let row = sqlx::query_as::<_, ModelRow>(
         "INSERT INTO models
            (user_id, scope, label, provider, model_name, api_base, api_key,
-            extra_body, kind, role, visible, is_default, admin_only)
+            extra_body, kind, role, visible, is_default, admin_only,
+            compact_trigger_tokens, compact_tail_tokens)
          VALUES (NULL, 'global', $1, $2, $3, $4, $5, $6, $7,
-                 $8, COALESCE($9, true), COALESCE($10, false), COALESCE($11, false))
+                 $8, COALESCE($9, true), COALESCE($10, false), COALESCE($11, false),
+                 $12, $13)
          RETURNING *",
     )
     .bind(&req.label)
@@ -266,6 +282,8 @@ pub async fn admin_create_model(
     .bind(req.visible)
     .bind(req.is_default)
     .bind(req.admin_only)
+    .bind(req.compact_trigger_tokens)
+    .bind(req.compact_tail_tokens)
     .fetch_one(&mut *tx)
     .await?;
 
@@ -314,8 +332,10 @@ pub async fn admin_update_model(
          role       = $8,
          visible    = COALESCE($9,  visible),
          is_default = COALESCE($10, is_default),
-         admin_only = COALESCE($11, admin_only)
-         WHERE id=$12 AND scope='global'
+         admin_only = COALESCE($11, admin_only),
+         compact_trigger_tokens = $12,
+         compact_tail_tokens    = $13
+         WHERE id=$14 AND scope='global'
          RETURNING *",
     )
     .bind(&req.label)
@@ -329,6 +349,8 @@ pub async fn admin_update_model(
     .bind(req.visible)
     .bind(req.is_default)
     .bind(req.admin_only)
+    .bind(req.compact_trigger_tokens)
+    .bind(req.compact_tail_tokens)
     .bind(id)
     .fetch_optional(&mut *tx)
     .await?

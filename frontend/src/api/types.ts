@@ -63,6 +63,8 @@ export interface Model {
   kind: ModelKind;
   admin_only: boolean;
   created_at: string;
+  compact_trigger_tokens: number;
+  compact_tail_tokens: number;
 }
 
 export interface UpsertModelRequest {
@@ -73,6 +75,8 @@ export interface UpsertModelRequest {
   api_key?: string;
   extra_body?: Record<string, unknown>;
   kind?: ModelKind;
+  compact_trigger_tokens: number;
+  compact_tail_tokens: number;
   role?: "cheap" | "embedding" | null;
   visible?: boolean;
   is_default?: boolean;

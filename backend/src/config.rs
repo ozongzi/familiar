@@ -41,6 +41,20 @@ pub struct ModelConfig {
     /// "claude-code" → subprocess `claude -p` via `agent_claude_code`.
     #[serde(default = "default_model_kind")]
     pub kind: String,
+    /// Context size (prompt_tokens on the latest assistant turn) at which the
+    /// worker triggers a compaction pass using this model.
+    #[serde(default = "default_compact_trigger")]
+    pub compact_trigger_tokens: i64,
+    /// Tokens of recent history kept raw after a compaction (the live tail).
+    #[serde(default = "default_compact_tail")]
+    pub compact_tail_tokens: i64,
+}
+
+fn default_compact_trigger() -> i64 {
+    50_000
+}
+fn default_compact_tail() -> i64 {
+    16_000
 }
 
 fn default_model_kind() -> String {
@@ -116,6 +130,8 @@ fn default_model() -> ModelConfig {
         extra_body: HashMap::new(),
         max_tokens: None,
         kind: "api".to_string(),
+        compact_trigger_tokens: default_compact_trigger(),
+        compact_tail_tokens: default_compact_tail(),
     }
 }
 
@@ -176,14 +192,15 @@ impl Config {
             .collect();
 
         // ── Load cheap model from models table ────────────────────────────
-        let cheap: Option<(String, String, String, String, Value)> = sqlx::query_as(
-            "SELECT provider, model_name, api_base, api_key, extra_body
+        let cheap: Option<(String, String, String, String, Value, i64, i64)> = sqlx::query_as(
+            "SELECT provider, model_name, api_base, api_key, extra_body,
+                    compact_trigger_tokens, compact_tail_tokens
              FROM models WHERE scope = 'global' AND role = 'cheap' LIMIT 1",
         )
         .fetch_optional(pool)
         .await?;
 
-        if let Some((provider, name, api_base, api_key, extra_body)) = cheap {
+        if let Some((provider, name, api_base, api_key, extra_body, trig, tail)) = cheap {
             cfg.cheap_model = ModelConfig {
                 provider: serde_json::from_value(Value::String(provider))
                     .unwrap_or(Provider::DeepSeek),
@@ -196,18 +213,21 @@ impl Config {
                     .unwrap_or_default(),
                 max_tokens: None,
                 kind: "api".to_string(),
+                compact_trigger_tokens: trig,
+                compact_tail_tokens: tail,
             };
         }
 
         // ── Load embedding model from models table ────────────────────────
-        let embed: Option<(String, String, String, String, Value)> = sqlx::query_as(
-            "SELECT provider, model_name, api_base, api_key, extra_body
+        let embed: Option<(String, String, String, String, Value, i64, i64)> = sqlx::query_as(
+            "SELECT provider, model_name, api_base, api_key, extra_body,
+                    compact_trigger_tokens, compact_tail_tokens
              FROM models WHERE scope = 'global' AND role = 'embedding' LIMIT 1",
         )
         .fetch_optional(pool)
         .await?;
 
-        if let Some((provider, name, api_base, api_key, extra_body)) = embed {
+        if let Some((provider, name, api_base, api_key, extra_body, trig, tail)) = embed {
             cfg.embedding = ModelConfig {
                 provider: serde_json::from_value(Value::String(provider))
                     .unwrap_or(Provider::DeepSeek),
@@ -220,6 +240,8 @@ impl Config {
                     .unwrap_or_default(),
                 max_tokens: None,
                 kind: "api".to_string(),
+                compact_trigger_tokens: trig,
+                compact_tail_tokens: tail,
             };
         }
 

@@ -34,21 +34,14 @@ use crate::worker::WorkerContext;
 
 // ── Token thresholds ──────────────────────────────────────────────────────────
 
-/// Hard ceiling for the context window — used by the worker's final-safety
-/// `truncate_to_token_budget` call.  Compaction should keep us well below
-/// this via `COMPACT_TRIGGER_TOKENS`.
-pub const HISTORY_TOKEN_BUDGET: usize = 64_000;
-
-/// Context size (provider-counted prompt_tokens of the latest assistant turn)
-/// at which compaction is triggered.
-const COMPACT_TRIGGER_TOKENS: i64 = 50_000;
-
-/// Tokens to keep as the "recent tail" after compaction.  Summary + tail must
-/// stay well below the trigger so the next compaction doesn't fire immediately.
-const RECENT_MESSAGES_BUDGET: i64 = 16_000;
-
-/// Max tokens the compaction model may emit for the summary.
+/// Max tokens the compaction model may emit for the summary. Model-independent
+/// — 8K is plenty for a 9-section structured summary regardless of provider.
 const COMPACT_MAX_OUTPUT_TOKENS: u32 = 8_000;
+
+// Per-model thresholds live on `ModelConfig`:
+//   - compact_trigger_tokens: prompt_tokens at which a compact fires
+//   - compact_tail_tokens:    recent tail kept raw after compact
+// The worker derives its truncate safety ceiling from the trigger.
 
 // ── Compact prompt ────────────────────────────────────────────────────────────
 
@@ -234,11 +227,11 @@ pub async fn load_for_generation(
 /// incremental summarisation + update DB.  Returns `true` if a compact ran.
 pub async fn maybe_compact(
     ctx: &WorkerContext,
-    cheap_model: &ModelConfig,
+    model: &ModelConfig,
     http: &reqwest::Client,
 ) -> bool {
     let ctx_tokens = latest_context_tokens(&ctx.pool, ctx.conversation_id).await;
-    if ctx_tokens < COMPACT_TRIGGER_TOKENS {
+    if ctx_tokens < model.compact_trigger_tokens {
         return false;
     }
 
@@ -271,7 +264,7 @@ pub async fn maybe_compact(
     // recent tail, summarise everything before.  Returns the new boundary
     // msg_id and the slice of delta to feed into the summariser.
     let (new_until_id, to_summarise_range) =
-        match compute_new_boundary(&ctx.pool, ctx.conversation_id, prev_until, &delta).await {
+        match compute_new_boundary(&ctx.pool, ctx.conversation_id, prev_until, &delta, model.compact_tail_tokens).await {
             Some(v) => v,
             None => {
                 info!(
@@ -291,7 +284,7 @@ pub async fn maybe_compact(
     }
     input.extend_from_slice(&delta[..to_summarise_range]);
 
-    let Some(new_summary) = run_summariser(ctx, cheap_model, http, &input).await else {
+    let Some(new_summary) = run_summariser(ctx, model, http, &input).await else {
         return false;
     };
 
@@ -381,6 +374,7 @@ async fn compute_new_boundary(
     conv_id: Uuid,
     prev_until: Option<i64>,
     delta: &[Message],
+    tail_budget_tokens: i64,
 ) -> Option<(i64, usize)> {
     if delta.is_empty() {
         return None;
@@ -441,7 +435,7 @@ async fn compute_new_boundary(
     for (i, msg) in delta.iter().enumerate().rev() {
         let est = msg.estimate_tokens() as i64;
         acc += est;
-        if acc >= RECENT_MESSAGES_BUDGET {
+        if acc >= tail_budget_tokens {
             split_idx = i;
             break;
         }
@@ -492,13 +486,13 @@ fn snap_boundary(delta: &[Message], start: usize) -> usize {
 
 async fn run_summariser(
     ctx: &WorkerContext,
-    cheap_model: &ModelConfig,
+    model: &ModelConfig,
     http: &reqwest::Client,
     input: &[Message],
 ) -> Option<String> {
     let compact_messages = strip_images(input);
 
-    let request = cheap_model
+    let request = model
         .to_request()
         .system_prompt(build_compact_system_prompt())
         .messages(compact_messages)

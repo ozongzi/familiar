@@ -121,6 +121,8 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
             api_key: String,
             extra_body: Value,
             kind: String,
+            compact_trigger_tokens: i64,
+            compact_tail_tokens: i64,
         ) -> ModelConfig {
             let provider_parsed = serde_json::from_value::<crate::config::Provider>(
                 serde_json::Value::String(provider.clone()),
@@ -137,6 +139,8 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
                     .unwrap_or_default(),
                 max_tokens: None,
                 kind,
+                compact_trigger_tokens,
+                compact_tail_tokens,
             }
         }
 
@@ -145,8 +149,9 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
         // non-admins. The UI filter + create_conversation guard should catch
         // this upstream; here we fall through to the default-model branch so
         // the job still completes rather than 500-ing.
-        let conv_model: Option<(String, String, String, String, Value, String)> = sqlx::query_as(
-            "SELECT m.provider, m.model_name, m.api_base, m.api_key, m.extra_body, m.kind
+        let conv_model: Option<(String, String, String, String, Value, String, i64, i64)> = sqlx::query_as(
+            "SELECT m.provider, m.model_name, m.api_base, m.api_key, m.extra_body, m.kind,
+                    m.compact_trigger_tokens, m.compact_tail_tokens
              FROM conversations c
              JOIN models m ON m.id = c.model_id
              JOIN users u ON u.id = c.user_id
@@ -157,20 +162,21 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
         .await
         .unwrap_or(None);
 
-        if let Some((provider, name, api_base, api_key, extra_body, kind)) = conv_model {
-            model_from_row(provider, name, api_base, api_key, extra_body, kind)
+        if let Some((provider, name, api_base, api_key, extra_body, kind, trig, tail)) = conv_model {
+            model_from_row(provider, name, api_base, api_key, extra_body, kind, trig, tail)
         } else {
             // 2. global default model
-            let default_model: Option<(String, String, String, String, Value, String)> = sqlx::query_as(
-                "SELECT provider, model_name, api_base, api_key, extra_body, kind
+            let default_model: Option<(String, String, String, String, Value, String, i64, i64)> = sqlx::query_as(
+                "SELECT provider, model_name, api_base, api_key, extra_body, kind,
+                        compact_trigger_tokens, compact_tail_tokens
                  FROM models WHERE scope = 'global' AND is_default = true LIMIT 1",
             )
             .fetch_optional(&ctx.pool)
             .await
             .unwrap_or(None);
 
-            if let Some((provider, name, api_base, api_key, extra_body, kind)) = default_model {
-                model_from_row(provider, name, api_base, api_key, extra_body, kind)
+            if let Some((provider, name, api_base, api_key, extra_body, kind, trig, tail)) = default_model {
+                model_from_row(provider, name, api_base, api_key, extra_body, kind, trig, tail)
             } else {
                 // 3. fallback: cheap_model
                 cheap_cfg.clone()
@@ -364,7 +370,7 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
     // before the run.
     if frontier_cfg.kind == "claude-code" {
         let http = reqwest::Client::new();
-        if crate::compact::maybe_compact(ctx, &cheap_cfg, &http).await {
+        if crate::compact::maybe_compact(ctx, &frontier_cfg, &http).await {
             messages = crate::compact::load_for_generation(
                 &ctx.db,
                 ctx.conversation_id,
@@ -378,13 +384,11 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
     } else {
         let request = frontier_cfg.to_request().system_prompt(system_prompt);
         let http = reqwest::Client::new();
-        generation_loop(ctx, &http, &request, messages, &bundle, cheap_cfg).await
+        generation_loop(ctx, &http, &request, messages, &bundle, frontier_cfg).await
     }
 }
 
 // ── Generation loop ───────────────────────────────────────────────────────────
-
-const HISTORY_TOKEN_BUDGET: usize = crate::compact::HISTORY_TOKEN_BUDGET;
 
 async fn generation_loop(
     ctx: &WorkerContext,
@@ -392,7 +396,7 @@ async fn generation_loop(
     base_request: &Request,
     mut messages: Vec<Message>,
     tools: &ToolBundle,
-    cheap_model: ModelConfig,
+    compact_model: ModelConfig,
 ) -> anyhow::Result<()> {
     let tool_defs: Vec<ToolDefinition> = tools.raw_tools();
     let mut ttft_written = false; // only record TTFT for the first LLM call
@@ -416,7 +420,7 @@ async fn generation_loop(
         // Compact module checks provider-reported token counts from DB and
         // decides whether to summarise. If it ran, reload messages via the
         // unified loader so the worker sees the fresh [summary + tail].
-        if crate::compact::maybe_compact(ctx, &cheap_model, http).await {
+        if crate::compact::maybe_compact(ctx, &compact_model, http).await {
             messages = crate::compact::load_for_generation(
                 &ctx.db,
                 ctx.conversation_id,
@@ -427,8 +431,11 @@ async fn generation_loop(
             .unwrap_or(messages);
         }
         // ── Truncate history to token budget ──────────────────────────────
+        // Safety ceiling above the compact trigger — if compact didn't fire
+        // (e.g. missing usage counts), still cap context to prevent runaway.
+        let history_budget = (compact_model.compact_trigger_tokens * 5 / 4) as usize;
         let before = messages.len();
-        agentix::truncate_to_token_budget(&mut messages, HISTORY_TOKEN_BUDGET);
+        agentix::truncate_to_token_budget(&mut messages, history_budget);
         if messages.len() < before {
             info!(conversation = %ctx.conversation_id, dropped = before - messages.len(), kept = messages.len(), "history truncated");
         }
@@ -873,7 +880,8 @@ async fn generation_loop_claude_code(
 ) -> anyhow::Result<()> {
     use agentix::{AgentEvent, ClaudeCodeConfig, agent_claude_code};
 
-    agentix::truncate_to_token_budget(&mut messages, HISTORY_TOKEN_BUDGET);
+    let history_budget = (frontier_cfg.compact_trigger_tokens * 5 / 4) as usize;
+    agentix::truncate_to_token_budget(&mut messages, history_budget);
 
     let cc_config = ClaudeCodeConfig::new().model(&frontier_cfg.name);
 

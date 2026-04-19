@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { api } from "../api/client";
 import type { Model, UpsertModelRequest } from "../api/types";
 import { ProviderSelector } from "./ProviderSelector";
@@ -16,6 +17,8 @@ const EMPTY_FORM: UpsertModelRequest = {
   visible: true,
   is_default: false,
   admin_only: false,
+  compact_trigger_tokens: 50000,
+  compact_tail_tokens: 16000,
 };
 
 interface Props {
@@ -40,6 +43,16 @@ export function AdminModelsPanel({ token }: Props) {
 
   useEffect(() => { load(); }, [token]);
 
+  // ESC closes the editor modal.
+  useEffect(() => {
+    if (!editing) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") cancel();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [editing]);
+
   function startNew() {
     setForm(EMPTY_FORM);
     setEditing("new");
@@ -58,6 +71,8 @@ export function AdminModelsPanel({ token }: Props) {
       visible: m.visible,
       is_default: m.is_default,
       admin_only: m.admin_only,
+      compact_trigger_tokens: m.compact_trigger_tokens,
+      compact_tail_tokens: m.compact_tail_tokens,
     });
     setEditing(m.id);
     setError("");
@@ -108,17 +123,8 @@ export function AdminModelsPanel({ token }: Props) {
     }
   }
 
-  return (
-    <div className={styles.panel}>
-      <div className={styles.header}>
-        <h3>全局模型</h3>
-        <button className={styles.addBtn} onClick={startNew}>+ 添加</button>
-      </div>
-
-      {error && <p className={styles.error}>{error}</p>}
-
-      {editing && (
-        <div className={styles.form}>
+  const formBody = editing && (
+    <div className={styles.form}>
           <div className={styles.section}>
             <div className={styles.sectionTitle}>连接</div>
             <div className={styles.row}>
@@ -200,6 +206,34 @@ export function AdminModelsPanel({ token }: Props) {
           </div>
 
           <div className={styles.section}>
+            <div className={styles.sectionTitle}>Compaction</div>
+            <div className={styles.row}>
+              <label>Trigger (tokens)</label>
+              <input
+                type="number"
+                min={1000}
+                value={form.compact_trigger_tokens}
+                onChange={(e) =>
+                  setForm({ ...form, compact_trigger_tokens: Number(e.target.value) || 0 })
+                }
+                placeholder="50000"
+              />
+            </div>
+            <div className={styles.row}>
+              <label>Recent tail (tokens)</label>
+              <input
+                type="number"
+                min={1000}
+                value={form.compact_tail_tokens}
+                onChange={(e) =>
+                  setForm({ ...form, compact_tail_tokens: Number(e.target.value) || 0 })
+                }
+                placeholder="16000"
+              />
+            </div>
+          </div>
+
+          <div className={styles.section}>
             <div className={styles.sectionTitle}>访问</div>
             <label className={styles.checkRow}>
               <input
@@ -236,24 +270,33 @@ export function AdminModelsPanel({ token }: Props) {
             <button className={styles.cancelBtn} onClick={cancel}>取消</button>
           </div>
         </div>
-      )}
+  );
+
+  return (
+    <div className={styles.panel}>
+      <div className={styles.header}>
+        <h3>全局模型</h3>
+        <button className={styles.addBtn} onClick={startNew}>+ 添加</button>
+      </div>
+
+      {error && <p className={styles.error}>{error}</p>}
 
       <div className={styles.list}>
-        {models.length === 0 && !editing && (
+        {models.length === 0 && (
           <p className={styles.empty}>暂无全局模型，点击"添加"创建</p>
         )}
         {models.map((m) => (
           <div key={m.id} className={`${styles.item} ${m.is_default ? styles.itemDefault : ""}`}>
-            <div className={styles.itemInfo}>
-              <span className={styles.itemLabel}>
-                {m.label}
+            <div className={styles.itemHeader}>
+              <span className={styles.itemLabel}>{m.label}</span>
+              <div className={styles.itemBadges}>
                 {m.is_default && <span className={styles.defaultBadge}>默认</span>}
                 {m.role === "cheap" && <span className={styles.roleBadge}>cheap</span>}
                 {m.role === "embedding" && <span className={styles.roleBadge}>embedding</span>}
                 {m.kind === "claude-code" && <span className={styles.roleBadge}>claude-code</span>}
                 {m.admin_only && <span className={styles.roleBadge}>admin-only</span>}
                 {!m.visible && <span className={styles.roleBadge}>隐藏</span>}
-              </span>
+              </div>
               <span className={styles.itemMeta}>{m.provider} · {m.model_name}</span>
             </div>
             <div className={styles.itemActions}>
@@ -263,6 +306,24 @@ export function AdminModelsPanel({ token }: Props) {
           </div>
         ))}
       </div>
+
+      {editing &&
+        createPortal(
+          <div
+            className={styles.modalOverlay}
+            onClick={(e) => {
+              if (e.target === e.currentTarget) cancel();
+            }}
+          >
+            <div className={styles.modal}>
+              <h4 className={styles.modalTitle}>
+                {editing === "new" ? "添加模型" : "编辑模型"}
+              </h4>
+              {formBody}
+            </div>
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }
