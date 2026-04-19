@@ -31,6 +31,12 @@ interface Props {
   conversationId?: string | null;
   onBranch?: (msgId: number, bubbleKey: string, newText: string) => void;
   onSwitchSibling?: (targetMsgId: number) => void;
+  /// When set, this bubble is the last assistant text bubble of a
+  /// completed reply; the copy button on this bubble copies the full
+  /// reply (concatenation of all text fragments in the reply) rather
+  /// than this fragment alone. Unset for user bubbles, mid-reply
+  /// fragments, and mid-stream assistant bubbles.
+  fullReplyContent?: string;
 }
 
 export const MessageBubble = memo(function MessageBubble({
@@ -39,6 +45,7 @@ export const MessageBubble = memo(function MessageBubble({
   conversationId,
   onBranch,
   onSwitchSibling,
+  fullReplyContent,
 }: Props) {
   if (bubble.kind === "tool") {
     return (
@@ -57,6 +64,7 @@ export const MessageBubble = memo(function MessageBubble({
       bubble={bubble}
       onBranch={onBranch}
       onSwitchSibling={onSwitchSibling}
+      fullReplyContent={fullReplyContent}
     />
   );
 });
@@ -249,10 +257,12 @@ function TextChatBubble({
   bubble,
   onBranch,
   onSwitchSibling,
+  fullReplyContent,
 }: {
   bubble: Extract<ChatBubble, { kind: "text" }>;
   onBranch?: (msgId: number, bubbleKey: string, newText: string) => void;
   onSwitchSibling?: (targetMsgId: number) => void;
+  fullReplyContent?: string;
 }) {
   const isUser = bubble.role === "user";
   const hasReasoning = bubble.reasoning && bubble.reasoning.length > 0;
@@ -263,6 +273,26 @@ function TextChatBubble({
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const canEdit = isUser && !bubble.streaming && bubble.msgId != null && onBranch != null;
+
+  // Copy target differs by role:
+  //   - User bubbles are atomic: copy this bubble's content.
+  //   - Assistant bubbles belong to a multi-fragment reply interleaved with
+  //     tool bubbles; ChatPage passes `fullReplyContent` only to the LAST
+  //     text fragment of a completed reply, and we copy that concatenation.
+  //     Mid-reply fragments and mid-stream bubbles receive no content, so
+  //     no copy button surfaces there.
+  const [copied, setCopied] = useState(false);
+  const copyText = isUser
+    ? (!bubble.streaming && bubble.content.length > 0 ? stripTimestamp(bubble.content) : null)
+    : (fullReplyContent ?? null);
+  const canCopy = !editing && copyText != null && copyText.length > 0;
+  const copyMessage = useCallback(() => {
+    if (copyText == null) return;
+    navigator.clipboard.writeText(copyText).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }, [copyText]);
 
   // Branch switcher: show `‹ idx/N ›` when this message has siblings.
   const siblings = bubble.siblings ?? [];
@@ -414,6 +444,19 @@ function TextChatBubble({
               <span className={styles.cursor} aria-hidden="true" />
             )}
           </>
+        )}
+        {canCopy && (
+          <div className={styles.bubbleFooter}>
+            <button
+              type="button"
+              className={styles.footerAction}
+              onClick={copyMessage}
+              title={copied ? "已复制" : "复制"}
+              aria-label={copied ? "已复制" : "复制"}
+            >
+              {copied ? <CopiedIcon /> : <CopyIcon />}
+            </button>
+          </div>
         )}
       </div>
       {/* In row-reverse, elements after the bubble appear to its visual left */}
@@ -1337,6 +1380,23 @@ function EditIcon() {
     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
       <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+    </svg>
+  );
+}
+
+function CopyIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+    </svg>
+  );
+}
+
+function CopiedIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <polyline points="20 6 9 17 4 12" />
     </svg>
   );
 }
