@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { Sidebar } from "../components/Sidebar";
 import { SearchPanel } from "../components/SearchPanel";
 import { McpSettings } from "../components/McpSettings";
@@ -131,6 +131,40 @@ export function ChatPage() {
   const handleScrollToBottom = useCallback(() => {
     lastBubbleRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
   }, []);
+
+  // Copy-whole-reply: an assistant "reply" is the run of assistant bubbles
+  // between two user bubbles; the copy target is the concatenation of every
+  // text fragment in that run (tool bubbles skipped). The copy button
+  // surfaces on the *last* assistant text bubble of a completed reply —
+  // one button per reply, not one per fragment.
+  const replyCopyText = useMemo(() => {
+    const result = new Map<string, string>();
+    let run: { key: string; content: string; streaming: boolean }[] = [];
+    const flush = () => {
+      if (run.length === 0) return;
+      // Skip replies that are still being generated — avoids showing the
+      // button on a half-finished turn. Trailing run is only flushed when
+      // `status === "idle"` (see after the loop).
+      if (run.some((b) => b.streaming)) {
+        run = [];
+        return;
+      }
+      const last = run[run.length - 1];
+      const concat = run.map((b) => b.content).join("\n\n");
+      if (concat) result.set(last.key, concat);
+      run = [];
+    };
+    for (const b of bubbles) {
+      if (b.role === "user") {
+        flush();
+      } else if (b.kind === "text" && b.role === "assistant") {
+        run.push({ key: b.key, content: b.content, streaming: b.streaming });
+      }
+      // tool / upload bubbles: tracked nowhere, never break a reply run
+    }
+    if (status === "idle") flush();
+    return result;
+  }, [bubbles, status]);
 
   // When a new user bubble appears during connecting/streaming, scroll it to top
   const lastUserBubbleKey = (() => {
@@ -467,6 +501,7 @@ export function ChatPage() {
                   conversationId={activeId === DRAFT_ID ? null : activeId}
                   onBranch={branch}
                   onSwitchSibling={switchSibling}
+                  fullReplyContent={replyCopyText.get(bubble.key)}
                 />
               </div>
             );
