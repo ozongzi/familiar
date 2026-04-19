@@ -452,6 +452,15 @@ export function useChat(
             ? (extractWidgetCode(result) ?? extractWidgetCode(tryParseWidgetArgs(argsRaw)))
             : null;
 
+          // diagram → 从 args 里取回 mermaid 代码
+          let diagramCode: string | undefined;
+          if (name === "diagram") {
+            try {
+              const parsed = JSON.parse(argsRaw) as Record<string, unknown>;
+              if (typeof parsed.code === "string") diagramCode = parsed.code;
+            } catch { /* ignore */ }
+          }
+
           const historyImages = toolImagesMap.get(id);
           const toolBubble: ToolBubble = {
             kind: "tool",
@@ -463,6 +472,7 @@ export function useChat(
             result,
             pending: result === null,
             ...(widgetCode ? { widgetCode } : {}),
+            ...(diagramCode ? { diagramCode } : {}),
             ...(historyImages && historyImages.length > 0 ? { images: historyImages } : {}),
           };
           history.push(toolBubble);
@@ -1149,13 +1159,20 @@ export function useChat(
             (err as { error?: string }).error ?? `HTTP ${res.status}`,
           );
         }
-        const data = (await res.json()) as { stream_id: string; user_message_id?: number };
+        const data = (await res.json()) as {
+          stream_id: string;
+          user_message_id?: number;
+          siblings?: number[];
+        };
         streamId = data.stream_id;
         if (data.user_message_id != null) {
           const mid = data.user_message_id;
+          const sibs = data.siblings;
           setBubbles((prev) =>
             prev.map((b) =>
-              b.key === userBubble.key ? { ...b, msgId: mid } : b
+              b.key === userBubble.key
+                ? { ...b, msgId: mid, ...(sibs ? { siblings: sibs } : {}) }
+                : b
             )
           );
         }

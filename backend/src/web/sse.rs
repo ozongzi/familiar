@@ -191,6 +191,25 @@ pub async fn send_message_handler(
         state.persist_message_async(conversation_id, auth.user_id, msg).await
     };
 
+    // Siblings = ids of messages sharing this one's parent_id. The UI uses
+    // this to render the branch switcher immediately without a refetch.
+    let siblings: Vec<i64> = match user_message_id {
+        Some(mid) => sqlx::query_scalar::<_, i64>(
+            "SELECT id FROM messages
+             WHERE conversation_id = $1
+               AND parent_id IS NOT DISTINCT FROM (
+                   SELECT parent_id FROM messages WHERE id = $2
+               )
+             ORDER BY id ASC",
+        )
+        .bind(conversation_id)
+        .bind(mid)
+        .fetch_all(&state.pool)
+        .await
+        .unwrap_or_else(|_| vec![mid]),
+        None => Vec::new(),
+    };
+
     // If there's already a running job, abort it first (interrupt semantics).
     // Then start a new generation job.
     let job_id = state
@@ -201,7 +220,11 @@ pub async fn send_message_handler(
     // job_id doubles as stream_id
     Ok((
         StatusCode::ACCEPTED,
-        Json(json!({ "stream_id": job_id, "user_message_id": user_message_id })),
+        Json(json!({
+            "stream_id": job_id,
+            "user_message_id": user_message_id,
+            "siblings": siblings,
+        })),
     ))
 }
 
