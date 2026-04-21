@@ -530,7 +530,35 @@ async fn run_autocheck_in_container(
 
 // ── bash streaming via docker exec ────────────────────────────────────────────
 
-enum BashOutput { Line(String), Done(Value) }
+// Chunk-based streaming: read raw bytes instead of lines so partial-line output
+// (progress bars, spinners, \r rewrites) arrives immediately without waiting for \n.
+// Note: process-side buffering (e.g. Python's stdio) still batches writes until the
+// libc 4 KB threshold — that requires PTY allocation in sandbox.rs to fix properly.
+enum BashOutput { Chunk(String), Done(Value) }
+
+// Simulates a terminal line buffer so the Done result contains the final rendered
+// state rather than raw \r-interleaved progress spam. Handles \r (go to line start),
+// \n (new line), and \x08 (backspace). ANSI codes pass through unchanged.
+struct TerminalBuffer {
+    lines: Vec<String>,
+}
+
+impl TerminalBuffer {
+    fn new() -> Self { Self { lines: vec![String::new()] } }
+
+    fn push_str(&mut self, s: &str) {
+        for ch in s.chars() {
+            match ch {
+                '\r' => *self.lines.last_mut().unwrap() = String::new(),
+                '\n' => self.lines.push(String::new()),
+                '\x08' => { self.lines.last_mut().unwrap().pop(); }
+                c => self.lines.last_mut().unwrap().push(c),
+            }
+        }
+    }
+
+    fn finish(self) -> String { self.lines.join("\n") }
+}
 
 fn run_bash_in_container_streaming(
     sandbox: Arc<SandboxManager>,
@@ -540,7 +568,7 @@ fn run_bash_in_container_streaming(
     timeout_ms: u64,
 ) -> impl futures::Stream<Item = BashOutput> {
     async_stream::stream! {
-        use tokio::io::AsyncBufReadExt;
+        use tokio::io::AsyncReadExt;
 
         let (prog, args) = sandbox.wrap_mcp_command(user_id, conversation_id, "sh", &["-c", &command]);
         let mut child = match tokio::process::Command::new(&prog)
@@ -553,31 +581,41 @@ fn run_bash_in_container_streaming(
             Err(e) => { yield BashOutput::Done(json!({ "error": format!("spawn failed: {e}") })); return; }
         };
 
-        let stdout = child.stdout.take().expect("piped");
-        let stderr = child.stderr.take().expect("piped");
-        let mut stdout_lines = tokio::io::BufReader::new(stdout).lines();
-        let mut stderr_lines = tokio::io::BufReader::new(stderr).lines();
+        let mut stdout = child.stdout.take().expect("piped");
+        let mut stderr = child.stderr.take().expect("piped");
         let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_millis(timeout_ms);
-        let mut output_buf = String::new();
+        let mut terminal = TerminalBuffer::new();
         let mut timed_out = false;
+        let mut out_buf = vec![0u8; 512];
+        let mut err_buf = vec![0u8; 512];
+        let mut out_done = false;
+        let mut err_done = false;
 
         loop {
-            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-            if remaining.is_zero() { timed_out = true; let _ = child.kill().await; break; }
+            if out_done && err_done { break; }
+            if deadline.saturating_duration_since(tokio::time::Instant::now()).is_zero() {
+                timed_out = true; let _ = child.kill().await; break;
+            }
             tokio::select! {
-                line = stdout_lines.next_line() => {
-                    match line {
-                        Ok(Some(l)) => { output_buf.push_str(&l); output_buf.push('\n'); yield BashOutput::Line(l); }
-                        _ => break,
+                n = stdout.read(&mut out_buf), if !out_done => match n {
+                    Ok(0) | Err(_) => out_done = true,
+                    Ok(n) => {
+                        let chunk = String::from_utf8_lossy(&out_buf[..n]).to_string();
+                        terminal.push_str(&chunk);
+                        yield BashOutput::Chunk(chunk);
                     }
-                }
-                line = stderr_lines.next_line() => {
-                    if let Ok(Some(l)) = line {
-                        output_buf.push_str(&l); output_buf.push('\n');
-                        yield BashOutput::Line(format!("[stderr] {l}"));
+                },
+                n = stderr.read(&mut err_buf), if !err_done => match n {
+                    Ok(0) | Err(_) => err_done = true,
+                    Ok(n) => {
+                        let chunk = String::from_utf8_lossy(&err_buf[..n]).to_string();
+                        terminal.push_str(&chunk);
+                        yield BashOutput::Chunk(format!("[stderr] {chunk}"));
                     }
+                },
+                _ = tokio::time::sleep_until(deadline) => {
+                    timed_out = true; let _ = child.kill().await; break;
                 }
-                _ = tokio::time::sleep_until(deadline) => { timed_out = true; let _ = child.kill().await; break; }
             }
         }
 
@@ -586,7 +624,7 @@ fn run_bash_in_container_streaming(
             return;
         }
         let exit_code = child.wait().await.ok().and_then(|s| s.code());
-        let mut r = truncate_output(output_buf);
+        let mut r = truncate_output(terminal.finish());
         r["exit_code"] = json!(exit_code);
         r["timed_out"] = json!(false);
         yield BashOutput::Done(r);
@@ -862,7 +900,7 @@ impl agentix::Tool for SandboxSpell {
             ));
             while let Some(item) = stream.next().await {
                 match item {
-                    BashOutput::Line(l) => yield ToolOutput::Progress(l),
+                    BashOutput::Chunk(c) => yield ToolOutput::Progress(c),
                     BashOutput::Done(r) => yield ToolOutput::Result(vec![agentix::Content::text(serde_json::to_string(&r).unwrap_or_default())]),
                 }
             }
