@@ -28,7 +28,7 @@ build-client:
 dev-client:
 	cd frontend && bun run dev
 
-# Start backend in dev mode (reads .env automatically via dotenvy)
+# Start backend in dev mode (reads env from shell)
 dev-server:
 	cargo run -p familiar
 
@@ -53,14 +53,15 @@ build-sandbox:
 # ── Deploy: local build → rsync → docker compose up (no build on server) ──────
 # 1. Cross-compile backend locally
 # 2. Build frontend locally
-# 3. Copy binary into backend/ so Dockerfile can COPY it
+# 3. Copy binary + dist into place so Dockerfile.deploy can COPY them
 # 4. rsync everything to server
-# 5. docker compose up --build (just rebuilds the tiny runtime image, fast)
+# 5. docker compose up --build (rebuilds only the slim runtime layer, fast)
 deploy: build build-client
 	cp $(BIN) backend/familiar
 	rsync -av --delete frontend/dist/    $(HOST):$(REMOTE_DIR)/frontend/dist/
 	rsync -av docker-compose.yml         $(HOST):$(REMOTE_DIR)/
-	rsync -av backend/Dockerfile         $(HOST):$(REMOTE_DIR)/backend/
+	rsync -av backend/Dockerfile.deploy  $(HOST):$(REMOTE_DIR)/backend/Dockerfile
+	rsync -av .dockerignore.deploy       $(HOST):$(REMOTE_DIR)/.dockerignore
 	rsync -av backend/familiar           $(HOST):$(REMOTE_DIR)/backend/
 	rsync -av backend/migrations/        $(HOST):$(REMOTE_DIR)/backend/migrations/
 	ssh $(HOST) "mkdir -p $(REMOTE_DIR)/docker/sandbox $(REMOTE_DIR)/artifacts"

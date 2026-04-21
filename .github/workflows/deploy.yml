@@ -1,0 +1,62 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Frontend ──────────────────────────────────────────────────────────
+      - uses: oven-sh/setup-bun@v2
+
+      - uses: actions/cache@v4
+        with:
+          path: frontend/node_modules
+          key: bun-${{ hashFiles('frontend/bun.lock') }}
+          restore-keys: bun-
+
+      - name: Build frontend
+        run: cd frontend && bun install && bun run build
+
+      # ── Backend ───────────────────────────────────────────────────────────
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            backend/target
+          key: cargo-${{ hashFiles('backend/Cargo.lock') }}
+          restore-keys: cargo-
+
+      - name: Build backend
+        run: cargo build --release -p familiar
+        working-directory: backend
+
+      # ── Deploy ────────────────────────────────────────────────────────────
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.DEPLOY_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "${{ secrets.DEPLOY_HOST_ADDR }}" >> ~/.ssh/known_hosts
+
+      - name: Rsync + compose up
+        env:
+          HOST: ${{ secrets.DEPLOY_USER_HOST }}
+          DIR: /opt/familiar
+        run: |
+          cp backend/target/release/familiar backend/familiar
+          rsync -av --delete  frontend/dist/       $HOST:$DIR/frontend/dist/
+          rsync -av            docker-compose.yml  $HOST:$DIR/
+          rsync -av            backend/Dockerfile.deploy  $HOST:$DIR/backend/Dockerfile
+          rsync -av            .dockerignore.deploy       $HOST:$DIR/.dockerignore
+          rsync -av            backend/familiar           $HOST:$DIR/backend/
+          rsync -av            backend/migrations/        $HOST:$DIR/backend/migrations/
+          rsync -av            docker/sandbox/            $HOST:$DIR/docker/sandbox/
+          ssh $HOST "mkdir -p $DIR/artifacts && cd $DIR && docker compose up -d --build"
+          rm -f backend/familiar
