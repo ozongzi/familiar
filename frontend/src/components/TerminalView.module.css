@@ -1,11 +1,18 @@
 /* ─── Container ──────────────────────────────────────────────────────────── */
 
 .container {
-    border: 1px solid #2a2a2a;
+    border: 1px solid var(--border);
     border-radius: var(--radius-md);
     overflow: hidden;
     font-size: 0.82em;
-    background: #1a1a1a;
+    background: var(--bg-elevated);
+}
+
+/* headless: no outer card — used when embedded inside ToolBodyWrap */
+.containerHeadless {
+    overflow: hidden;
+    font-size: 0.82em;
+    background: var(--bg-elevated);
 }
 
 /* ─── Header / prompt bar ────────────────────────────────────────────────── */
@@ -15,8 +22,8 @@
     align-items: center;
     gap: 10px;
     padding: 7px 14px;
-    background: #242424;
-    border-bottom: 1px solid #2e2e2e;
+    background: var(--bg-active);
+    border-bottom: 1px solid var(--border);
     min-height: 34px;
 }
 
@@ -33,7 +40,7 @@
     width: 10px;
     height: 10px;
     border-radius: 50%;
-    background: #3a3a3a;
+    background: var(--border);
 }
 
 .dots span:nth-child(1) { background: #ff5f57; }
@@ -53,7 +60,7 @@
 .promptSigil {
     font-family: var(--font-mono);
     font-size: 0.95em;
-    color: #28c840;
+    color: var(--success);
     font-weight: 600;
     flex-shrink: 0;
 }
@@ -61,7 +68,7 @@
 .promptCmd {
     font-family: var(--font-mono);
     font-size: 0.9em;
-    color: #e0e0e0;
+    color: var(--text-secondary);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -73,9 +80,9 @@
     font-family: var(--font-mono);
     font-size: 0.78em;
     font-weight: 600;
-    color: #28c840;
-    background: rgba(40, 200, 64, 0.12);
-    border: 1px solid rgba(40, 200, 64, 0.25);
+    color: var(--success);
+    background: rgba(45, 122, 79, 0.1);
+    border: 1px solid rgba(45, 122, 79, 0.2);
     padding: 1px 7px;
     border-radius: 3px;
 }
@@ -85,9 +92,9 @@
     font-family: var(--font-mono);
     font-size: 0.78em;
     font-weight: 600;
-    color: #ff5f57;
-    background: rgba(255, 95, 87, 0.12);
-    border: 1px solid rgba(255, 95, 87, 0.25);
+    color: var(--danger);
+    background: var(--danger-dim);
+    border: 1px solid rgba(192, 57, 43, 0.2);
     padding: 1px 7px;
     border-radius: 3px;
 }
@@ -107,7 +114,7 @@
 .empty {
     font-family: var(--font-mono);
     font-size: 0.88em;
-    color: #555;
+    color: var(--text-muted);
     font-style: italic;
 }
 
@@ -117,7 +124,7 @@
     font-family: var(--font-mono);
     font-size: 0.9em;
     line-height: 1.6;
-    color: #d4d4d4;
+    color: var(--text-primary);
     white-space: pre-wrap;
     word-break: break-all;
     overflow-wrap: break-word;
@@ -129,7 +136,7 @@
 /* stderr section */
 .divider {
     height: 1px;
-    background: #2e2e2e;
+    background: var(--border-subtle);
     margin: 8px 0 6px;
 }
 
@@ -139,7 +146,7 @@
     font-weight: 600;
     letter-spacing: 0.06em;
     text-transform: uppercase;
-    color: #ff5f57;
+    color: var(--danger);
     margin-bottom: 4px;
     opacity: 0.7;
 }
@@ -149,7 +156,7 @@
     font-family: var(--font-mono);
     font-size: 0.9em;
     line-height: 1.6;
-    color: #ff8a84;
+    color: var(--danger);
     white-space: pre-wrap;
     word-break: break-all;
     overflow-wrap: break-word;

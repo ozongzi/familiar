@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import type { ToolBubble } from "../api/types";
 import { buildToolArgsView } from "./messageBubble.toolParsing";
 import {
@@ -13,6 +13,7 @@ import {
 } from "./ToolShared";
 import sharedStyles from "./ToolShared.module.css";
 import { FilePreviewContent } from "./FilePreviewContent";
+import { TerminalView } from "./TerminalView";
 
 function unwrapResult(result: unknown): Record<string, unknown> | null {
   if (!result || typeof result !== "object") return null;
@@ -31,7 +32,6 @@ function unwrapResult(result: unknown): Record<string, unknown> | null {
 export function BashTool({ bubble }: { bubble: ToolBubble }) {
   const [expanded, setExpanded] = useState(false);
   const argsView = buildToolArgsView(bubble);
-  const outputRef = useRef<HTMLDivElement>(null);
 
   const command = argsView.command ?? argsView.raw;
 
@@ -44,12 +44,6 @@ export function BashTool({ bubble }: { bubble: ToolBubble }) {
   useEffect(() => {
     if (bubble.pending) setExpanded(true);
   }, [bubble.pending, setExpanded]);
-
-  useEffect(() => {
-    if (bubble.pending && outputRef.current) {
-      outputRef.current.scrollTop = outputRef.current.scrollHeight;
-    }
-  }, [bubble.pending, bubble.progressLines]);
 
   const badge = bubble.pending ? null : timedOut ? (
     <span className={sharedStyles.badgeWarn}>timed out</span>
@@ -71,31 +65,14 @@ export function BashTool({ bubble }: { bubble: ToolBubble }) {
       />
       {expanded && (
         <ToolBodyWrap>
-          {command && (
-            <div className={sharedStyles.cmdBar}>
-              <span className={sharedStyles.cmdPrompt}>$</span>
-              <span className={sharedStyles.cmdText}>{command}</span>
-            </div>
-          )}
-          {output !== null ? (
-            <div className={sharedStyles.output}>
-              {output.length > 0 ? (
-                output
-              ) : (
-                <span className={sharedStyles.outputEmpty}>(no output)</span>
-              )}
-            </div>
-          ) : bubble.pending && (bubble.progressLines?.length ?? 0) > 0 ? (
-            <div ref={outputRef} className={sharedStyles.output}>
-              {bubble.progressLines!.join("\n")}
-            </div>
-          ) : (
-            bubble.pending && (
-              <div className={sharedStyles.output}>
-                <span className={sharedStyles.outputEmpty}>等待输出…</span>
-              </div>
-            )
-          )}
+          <TerminalView
+            toolName="bash"
+            command={command ?? undefined}
+            headless
+            stdout={output ?? undefined}
+            exitCode={exitCode}
+            progressLines={bubble.pending ? (bubble.progressLines ?? []) : undefined}
+          />
         </ToolBodyWrap>
       )}
     </div>
