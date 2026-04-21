@@ -1,0 +1,25 @@
+# Used by `make deploy`. Looser than .dockerignore: allows pre-built artifacts
+# (frontend/dist, backend/familiar) that Dockerfile.deploy COPYs into the image.
+
+.git
+.gitignore
+.github
+.vscode
+.idea
+.DS_Store
+
+backend/target
+frontend/node_modules
+frontend/dist-ssr
+frontend/public/monaco
+frontend/src-tauri
+
+artifacts
+pgdata
+
+.env
+.env.local
+backend/.env
+
+familiar_compliance.md
+familiar_dream.md
