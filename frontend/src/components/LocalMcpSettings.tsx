@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { invoke, isTauri, getServerBase } from "../utils/tauri";
 import { useAuth } from "../store/auth.shared";
+import { CodeEditor } from "./CodeEditor";
 import styles from "./McpSettings.module.css";
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -252,12 +253,11 @@ export function LocalMcpSettings({ onClose }: Props) {
               </div>
               <div className={styles.row}>
                 <label className={styles.label}>环境变量 (JSON)</label>
-                <textarea
-                  className={styles.input}
+                <CodeEditor
                   value={form.env}
-                  onChange={(e) => setForm((f) => ({ ...f, env: e.target.value } as FormData))}
-                  rows={3}
-                  placeholder='{"API_KEY": "..."}'
+                  onChange={(next) => setForm((f) => ({ ...f, env: next } as FormData))}
+                  language="json"
+                  height={120}
                 />
               </div>
             </>

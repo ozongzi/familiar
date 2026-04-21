@@ -11,6 +11,7 @@ node_modules
 dist
 dist-ssr
 *.local
+public/monaco
 
 # Editor directories and files
 .vscode/*

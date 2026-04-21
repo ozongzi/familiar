@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { api } from "../api/client";
 import type { Skill, AppSkill, CreateSkillRequest } from "../api/types";
+import { CodeEditor } from "./CodeEditor";
 import styles from "./SkillsPanel.module.css";
 
 // ── User Skills (per-user) ────────────────────────────────────────────────────
@@ -198,12 +199,11 @@ function SkillForm({ initial, onSave, onCancel }: SkillFormProps) {
         </label>
         <label className={styles.label}>
           内容（注入 system prompt 的文本）
-          <textarea
-            className={styles.textarea}
+          <CodeEditor
             value={content}
-            onChange={(e) => setContent(e.target.value)}
-            placeholder="例：你擅长写作，回复时使用简洁的中文。"
-            rows={6}
+            onChange={setContent}
+            language="markdown"
+            height={220}
           />
         </label>
         <div className={styles.formActions}>

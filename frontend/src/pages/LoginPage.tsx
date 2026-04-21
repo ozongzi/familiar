@@ -23,6 +23,23 @@ export function LoginPage({ serverUrl = "", onLogin }: LoginPageProps) {
   const [inviteCode, setInviteCode] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [bootstrap, setBootstrap] = useState(false);
+
+  // Check whether the server has any users. If not, this is the first-run
+  // "become admin" window — skip the landing page and drop straight into
+  // register without an invite code.
+  useEffect(() => {
+    const base = serverUrl || "";
+    fetch(`${base}/api/auth/status`)
+      .then(r => r.ok ? r.json() : null)
+      .then((data: { users_exist: boolean } | null) => {
+        if (data && !data.users_exist) {
+          setBootstrap(true);
+          setMode("register");
+        }
+      })
+      .catch(() => { /* endpoint unavailable — keep default flow */ });
+  }, [serverUrl]);
 
   // Pre-fill invite code from URL hash: /#invite=xxxx
   useEffect(() => {
@@ -92,10 +109,15 @@ export function LoginPage({ serverUrl = "", onLogin }: LoginPageProps) {
     setSubmitting(true);
     try {
       const base = serverUrl || "";
+      const body: { name: string; password: string; invite_code?: string } = {
+        name: name.trim(),
+        password,
+      };
+      if (!bootstrap) body.invite_code = inviteCode.trim();
       const res = await fetch(`${base}/api/auth/register`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: name.trim(), password, invite_code: inviteCode.trim() }),
+        body: JSON.stringify(body),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
@@ -114,9 +136,20 @@ export function LoginPage({ serverUrl = "", onLogin }: LoginPageProps) {
           <img src="/favicon.svg" width={40} height={40} alt="" />
           <h1 className={styles.title}>Familiar</h1>
         </div>
-        <p className={styles.subtitle}>你的 AI 助手</p>
+        <p className={styles.subtitle}>
+          {bootstrap ? "首次启动 · 注册即成为管理员" : "你的 AI 助手"}
+        </p>
 
-        {mode === "github" ? (
+        {bootstrap && (
+          <div className={styles.warning}>
+            ⚠️ 任何访问到此页面的人都会成为管理员。
+            如果此服务器已对公网开放，请立即关停，设置
+            <code>INITIAL_ADMIN_USERNAME</code> 和
+            <code>INITIAL_ADMIN_PASSWORD</code> 环境变量后再启动。
+          </div>
+        )}
+
+        {mode === "github" && !bootstrap ? (
           <>
             <a
               className={styles.githubBtn}
@@ -214,28 +247,32 @@ export function LoginPage({ serverUrl = "", onLogin }: LoginPageProps) {
                   disabled={submitting}
                 />
               </div>
-              <div className={styles.field}>
-                <label className={styles.label}>邀请码</label>
-                <input
-                  className={styles.input}
-                  type="text"
-                  placeholder="管理员提供的邀请码"
-                  value={inviteCode}
-                  onChange={e => setInviteCode(e.target.value)}
-                  required
-                  disabled={submitting}
-                />
-              </div>
+              {!bootstrap && (
+                <div className={styles.field}>
+                  <label className={styles.label}>邀请码</label>
+                  <input
+                    className={styles.input}
+                    type="text"
+                    placeholder="管理员提供的邀请码"
+                    value={inviteCode}
+                    onChange={e => setInviteCode(e.target.value)}
+                    required
+                    disabled={submitting}
+                  />
+                </div>
+              )}
               {error && <div className={styles.error}>{error}</div>}
               <button className={styles.submitBtn} type="submit" disabled={submitting}>
-                {submitting ? "注册中…" : "注册"}
+                {submitting ? (bootstrap ? "创建中…" : "注册中…") : (bootstrap ? "创建管理员" : "注册")}
               </button>
             </form>
-            <div className={styles.toggle}>
-              <button className={styles.toggleBtn} onClick={() => { setMode("github"); setError(null); }}>
-                返回 GitHub 登录
-              </button>
-            </div>
+            {!bootstrap && (
+              <div className={styles.toggle}>
+                <button className={styles.toggleBtn} onClick={() => { setMode("github"); setError(null); }}>
+                  返回 GitHub 登录
+                </button>
+              </div>
+            )}
           </>
         )}
       </div>

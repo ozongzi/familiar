@@ -96,15 +96,22 @@ pub async fn github_callback(
             .await?;
         id
     } else {
+        // Bootstrap: first-ever user (regardless of auth path) becomes admin.
+        let user_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
+            .fetch_one(&state.pool)
+            .await?;
+        let is_admin = user_count == 0;
+
         let invite_code = gen_invite_code();
         let name = login.to_string();
         let inserted = sqlx::query_scalar::<_, uuid::Uuid>(
-            "INSERT INTO users (name, github_id, display_name, invite_code) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING RETURNING id",
+            "INSERT INTO users (name, github_id, display_name, invite_code, is_admin) VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING RETURNING id",
         )
         .bind(&name)
         .bind(&github_id)
         .bind(display_name)
         .bind(&invite_code)
+        .bind(is_admin)
         .fetch_optional(&state.pool)
         .await?;
 
@@ -113,12 +120,13 @@ pub async fn github_callback(
         } else {
             // Name conflict — append _gh
             sqlx::query_scalar::<_, uuid::Uuid>(
-                "INSERT INTO users (name, github_id, display_name, invite_code) VALUES ($1, $2, $3, $4) RETURNING id",
+                "INSERT INTO users (name, github_id, display_name, invite_code, is_admin) VALUES ($1, $2, $3, $4, $5) RETURNING id",
             )
             .bind(format!("{}_gh", name))
             .bind(&github_id)
             .bind(display_name)
             .bind(gen_invite_code())
+            .bind(is_admin)
             .fetch_one(&state.pool)
             .await
             .map_err(|e| AppError::internal(&e.to_string()))?

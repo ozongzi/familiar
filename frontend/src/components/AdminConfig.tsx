@@ -11,6 +11,7 @@ import {
   deleteCatalogEntry,
 } from "../api/admin";
 import type { AdminConfig, GlobalMcp, CatalogEntry } from "../api/types";
+import { CodeEditor } from "./CodeEditor";
 import styles from "./AdminConfig.module.css";
 
 type Tab = "general" | "mcp" | "catalog";
@@ -253,14 +254,16 @@ export function AdminConfig() {
                   </div>
                   <div className={styles.field}>
                     <label>Environment Variables (JSON)</label>
-                    <textarea rows={3} value={envJsonStr}
-                      onChange={(e) => {
-                        setEnvJsonStr(e.target.value);
-                        try { JSON.parse(e.target.value); setEnvJsonError(""); }
+                    <CodeEditor
+                      value={envJsonStr}
+                      onChange={(next) => {
+                        setEnvJsonStr(next);
+                        try { JSON.parse(next || "{}"); setEnvJsonError(""); }
                         catch { setEnvJsonError("JSON 格式错误"); }
                       }}
-                      placeholder={'{"KEY": "VALUE"}'}
-                      style={{ borderColor: envJsonError ? "var(--danger)" : undefined }} />
+                      language="json"
+                      height={120}
+                    />
                     {envJsonError && <div className={styles.fieldError}>{envJsonError}</div>}
                   </div>
                 </>

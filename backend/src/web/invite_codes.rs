@@ -7,6 +7,22 @@ use serde::{Deserialize, Serialize};
 use crate::errors::{AppError, AppResult};
 use crate::web::{AppState, auth::AuthUser};
 
+// ── Public: auth status (used to show a "first admin" signup when users empty) ─
+
+#[derive(Serialize)]
+pub struct AuthStatus {
+    pub users_exist: bool,
+}
+
+pub async fn auth_status(State(state): State<AppState>) -> AppResult<Json<AuthStatus>> {
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
+        .fetch_one(&state.pool)
+        .await?;
+    Ok(Json(AuthStatus {
+        users_exist: count > 0,
+    }))
+}
+
 // ── Shared types ──────────────────────────────────────────────────────────────
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
@@ -104,7 +120,8 @@ pub async fn delete_invite_code(
 pub struct RegisterRequest {
     pub name: String,
     pub password: String,
-    pub invite_code: String,
+    #[serde(default)]
+    pub invite_code: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -116,23 +133,42 @@ pub async fn register_with_invite(
     State(state): State<AppState>,
     Json(req): Json<RegisterRequest>,
 ) -> AppResult<Json<RegisterResponse>> {
-    // Validate invite code
-    let code_row = sqlx::query(
-        "SELECT code, expires_at FROM invite_codes
-         WHERE code = $1 AND used_by IS NULL",
-    )
-    .bind(&req.invite_code)
-    .fetch_optional(&state.pool)
-    .await?
-    .ok_or_else(|| AppError::bad_request("无效的邀请码"))?;
+    // If users table is empty, first registrant becomes admin without an invite code.
+    // Race window exists (two concurrent registrations both see count=0 and both succeed
+    // as admin). Acceptable for self-hosted bootstrap.
+    let user_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
+        .fetch_one(&state.pool)
+        .await?;
+    let bootstrap = user_count == 0;
 
-    use sqlx::Row;
-    let expires_at: Option<chrono::DateTime<chrono::Utc>> =
-        code_row.try_get("expires_at").unwrap_or(None);
-    if let Some(exp) = expires_at
-        && exp < chrono::Utc::now() {
+    let invite_code = req
+        .invite_code
+        .as_ref()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+
+    if !bootstrap {
+        let code = invite_code
+            .as_ref()
+            .ok_or_else(|| AppError::bad_request("缺少邀请码"))?;
+        let code_row = sqlx::query(
+            "SELECT code, expires_at FROM invite_codes
+             WHERE code = $1 AND used_by IS NULL",
+        )
+        .bind(code)
+        .fetch_optional(&state.pool)
+        .await?
+        .ok_or_else(|| AppError::bad_request("无效的邀请码"))?;
+
+        use sqlx::Row;
+        let expires_at: Option<chrono::DateTime<chrono::Utc>> =
+            code_row.try_get("expires_at").unwrap_or(None);
+        if let Some(exp) = expires_at
+            && exp < chrono::Utc::now()
+        {
             return Err(AppError::bad_request("邀请码已过期"));
         }
+    }
 
     // Validate username
     let name = req.name.trim().to_string();
@@ -154,13 +190,14 @@ pub async fn register_with_invite(
     let invite_code_for_user = crate::web::github_oauth::gen_invite_code();
 
     let user_id = sqlx::query_scalar::<_, uuid::Uuid>(
-        "INSERT INTO users (name, password_hash, display_name, invite_code)
-         VALUES ($1, $2, $1, $3)
+        "INSERT INTO users (name, password_hash, display_name, invite_code, is_admin)
+         VALUES ($1, $2, $1, $3, $4)
          RETURNING id",
     )
     .bind(&name)
     .bind(&hash)
     .bind(&invite_code_for_user)
+    .bind(bootstrap)
     .fetch_one(&state.pool)
     .await
     .map_err(|e| {
@@ -171,14 +208,15 @@ pub async fn register_with_invite(
         }
     })?;
 
-    // Mark invite code as used
-    sqlx::query(
-        "UPDATE invite_codes SET used_by = $1, used_at = NOW() WHERE code = $2",
-    )
-    .bind(user_id)
-    .bind(&req.invite_code)
-    .execute(&state.pool)
-    .await?;
+    if !bootstrap
+        && let Some(code) = invite_code.as_deref()
+    {
+        sqlx::query("UPDATE invite_codes SET used_by = $1, used_at = NOW() WHERE code = $2")
+            .bind(user_id)
+            .bind(code)
+            .execute(&state.pool)
+            .await?;
+    }
 
     // Create session
     let token = gen_token();
@@ -191,13 +229,16 @@ pub async fn register_with_invite(
     .execute(&state.pool)
     .await?;
 
-
     let _ = crate::audit::log_audit(
         &state.pool,
         Some(user_id),
         None,
-        "register_invite",
-        Some(serde_json::json!({ "name": name, "invite_code": req.invite_code })),
+        if bootstrap {
+            "register_bootstrap_admin"
+        } else {
+            "register_invite"
+        },
+        Some(serde_json::json!({ "name": name, "invite_code": invite_code })),
         None,
     )
     .await;

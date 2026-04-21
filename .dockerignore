@@ -1,0 +1,38 @@
+# Version control
+.git
+.gitignore
+.github
+
+# Editor / OS
+.vscode
+.idea
+.DS_Store
+
+# Rust build artifacts (built inside the image)
+backend/target
+
+# Frontend build artifacts + dependencies (bun install happens inside the image)
+frontend/node_modules
+frontend/dist
+frontend/dist-ssr
+frontend/public/monaco
+frontend/src-tauri/target
+
+# Logs
+*.log
+logs
+
+# Local runtime state (not needed at build time)
+artifacts
+pgdata
+
+# Secrets / env overrides (never ship into the image)
+.env
+.env.local
+backend/.env
+backend/familiar
+
+# Docs / dev scratch
+familiar_compliance.md
+familiar_dream.md
+playwright-browsers-win64

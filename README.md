@@ -23,18 +23,26 @@ Every mage needs a familiar. Yours runs on your server, carries your context acr
 ## Self-hosting
 
 ```bash
+git clone https://github.com/ozongzi/familiar.git
+cd familiar
 docker compose up -d
 ```
 
-Point a reverse proxy at port `8080`. Set the following in your environment or `config.toml`:
+Open `http://localhost:3000`. The **first person to register becomes the admin** — do it immediately after startup. Everything else (model providers, API keys, MCP servers, skills) is configured in the admin panel at runtime.
 
-| Variable | Description |
+First build takes ~15–20 min while Cargo and Bun compile from source; subsequent builds are cached. In front of a public server, point a reverse proxy at port `3000` and set `ALLOWED_ORIGIN` to the public origin.
+
+### Optional environment
+
+Copy `.env.example` to `.env` and uncomment anything you want to override. None of it is required for a basic local run.
+
+| Variable | Purpose |
 |---|---|
-| `DATABASE_URL` | PostgreSQL connection string (needs `pgvector`) |
-| `artifacts_path` | Host directory for per-conversation sandbox workspaces |
-| `EMBED_URL` | Embedding API endpoint (for semantic memory) |
-
-LLM providers and API keys are configured per-user at runtime through the admin panel — no rebuild needed.
+| `INITIAL_ADMIN_USERNAME` + `INITIAL_ADMIN_PASSWORD` | Pre-create an admin on first boot instead of registering via the web form |
+| `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` / `GITHUB_REDIRECT_URI` | Enable GitHub OAuth login |
+| `HOST_ARTIFACTS_PATH` | Where per-conversation sandbox workspaces land on the host (default `./artifacts`) |
+| `HOST_CLAUDE_DIR` | Share Claude Code CLI state with the container (default `$HOME/.claude`) |
+| `ALLOWED_ORIGIN` | Set if a reverse proxy fronts Familiar on a different origin than the browser hits |
 
 ---
 
