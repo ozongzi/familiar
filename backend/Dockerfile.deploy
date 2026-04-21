@@ -2,7 +2,7 @@
 # Used by `make deploy` (cross-compile locally → rsync → docker compose up --build).
 # For a fresh `git clone && docker compose up`, use backend/Dockerfile instead.
 
-FROM debian:bookworm-slim
+FROM ubuntu:24.04
 
 RUN apt-get update && apt-get install -y \
       ca-certificates curl gnupg \
