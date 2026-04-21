@@ -1,20 +1,21 @@
 services:
   familiar:
     build:
-      context: backend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: backend/Dockerfile
     restart: unless-stopped
     ports:
       - "3000:3000"
     environment:
       - DATABASE_URL=postgres://familiar:familiar@postgres:5432/familiar
-      - GITHUB_CLIENT_ID
-      - GITHUB_CLIENT_SECRET
-      - GITHUB_REDIRECT_URI
+      - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID:-}
+      - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET:-}
+      - GITHUB_REDIRECT_URI=${GITHUB_REDIRECT_URI:-}
+      - INITIAL_ADMIN_USERNAME=${INITIAL_ADMIN_USERNAME:-}
+      - INITIAL_ADMIN_PASSWORD=${INITIAL_ADMIN_PASSWORD:-}
       - HOST_ARTIFACTS_PATH=${HOST_ARTIFACTS_PATH:-${PWD}/artifacts}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - ./frontend/dist:/app/frontend/dist:ro
       - ${HOST_ARTIFACTS_PATH:-./artifacts}:/app/artifacts
       - ${HOST_CLAUDE_DIR:-${HOME}/.claude}:/root/.claude
     depends_on:

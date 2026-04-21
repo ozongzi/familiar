@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { api } from "../api/client";
 import type { Mcp, CreateMcpRequest } from "../api/types";
+import { CodeEditor } from "./CodeEditor";
 import styles from "./McpSettings.module.css";
 
 interface Props {
@@ -241,21 +242,19 @@ export function McpSettings({ token, onClose }: Props) {
               </div>
               <div className={styles.row}>
                 <label className={styles.label}>环境变量 (Environment Variables, JSON)</label>
-                <textarea
-                  className={styles.textarea}
+                <CodeEditor
                   value={envJsonStr}
-                  onChange={(e) => {
-                    setEnvJsonStr(e.target.value);
+                  onChange={(next) => {
+                    setEnvJsonStr(next);
                     try {
-                      JSON.parse(e.target.value);
+                      JSON.parse(next || "{}");
                       setEnvJsonError("");
                     } catch (err) {
                       setEnvJsonError(err instanceof Error ? err.message : "Invalid JSON");
                     }
                   }}
-                  placeholder='{"API_KEY": "your-key-here"}'
-                  rows={4}
-                  style={{ fontFamily: "monospace", fontSize: "13px" }}
+                  language="json"
+                  height={140}
                 />
                 {envJsonError && (
                   <span style={{ color: "#ff4444", fontSize: "12px", marginTop: "4px", display: "block" }}>

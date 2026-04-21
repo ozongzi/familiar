@@ -880,6 +880,28 @@ pub async fn run_sql(
                     "JSONB" | "JSON" => row.try_get::<Option<serde_json::Value>, _>(idx)
                         .ok().flatten()
                         .unwrap_or(serde_json::Value::Null),
+                    "UUID" => row.try_get::<Option<uuid::Uuid>, _>(idx)
+                        .ok().flatten().map(|u| serde_json::Value::String(u.to_string()))
+                        .unwrap_or(serde_json::Value::Null),
+                    "TIMESTAMPTZ" => row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>(idx)
+                        .ok().flatten().map(|t| serde_json::Value::String(t.to_rfc3339()))
+                        .unwrap_or(serde_json::Value::Null),
+                    "TIMESTAMP" => row.try_get::<Option<chrono::NaiveDateTime>, _>(idx)
+                        .ok().flatten().map(|t| serde_json::Value::String(t.to_string()))
+                        .unwrap_or(serde_json::Value::Null),
+                    "DATE" => row.try_get::<Option<chrono::NaiveDate>, _>(idx)
+                        .ok().flatten().map(|d| serde_json::Value::String(d.to_string()))
+                        .unwrap_or(serde_json::Value::Null),
+                    "TIME" => row.try_get::<Option<chrono::NaiveTime>, _>(idx)
+                        .ok().flatten().map(|t| serde_json::Value::String(t.to_string()))
+                        .unwrap_or(serde_json::Value::Null),
+                    "BYTEA" => row.try_get::<Option<Vec<u8>>, _>(idx)
+                        .ok().flatten()
+                        .map(|b| {
+                            let hex: String = b.iter().map(|x| format!("{:02x}", x)).collect();
+                            serde_json::Value::String(format!("\\x{}", hex))
+                        })
+                        .unwrap_or(serde_json::Value::Null),
                     _ => row.try_get::<Option<String>, _>(idx)
                         .ok().flatten().map(serde_json::Value::String)
                         .unwrap_or(serde_json::Value::Null),

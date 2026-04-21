@@ -94,6 +94,7 @@ pub fn create_router(state: AppState, allowed_origin: Option<&str>) -> Router {
             get(github_oauth::github_callback),
         )
         .route("/api/auth/register", post(invite_codes::register_with_invite))
+        .route("/api/auth/status", get(invite_codes::auth_status))
         // ── Invite Codes (admin) ──────────────────────────────────────────────
         .route("/api/admin/invite-codes", get(invite_codes::list_invite_codes))
         .route("/api/admin/invite-codes", post(invite_codes::create_invite_code))

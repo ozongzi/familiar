@@ -1,4 +1,4 @@
-HOST       = root@familiar.fhmmt.games
+HOST       = root@yinli.tech
 BIN        = backend/target/x86_64-unknown-linux-musl/release/familiar
 REMOTE_DIR = /opt/familiar
 
