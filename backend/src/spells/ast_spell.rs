@@ -1,6 +1,4 @@
-use agentix::schemars::JsonSchema;
 use agentix::tool;
-use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tree_sitter::{Node, Parser};
 
@@ -58,11 +56,7 @@ fn segment_matches(node: Node, src: &str, segment: &str) -> bool {
 /// Find a node matching `segment` among direct named children of `parent`.
 /// If segment starts with "#[", also search attribute_item nodes and return the
 /// *following sibling* (the item the attribute is attached to).
-fn find_child_matching<'a>(
-    parent: Node<'a>,
-    src: &'a str,
-    segment: &str,
-) -> Option<Node<'a>> {
+fn find_child_matching<'a>(parent: Node<'a>, src: &'a str, segment: &str) -> Option<Node<'a>> {
     let is_attr = segment.trim_start().starts_with("#[");
 
     let mut cursor = parent.walk();
@@ -88,11 +82,7 @@ fn find_child_matching<'a>(
 
 /// Resolve a scope path to a node. Returns the node and whether it was found.
 /// Empty scope = root (source_file node).
-fn resolve_scope<'a>(
-    root: Node<'a>,
-    src: &'a str,
-    scope: &[String],
-) -> Result<Node<'a>, String> {
+fn resolve_scope<'a>(root: Node<'a>, src: &'a str, scope: &[String]) -> Result<Node<'a>, String> {
     let mut current = root;
     for (i, segment) in scope.iter().enumerate() {
         match find_child_matching(current, src, segment) {
@@ -102,8 +92,12 @@ fn resolve_scope<'a>(
                     "scope[{}] {:?} not found under {}",
                     i,
                     segment,
-                    if i == 0 { "file root".to_string() } else { format!("scope[{}]", i - 1) }
-                ))
+                    if i == 0 {
+                        "file root".to_string()
+                    } else {
+                        format!("scope[{}]", i - 1)
+                    }
+                ));
             }
         }
     }
@@ -150,15 +144,14 @@ fn render_node(node: Node, src: &str) -> String {
     }
 
     // Get body container
-    let container = (0..node.child_count())
-        .find_map(|i| {
-            let child = node.child(i as u32)?;
-            if child.kind() == "declaration_list" || child.kind() == "block" {
-                Some(child)
-            } else {
-                None
-            }
-        });
+    let container = (0..node.child_count()).find_map(|i| {
+        let child = node.child(i as u32)?;
+        if child.kind() == "declaration_list" || child.kind() == "block" {
+            Some(child)
+        } else {
+            None
+        }
+    });
 
     let Some(container) = container else {
         // No body — just return as-is even if large
@@ -182,14 +175,19 @@ fn render_node(node: Node, src: &str) -> String {
 
             // Check if this child itself has a body
             let has_body = (0..child.child_count()).any(|i| {
-                child.child(i as u32)
+                child
+                    .child(i as u32)
                     .map(|c| c.kind() == "block" || c.kind() == "declaration_list")
                     .unwrap_or(false)
             });
 
             result.push('\n');
             if has_body && child_lines > 5 {
-                result.push_str(&format!("    {} {{ /* {} lines */ }}", child_sig.trim(), child_lines));
+                result.push_str(&format!(
+                    "    {} {{ /* {} lines */ }}",
+                    child_sig.trim(),
+                    child_lines
+                ));
             } else {
                 // Small enough — show fully
                 for line in child_src.lines() {
@@ -337,7 +335,8 @@ impl agentix::Tool for AstSpell {
             _ => {
                 let content = render_node(node, &src);
                 let lines = content.lines().count();
-                let folded = content.lines().count() < src[node.start_byte()..node.end_byte()].lines().count();
+                let folded = content.lines().count()
+                    < src[node.start_byte()..node.end_byte()].lines().count();
                 json!({
                     "path": path,
                     "scope": scope,
@@ -357,12 +356,7 @@ impl agentix::Tool for AstSpell {
     /// path: absolute path to the .rs file
     /// scope: path to the block to replace (empty = whole file)
     /// new_source: replacement source text
-    async fn rust_replace(
-        &self,
-        path: String,
-        scope: Vec<String>,
-        new_source: String,
-    ) -> Value {
+    async fn rust_replace(&self, path: String, scope: Vec<String>, new_source: String) -> Value {
         let src = match std::fs::read_to_string(&path) {
             Ok(s) => s,
             Err(e) => return json!({ "error": format!("read failed: {e}") }),
@@ -452,11 +446,7 @@ impl agentix::Tool for AstSpell {
     ///
     /// path: absolute path to the .rs file
     /// scope: path to the block to delete (must be non-empty)
-    async fn rust_delete(
-        &self,
-        path: String,
-        scope: Vec<String>,
-    ) -> Value {
+    async fn rust_delete(&self, path: String, scope: Vec<String>) -> Value {
         if scope.is_empty() {
             return json!({ "error": "scope must not be empty for delete" });
         }

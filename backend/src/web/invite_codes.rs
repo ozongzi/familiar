@@ -71,9 +71,9 @@ pub async fn create_invite_code(
     }
 
     let code = generate_code();
-    let expires_at = req.expires_in_days.map(|d| {
-        chrono::Utc::now() + chrono::Duration::days(d)
-    });
+    let expires_at = req
+        .expires_in_days
+        .map(|d| chrono::Utc::now() + chrono::Duration::days(d));
 
     let row = sqlx::query_as::<_, InviteCode>(
         "INSERT INTO invite_codes (code, created_by, expires_at)
@@ -100,12 +100,10 @@ pub async fn delete_invite_code(
         return Err(AppError::forbidden("仅管理员可访问"));
     }
 
-    let result = sqlx::query(
-        "DELETE FROM invite_codes WHERE code = $1 AND used_by IS NULL",
-    )
-    .bind(&code)
-    .execute(&state.pool)
-    .await?;
+    let result = sqlx::query("DELETE FROM invite_codes WHERE code = $1 AND used_by IS NULL")
+        .bind(&code)
+        .execute(&state.pool)
+        .await?;
 
     if result.rows_affected() == 0 {
         return Err(AppError::bad_request("邀请码不存在或已被使用"));
@@ -175,7 +173,10 @@ pub async fn register_with_invite(
     if name.is_empty() || name.len() > 32 {
         return Err(AppError::bad_request("用户名长度须在 1–32 个字符之间"));
     }
-    if name.chars().any(|c| !c.is_alphanumeric() && c != '_' && c != '-') {
+    if name
+        .chars()
+        .any(|c| !c.is_alphanumeric() && c != '_' && c != '-')
+    {
         return Err(AppError::bad_request("用户名只能包含字母、数字、_ 和 -"));
     }
 
@@ -208,9 +209,7 @@ pub async fn register_with_invite(
         }
     })?;
 
-    if !bootstrap
-        && let Some(code) = invite_code.as_deref()
-    {
+    if !bootstrap && let Some(code) = invite_code.as_deref() {
         sqlx::query("UPDATE invite_codes SET used_by = $1, used_at = NOW() WHERE code = $2")
             .bind(user_id)
             .bind(code)

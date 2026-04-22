@@ -24,7 +24,9 @@ impl Tool for UiSpells {
         if !q_path.starts_with("/workspace") {
             return json!({ "error": "path must be under /workspace" });
         }
-        let conv_dir = self.sandbox.get_conversation_dir(self.user_id, self.conversation_id);
+        let conv_dir = self
+            .sandbox
+            .get_conversation_dir(self.user_id, self.conversation_id);
         let public_dir = conv_dir.join("public");
         let relative = q_path.strip_prefix("/workspace").unwrap();
         let host_path = conv_dir.join(relative);
@@ -46,7 +48,10 @@ impl Tool for UiSpells {
             if let Err(e) = zip_dir(&host_path, &zip_host_path) {
                 return json!({ "error": format!("打包失败: {e}") });
             }
-            let size = tokio::fs::metadata(&zip_host_path).await.map(|m| m.len()).unwrap_or(0);
+            let size = tokio::fs::metadata(&zip_host_path)
+                .await
+                .map(|m| m.len())
+                .unwrap_or(0);
             return json!({
                 "display": "file",
                 "filename": zip_filename,
@@ -72,7 +77,10 @@ impl Tool for UiSpells {
         if let Err(e) = tokio::fs::copy(&host_path, &dest_host).await {
             return json!({ "error": format!("复制到 public 失败: {e}") });
         }
-        let size = tokio::fs::metadata(&dest_host).await.map(|m| m.len()).unwrap_or(0);
+        let size = tokio::fs::metadata(&dest_host)
+            .await
+            .map(|m| m.len())
+            .unwrap_or(0);
         json!({
             "display": "file",
             "filename": filename,

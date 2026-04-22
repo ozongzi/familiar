@@ -154,7 +154,6 @@ pub async fn github_callback(
 
     let is_new = existing.is_none();
 
-
     let is_tauri = params.state.as_deref() == Some("tauri");
     let redirect_url = if is_tauri {
         format!(

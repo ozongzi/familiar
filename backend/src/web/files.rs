@@ -337,10 +337,7 @@ fn mime_from_bytes(data: &[u8]) -> Option<&'static str> {
     if data.len() >= 6 && (&data[..6] == b"GIF87a" || &data[..6] == b"GIF89a") {
         return Some("image/gif");
     }
-    if data.len() >= 12
-        && &data[0..4] == b"RIFF"
-        && &data[8..12] == b"WEBP"
-    {
+    if data.len() >= 12 && &data[0..4] == b"RIFF" && &data[8..12] == b"WEBP" {
         return Some("image/webp");
     }
     None
@@ -453,7 +450,10 @@ pub async fn upload_file(
 
     // Storage directory scoped to the conversation sandbox public dir.
     // User uploads go to /workspace/public so they're accessible via the files API.
-    let upload_dir = state.sandbox.get_conversation_dir(user_id, conv_id).join("public");
+    let upload_dir = state
+        .sandbox
+        .get_conversation_dir(user_id, conv_id)
+        .join("public");
     tokio::fs::create_dir_all(&upload_dir)
         .await
         .map_err(|e| AppError::internal(&e.to_string()))?;

@@ -1,5 +1,5 @@
 use agentix::tool;
-use serde_json::{Value, json};
+use serde_json::json;
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -43,7 +43,8 @@ impl Tool for AdminSpells {
                         "conversation_id": self.conversation_id,
                     })),
                     None,
-                ).await;
+                )
+                .await;
                 json!({ "ok": true })
             }
             Ok(None) => json!({ "error": "conversation not found" }),
@@ -91,7 +92,8 @@ impl Tool for AdminSpells {
                         "conversation_id": self.conversation_id,
                     })),
                     None,
-                ).await;
+                )
+                .await;
                 json!({ "ok": true })
             }
             Ok(None) => json!({ "error": "conversation not found" }),
@@ -132,13 +134,19 @@ mod tests {
 
     impl TestDb {
         async fn cleanup(self) {
-            let Self { pool, admin_url, db_name } = self;
+            let Self {
+                pool,
+                admin_url,
+                db_name,
+            } = self;
             pool.close().await;
-            if let Ok(admin) = PgPoolOptions::new().max_connections(1).connect(&admin_url).await {
+            if let Ok(admin) = PgPoolOptions::new()
+                .max_connections(1)
+                .connect(&admin_url)
+                .await
+            {
                 let _ = admin
-                    .execute(
-                        format!("DROP DATABASE IF EXISTS \"{db_name}\" WITH (FORCE)").as_str(),
-                    )
+                    .execute(format!("DROP DATABASE IF EXISTS \"{db_name}\" WITH (FORCE)").as_str())
                     .await;
             }
         }
@@ -168,7 +176,11 @@ mod tests {
             .run(&pool)
             .await
             .expect("run migrations");
-        TestDb { pool, admin_url, db_name }
+        TestDb {
+            pool,
+            admin_url,
+            db_name,
+        }
     }
 
     fn switch_db(url: &str, db: &str) -> String {
@@ -176,7 +188,10 @@ mod tests {
         // `postgres://user:pw@host/old_db` and `postgres://user@host/old_db?ssl=...`.
         let (scheme_host, rest) = url.split_once("://").expect("postgres:// URL");
         let (auth_host, tail) = rest.split_once('/').unwrap_or((rest, ""));
-        let query = tail.split_once('?').map(|(_, q)| format!("?{q}")).unwrap_or_default();
+        let query = tail
+            .split_once('?')
+            .map(|(_, q)| format!("?{q}"))
+            .unwrap_or_default();
         format!("{scheme_host}://{auth_host}/{db}{query}")
     }
 
@@ -190,13 +205,12 @@ mod tests {
         .fetch_one(pool)
         .await
         .expect("insert user");
-        let conv_id: Uuid = sqlx::query_scalar(
-            "INSERT INTO conversations (user_id) VALUES ($1) RETURNING id",
-        )
-        .bind(user_id)
-        .fetch_one(pool)
-        .await
-        .expect("insert conversation");
+        let conv_id: Uuid =
+            sqlx::query_scalar("INSERT INTO conversations (user_id) VALUES ($1) RETURNING id")
+                .bind(user_id)
+                .fetch_one(pool)
+                .await
+                .expect("insert conversation");
         (user_id, conv_id)
     }
 
@@ -214,17 +228,24 @@ mod tests {
         let pool = db.pool.clone();
         let (user_id, conv_id) = seed(&pool).await;
 
-        let spells = AdminSpells { pool: pool.clone(), conversation_id: conv_id };
-        invoke(&spells, "end_conversation", json!({ "reason": "rude user" })).await;
+        let spells = AdminSpells {
+            pool: pool.clone(),
+            conversation_id: conv_id,
+        };
+        invoke(
+            &spells,
+            "end_conversation",
+            json!({ "reason": "rude user" }),
+        )
+        .await;
 
         // verify_conversation_owner reads this field to serve 403.
-        let closed: bool = sqlx::query_scalar(
-            "SELECT agent_closed FROM conversations WHERE id = $1",
-        )
-        .bind(conv_id)
-        .fetch_one(&pool)
-        .await
-        .expect("fetch agent_closed");
+        let closed: bool =
+            sqlx::query_scalar("SELECT agent_closed FROM conversations WHERE id = $1")
+                .bind(conv_id)
+                .fetch_one(&pool)
+                .await
+                .expect("fetch agent_closed");
         assert!(closed, "agent_closed should be true after end_conversation");
 
         // Audit trail must exist — this is the only evidence operators have
@@ -237,10 +258,20 @@ mod tests {
             .fetch_one(&pool)
             .await
             .expect("fetch audit row for end_conversation");
-        assert_eq!(audit_target, Some(user_id), "target_user_id should be the conversation owner");
-        assert_eq!(audit_user, None, "user_id should be NULL (agent, not human, took the action)");
         assert_eq!(
-            details.get("conversation_id").and_then(|v| v.as_str()).and_then(|s| Uuid::parse_str(s).ok()),
+            audit_target,
+            Some(user_id),
+            "target_user_id should be the conversation owner"
+        );
+        assert_eq!(
+            audit_user, None,
+            "user_id should be NULL (agent, not human, took the action)"
+        );
+        assert_eq!(
+            details
+                .get("conversation_id")
+                .and_then(|v| v.as_str())
+                .and_then(|s| Uuid::parse_str(s).ok()),
             Some(conv_id),
             "details should record which conversation was closed",
         );
@@ -258,17 +289,18 @@ mod tests {
         let pool = db.pool.clone();
         let (user_id, conv_id) = seed(&pool).await;
 
-        let spells = AdminSpells { pool: pool.clone(), conversation_id: conv_id };
+        let spells = AdminSpells {
+            pool: pool.clone(),
+            conversation_id: conv_id,
+        };
         invoke(&spells, "ban_user", json!({ "reason": "persistent abuse" })).await;
 
         // login and verify_conversation_owner both gate on is_banned.
-        let banned: bool = sqlx::query_scalar(
-            "SELECT is_banned FROM users WHERE id = $1",
-        )
-        .bind(user_id)
-        .fetch_one(&pool)
-        .await
-        .expect("fetch is_banned");
+        let banned: bool = sqlx::query_scalar("SELECT is_banned FROM users WHERE id = $1")
+            .bind(user_id)
+            .fetch_one(&pool)
+            .await
+            .expect("fetch is_banned");
         assert!(banned, "is_banned should be true after ban_user");
 
         // Correct audit semantics: target is the banned user, actor is
@@ -281,10 +313,20 @@ mod tests {
             .fetch_one(&pool)
             .await
             .expect("fetch audit row for ban_user");
-        assert_eq!(audit_target, Some(user_id), "target_user_id should be the banned user");
-        assert_eq!(audit_user, None, "user_id should be NULL (agent, not human, took the action)");
         assert_eq!(
-            details.get("conversation_id").and_then(|v| v.as_str()).and_then(|s| Uuid::parse_str(s).ok()),
+            audit_target,
+            Some(user_id),
+            "target_user_id should be the banned user"
+        );
+        assert_eq!(
+            audit_user, None,
+            "user_id should be NULL (agent, not human, took the action)"
+        );
+        assert_eq!(
+            details
+                .get("conversation_id")
+                .and_then(|v| v.as_str())
+                .and_then(|s| Uuid::parse_str(s).ok()),
             Some(conv_id),
             "details should record which conversation triggered the ban",
         );

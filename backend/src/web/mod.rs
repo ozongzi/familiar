@@ -93,12 +93,24 @@ pub fn create_router(state: AppState, allowed_origin: Option<&str>) -> Router {
             "/api/auth/github/callback",
             get(github_oauth::github_callback),
         )
-        .route("/api/auth/register", post(invite_codes::register_with_invite))
+        .route(
+            "/api/auth/register",
+            post(invite_codes::register_with_invite),
+        )
         .route("/api/auth/status", get(invite_codes::auth_status))
         // ── Invite Codes (admin) ──────────────────────────────────────────────
-        .route("/api/admin/invite-codes", get(invite_codes::list_invite_codes))
-        .route("/api/admin/invite-codes", post(invite_codes::create_invite_code))
-        .route("/api/admin/invite-codes/{code}", delete(invite_codes::delete_invite_code))
+        .route(
+            "/api/admin/invite-codes",
+            get(invite_codes::list_invite_codes),
+        )
+        .route(
+            "/api/admin/invite-codes",
+            post(invite_codes::create_invite_code),
+        )
+        .route(
+            "/api/admin/invite-codes/{code}",
+            delete(invite_codes::delete_invite_code),
+        )
         // ── Users ─────────────────────────────────────────────────────────────
         .route("/api/users/me", get(get_me))
         .route("/api/users/me/profile", put(update_profile))
