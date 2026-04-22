@@ -84,7 +84,7 @@ async fn run_worker(ctx: WorkerContext) -> anyhow::Result<()> {
     // MCP stdio processes and sandbox shell commands for this generation all
     // run against the per-conversation container. Once the worker is done, we
     // can drop that container and recreate it on demand next turn.
-    ctx.sandbox.remove_container(ctx.conversation_id);
+    // ctx.sandbox.remove_container(ctx.conversation_id);
 
     result
 }
@@ -154,34 +154,43 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
         // non-admins. The UI filter + create_conversation guard should catch
         // this upstream; here we fall through to the default-model branch so
         // the job still completes rather than 500-ing.
-        let conv_model: Option<(String, String, String, String, Value, String, i64, i64)> = sqlx::query_as(
-            "SELECT m.provider, m.model_name, m.api_base, m.api_key, m.extra_body, m.kind,
+        let conv_model: Option<(String, String, String, String, Value, String, i64, i64)> =
+            sqlx::query_as(
+                "SELECT m.provider, m.model_name, m.api_base, m.api_key, m.extra_body, m.kind,
                     m.compact_trigger_tokens, m.compact_tail_tokens
              FROM conversations c
              JOIN models m ON m.id = c.model_id
              JOIN users u ON u.id = c.user_id
              WHERE c.id = $1 AND (NOT m.admin_only OR u.is_admin)",
-        )
-        .bind(ctx.conversation_id)
-        .fetch_optional(&ctx.pool)
-        .await
-        .unwrap_or(None);
-
-        if let Some((provider, name, api_base, api_key, extra_body, kind, trig, tail)) = conv_model {
-            model_from_row(provider, name, api_base, api_key, extra_body, kind, trig, tail)
-        } else {
-            // 2. global default model
-            let default_model: Option<(String, String, String, String, Value, String, i64, i64)> = sqlx::query_as(
-                "SELECT provider, model_name, api_base, api_key, extra_body, kind,
-                        compact_trigger_tokens, compact_tail_tokens
-                 FROM models WHERE scope = 'global' AND is_default = true LIMIT 1",
             )
+            .bind(ctx.conversation_id)
             .fetch_optional(&ctx.pool)
             .await
             .unwrap_or(None);
 
-            if let Some((provider, name, api_base, api_key, extra_body, kind, trig, tail)) = default_model {
-                model_from_row(provider, name, api_base, api_key, extra_body, kind, trig, tail)
+        if let Some((provider, name, api_base, api_key, extra_body, kind, trig, tail)) = conv_model
+        {
+            model_from_row(
+                provider, name, api_base, api_key, extra_body, kind, trig, tail,
+            )
+        } else {
+            // 2. global default model
+            let default_model: Option<(String, String, String, String, Value, String, i64, i64)> =
+                sqlx::query_as(
+                    "SELECT provider, model_name, api_base, api_key, extra_body, kind,
+                        compact_trigger_tokens, compact_tail_tokens
+                 FROM models WHERE scope = 'global' AND is_default = true LIMIT 1",
+                )
+                .fetch_optional(&ctx.pool)
+                .await
+                .unwrap_or(None);
+
+            if let Some((provider, name, api_base, api_key, extra_body, kind, trig, tail)) =
+                default_model
+            {
+                model_from_row(
+                    provider, name, api_base, api_key, extra_body, kind, trig, tail,
+                )
             } else {
                 // 3. fallback: cheap_model
                 cheap_cfg.clone()
@@ -191,10 +200,14 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
 
     // ── Record model + provider for this job ─────────────────────────────
     record_job_latency(
-        &ctx.pool, ctx.job_id, None, None,
+        &ctx.pool,
+        ctx.job_id,
+        None,
+        None,
         Some(&frontier_cfg.name),
         Some(&format!("{:?}", frontier_cfg.provider).to_lowercase()),
-    ).await;
+    )
+    .await;
 
     // ── Resolve user name ─────────────────────────────────────────────────
     let user_name: String = sqlx::query_scalar::<_, String>("SELECT name FROM users WHERE id = $1")
@@ -227,11 +240,10 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
 
     // ── Append skills ─────────────────────────────────────────────────────
     // Start with bundled skills (compiled into the binary).
-    let mut skill_map: std::collections::HashMap<String, String> =
-        crate::prompt::BUNDLED_SKILLS
-            .iter()
-            .map(|(name, desc, _)| (name.to_string(), desc.to_string()))
-            .collect();
+    let mut skill_map: std::collections::HashMap<String, String> = crate::prompt::BUNDLED_SKILLS
+        .iter()
+        .map(|(name, desc, _)| (name.to_string(), desc.to_string()))
+        .collect();
 
     // DB app_skills override bundled (same name = DB wins).
     let app_skill_rows: Vec<(String, Option<String>)> =
@@ -289,7 +301,6 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
             "\n\n## 当前执行计划\n标题：{plan_title}\n步骤（JSON）：{plan_steps}\n\n每次更新步骤状态时，调用 todo_list 工具同步最新进度。"
         ));
     }
-
 
     // ── Load history from DB (summary + recent tail, transparently) ──────
     let t_restore = std::time::Instant::now();
@@ -522,7 +533,10 @@ async fn generation_loop(
                             | LlmEvent::ToolCall(_)
                     ) {
                         ttfa_logged = true;
-                        info!(ms = t_llm.elapsed().as_millis(), "⏱ TTFA (first event of any kind)");
+                        info!(
+                            ms = t_llm.elapsed().as_millis(),
+                            "⏱ TTFA (first event of any kind)"
+                        );
                     }
                 }
             }
@@ -536,7 +550,8 @@ async fn generation_loop(
                         info!(ms = ttft, "⏱ TTFT (first token)");
                         if !ttft_written {
                             ttft_written = true;
-                            record_job_latency(&ctx.pool, ctx.job_id, Some(ttft), None, None, None).await;
+                            record_job_latency(&ctx.pool, ctx.job_id, Some(ttft), None, None, None)
+                                .await;
                         }
                     }
                     reply_buf.push_str(&token);
@@ -768,10 +783,15 @@ async fn generation_loop(
             messages.push(tool_result_msg);
 
             // For SSE emit and __ask__ check, get the text content as a Value
-            let result_json: Value = result_val.iter()
-                .find_map(|p| if let agentix::Content::Text { text } = p {
-                    serde_json::from_str(text).ok()
-                } else { None })
+            let result_json: Value = result_val
+                .iter()
+                .find_map(|p| {
+                    if let agentix::Content::Text { text } = p {
+                        serde_json::from_str(text).ok()
+                    } else {
+                        None
+                    }
+                })
                 .unwrap_or(Value::Null);
 
             // Collect image content — resolve __sandbox__: refs to base64 data URIs
@@ -781,9 +801,7 @@ async fn generation_loop(
                 if let agentix::Content::Image(img) = part {
                     use base64::Engine as _;
                     let data_uri = match &img.data {
-                        agentix::request::ImageData::Url(u)
-                            if u.starts_with("__sandbox__:") =>
-                        {
+                        agentix::request::ImageData::Url(u) if u.starts_with("__sandbox__:") => {
                             let filename = &u["__sandbox__:".len()..];
                             let file_path = ctx
                                 .sandbox
@@ -950,9 +968,7 @@ async fn generation_loop_claude_code(
         // New-turn transition: Token/Reasoning after a ToolResult means claude
         // started a fresh assistant turn. Seal the previous streaming row
         // before we append to the new turn.
-        if new_turn_pending
-            && matches!(event, AgentEvent::Token(_) | AgentEvent::Reasoning(_))
-        {
+        if new_turn_pending && matches!(event, AgentEvent::Token(_) | AgentEvent::Reasoning(_)) {
             // Drop tool calls whose arguments aren't complete JSON objects.
             tool_calls_buf.retain(|tc| {
                 serde_json::from_str::<serde_json::Value>(&tc.arguments)
@@ -968,8 +984,16 @@ async fn generation_loop_claude_code(
                 .db
                 .seal_streaming_message(
                     streaming_msg_id,
-                    if reply_buf.is_empty() { None } else { Some(&reply_buf) },
-                    if reasoning_buf.is_empty() { None } else { Some(&reasoning_buf) },
+                    if reply_buf.is_empty() {
+                        None
+                    } else {
+                        Some(&reply_buf)
+                    },
+                    if reasoning_buf.is_empty() {
+                        None
+                    } else {
+                        Some(&reasoning_buf)
+                    },
                     tc_json.as_deref(),
                     crate::db::MessageTokens::from_usage(&usage),
                 )
@@ -1115,8 +1139,16 @@ async fn generation_loop_claude_code(
                         .db
                         .seal_streaming_message(
                             streaming_msg_id,
-                            if reply_buf.is_empty() { None } else { Some(&reply_buf) },
-                            if reasoning_buf.is_empty() { None } else { Some(&reasoning_buf) },
+                            if reply_buf.is_empty() {
+                                None
+                            } else {
+                                Some(&reply_buf)
+                            },
+                            if reasoning_buf.is_empty() {
+                                None
+                            } else {
+                                Some(&reasoning_buf)
+                            },
                             None,
                             crate::db::MessageTokens::from_usage(&usage),
                         )
@@ -1186,8 +1218,16 @@ async fn generation_loop_claude_code(
         .db
         .seal_streaming_message(
             streaming_msg_id,
-            if reply_buf.is_empty() { None } else { Some(&reply_buf) },
-            if reasoning_buf.is_empty() { None } else { Some(&reasoning_buf) },
+            if reply_buf.is_empty() {
+                None
+            } else {
+                Some(&reply_buf)
+            },
+            if reasoning_buf.is_empty() {
+                None
+            } else {
+                Some(&reasoning_buf)
+            },
             tc_json.as_deref(),
             crate::db::MessageTokens::from_usage(&usage),
         )
