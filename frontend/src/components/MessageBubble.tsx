@@ -1061,7 +1061,7 @@ function DiagramBubble({ bubble }: { bubble: ToolBubble }) {
             secondaryColor: "#f5ede8",
             tertiaryColor: "#faf9f5",
             edgeLabelBackground: "transparent",
-            background: "#faf9f5",
+            background: "transparent",
             mainBkg: "#f0ede6",
             nodeBorder: "transparent",
             clusterBkg: "#f0ede6",

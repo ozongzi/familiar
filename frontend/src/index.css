@@ -120,6 +120,13 @@ svg .edgeLabel {
     background: transparent !important;
 }
 
+/* Mermaid 生成的 SVG 及其容器会被写入 background CSS，强制透明 */
+[id^="dmermaid-"],
+[id^="dmermaid-"] > svg,
+[id^="mermaid-"] {
+    background: transparent !important;
+}
+
 .prose {
     font-family: var(--font-serif);
 }
