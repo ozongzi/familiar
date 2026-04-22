@@ -38,7 +38,7 @@ pub struct ModelConfig {
     #[serde(default)]
     pub max_tokens: Option<u32>,
     /// Backend dispatch kind: "api" (default) → HTTP provider via `to_request`,
-    /// "claude-code" → subprocess `claude -p` via `agent_claude_code`.
+    /// "claude-code" → subprocess-backed `Provider::ClaudeCode` via `Request`.
     #[serde(default = "default_model_kind")]
     pub kind: String,
     /// Context size (prompt_tokens on the latest assistant turn) at which the

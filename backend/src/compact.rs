@@ -31,9 +31,7 @@
 //! boundary message's `summary_text`. The old anchor remains valid for any
 //! branch that still traverses it.
 
-use agentix::{
-    AgentEvent, ClaudeCodeConfig, LlmEvent, Message, ToolBundle, UserContent, agent_claude_code,
-};
+use agentix::{LlmEvent, Message, Request, UserContent};
 use futures::StreamExt;
 use sqlx::PgPool;
 use tracing::{info, warn};
@@ -477,27 +475,33 @@ async fn run_summariser_http(
 async fn run_summariser_claude_code(
     ctx: &WorkerContext,
     model: &ModelConfig,
+    http: &reqwest::Client,
     mut messages: Vec<Message>,
 ) -> Option<String> {
-    // agent_claude_code requires the last message to be a User turn — append
-    // a trigger asking for the summary now.
+    // Claude Code consumes the final user turn from stdin; append an explicit
+    // summary trigger so the last message is always a user turn.
     messages.push(Message::User(vec![UserContent::Text {
         text: "Now produce the summary as instructed.".to_string(),
     }]));
 
-    let cc_config = ClaudeCodeConfig::new().model(&model.name);
-    let mut stream = agent_claude_code(
-        ToolBundle::new(),
-        build_compact_system_prompt(),
-        cc_config,
-        messages,
-    );
+    let request = Request::claude_code()
+        .model(&model.name)
+        .system_prompt(build_compact_system_prompt())
+        .messages(messages)
+        .max_tokens(COMPACT_MAX_OUTPUT_TOKENS);
+    let mut stream = match request.stream(http).await {
+        Ok(s) => s,
+        Err(e) => {
+            warn!(conversation = %ctx.conversation_id, "compact (claude-code) stream failed: {e}");
+            return None;
+        }
+    };
 
     let mut raw = String::new();
     while let Some(event) = stream.next().await {
         match event {
-            AgentEvent::Token(t) => raw.push_str(&t),
-            AgentEvent::Error(e) => {
+            LlmEvent::Token(t) => raw.push_str(&t),
+            LlmEvent::Error(e) => {
                 warn!(conversation = %ctx.conversation_id, "compact (claude-code) error: {e}");
                 return None;
             }
@@ -516,7 +520,7 @@ async fn run_summariser(
     let compact_messages = strip_images(input);
 
     let raw = if model.kind == "claude-code" {
-        run_summariser_claude_code(ctx, model, compact_messages).await?
+        run_summariser_claude_code(ctx, model, http, compact_messages).await?
     } else {
         run_summariser_http(ctx, model, http, compact_messages).await?
     };
