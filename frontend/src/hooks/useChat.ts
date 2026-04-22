@@ -829,34 +829,6 @@ export function useChat(
 
   // ─── Stream actions ───────────────────────────────────────────────────────
 
-  const interrupt = useCallback(
-    (text: string) => {
-      const streamId = streamIdRef.current;
-      if (!streamId || !token) return;
-      if (statusRef.current !== "streaming") return;
-
-      const userBubble: TextBubble = {
-        kind: "text",
-        key: uid(),
-        role: "user",
-        content: text,
-        reasoning: "",
-        streaming: false,
-      };
-      setBubbles((prev) => [...prev, userBubble]);
-
-      fetch(`${BASE()}/api/stream/${streamId}/interrupt`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ content: text }),
-      }).catch(console.error);
-    },
-    [token],
-  );
-
   const abort = useCallback(() => {
     const streamId = streamIdRef.current;
     if (!streamId || !token) return;
@@ -1285,7 +1257,6 @@ export function useChat(
     status,
     errorMsg,
     send,
-    interrupt,
     abort,
     answerQuestion,
     reattach,
