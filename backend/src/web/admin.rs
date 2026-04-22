@@ -398,6 +398,12 @@ pub async fn delete_user(
         .fetch_optional(&state.pool)
         .await?;
 
+    let conversation_ids: Vec<uuid::Uuid> =
+        sqlx::query_scalar("SELECT id FROM conversations WHERE user_id = $1")
+            .bind(user_id)
+            .fetch_all(&state.pool)
+            .await?;
+
     // Get avatar path to delete file
     let avatar_path: Option<String> =
         sqlx::query_scalar("SELECT avatar_path FROM users WHERE id = $1")
@@ -420,6 +426,10 @@ pub async fn delete_user(
     if let Some(avatar_path) = avatar_path {
         let file_path = std::path::PathBuf::from(&state.artifacts_path).join(&avatar_path);
         let _ = tokio::fs::remove_file(file_path).await;
+    }
+
+    if let Err(err) = state.sandbox.remove_user_resources(user_id, &conversation_ids) {
+        tracing::error!(user_id = %user_id, error = %err, "failed to remove user sandbox resources");
     }
 
     // Log audit

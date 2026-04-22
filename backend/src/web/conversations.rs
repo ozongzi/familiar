@@ -137,6 +137,15 @@ pub async fn delete_conversation(
         return Err(AppError::not_found("对话不存在"));
     }
 
+    if let Err(err) = state.sandbox.remove_conversation_resources(auth.user_id, id) {
+        tracing::error!(
+            user_id = %auth.user_id,
+            conversation_id = %id,
+            error = %err,
+            "failed to remove conversation sandbox resources"
+        );
+    }
+
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
