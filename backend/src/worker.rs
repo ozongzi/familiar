@@ -398,7 +398,8 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
             .map(sanitize_history)
             .unwrap_or(messages);
         }
-        generation_loop_claude_code(ctx, &frontier_cfg, system_prompt, messages, bundle).await
+        generation_loop_claude_code(ctx, &frontier_cfg, system_prompt, messages, bundle, http)
+            .await
     } else {
         let request = frontier_cfg.to_request().system_prompt(system_prompt);
         let http = reqwest::Client::new();
@@ -889,10 +890,11 @@ async fn generation_loop(
 
 // ── claude-code generation loop ───────────────────────────────────────────────
 //
-// For kind='claude-code' models: drive `claude -p` (via agentix's
-// `agent_claude_code`) instead of a native HTTP stream. The agentic loop lives
-// inside the subprocess; we just consume its AgentEvent stream and persist /
-// emit the same SSE shape as `generation_loop` so frontend code doesn't care.
+// For kind='claude-code' models: drive `Provider::ClaudeCode` through
+// agentix's standard `agent()` loop instead of the plain HTTP path. Under the
+// hood that still shells out to `claude -p`; we just consume the resulting
+// AgentEvent stream and persist / emit the same SSE shape as `generation_loop`
+// so frontend code doesn't care.
 //
 // Turn boundary: claude emits Token… ToolCallStart… ToolResult… then more
 // Token…; when a Token arrives after a ToolResult it belongs to a new
@@ -903,15 +905,15 @@ async fn generation_loop_claude_code(
     system_prompt: String,
     mut messages: Vec<Message>,
     bundle: ToolBundle,
+    http: reqwest::Client,
 ) -> anyhow::Result<()> {
-    use agentix::{AgentEvent, ClaudeCodeConfig, agent_claude_code};
+    use agentix::{AgentEvent, agent};
 
     let history_budget = (frontier_cfg.compact_trigger_tokens * 5 / 4) as usize;
     agentix::truncate_to_token_budget(&mut messages, history_budget);
 
-    let cc_config = ClaudeCodeConfig::new().model(&frontier_cfg.name);
-
-    let mut stream = agent_claude_code(bundle, system_prompt, cc_config, messages);
+    let request = frontier_cfg.to_request().system_prompt(system_prompt);
+    let mut stream = agent(bundle, http, request, messages, Some(history_budget));
 
     // Current assistant-turn accumulators.
     let mut streaming_msg_id = ctx
