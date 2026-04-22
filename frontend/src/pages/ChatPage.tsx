@@ -88,7 +88,7 @@ export function ChatPage() {
     status,
     errorMsg,
     send,
-    interrupt,
+
     abort,
     answerQuestion,
     reattach,
@@ -316,9 +316,9 @@ export function ChatPage() {
 
   const handleInterrupt = useCallback(
     (text: string) => {
-      interrupt(text);
+      send(text);
     },
-    [interrupt],
+    [send],
   );
 
   const handleAbort = useCallback(() => {
