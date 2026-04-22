@@ -105,11 +105,13 @@ pub fn build_all_spells(deps: SpellDeps) -> impl agentix::Tool {
         sandbox: deps.sandbox.clone(),
         user_id: deps.user_id,
         conversation_id: deps.conversation_id,
-    } + AstSpell + UiSpells {
-        user_id: deps.user_id,
-        conversation_id: deps.conversation_id,
-        sandbox: deps.sandbox.clone(),
-    } + search_code
+    } + AstSpell
+        + UiSpells {
+            user_id: deps.user_id,
+            conversation_id: deps.conversation_id,
+            sandbox: deps.sandbox.clone(),
+        }
+        + search_code
         + SpawnSpell {
             cheap_model: deps.cheap_model,
             fresh_prompt: deps.prompt_engine.build_subagent(false, &deps.current_date),

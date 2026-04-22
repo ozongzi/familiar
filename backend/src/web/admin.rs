@@ -284,7 +284,6 @@ pub async fn create_user(
         }
     })?;
 
-
     // Log audit
     let _ = crate::audit::log_audit(
         &state.pool,
@@ -428,7 +427,10 @@ pub async fn delete_user(
         let _ = tokio::fs::remove_file(file_path).await;
     }
 
-    if let Err(err) = state.sandbox.remove_user_resources(user_id, &conversation_ids) {
+    if let Err(err) = state
+        .sandbox
+        .remove_user_resources(user_id, &conversation_ids)
+    {
         tracing::error!(user_id = %user_id, error = %err, "failed to remove user sandbox resources");
     }
 
@@ -697,7 +699,7 @@ pub async fn get_token_usage_by_user(
         LEFT JOIN token_usage_log t ON t.user_id = u.id
         GROUP BY u.id, u.name
         ORDER BY total_tokens DESC
-        "#
+        "#,
     )
     .fetch_all(&state.pool)
     .await?;
@@ -810,7 +812,7 @@ pub async fn get_token_usage_daily(
           AND total_tokens > 0
         GROUP BY DATE(TO_TIMESTAMP(recorded_at))
         ORDER BY day ASC
-        "#
+        "#,
     )
     .fetch_all(&state.pool)
     .await?;
@@ -875,45 +877,79 @@ pub async fn run_sql(
                 let idx = col.ordinal();
                 let type_name = col.type_info().name();
                 let val: serde_json::Value = match type_name {
-                    "BOOL" => row.try_get::<Option<bool>, _>(idx)
-                        .ok().flatten().map(serde_json::Value::Bool)
+                    "BOOL" => row
+                        .try_get::<Option<bool>, _>(idx)
+                        .ok()
+                        .flatten()
+                        .map(serde_json::Value::Bool)
                         .unwrap_or(serde_json::Value::Null),
-                    "INT2" | "INT4" => row.try_get::<Option<i32>, _>(idx)
-                        .ok().flatten().map(|n| serde_json::json!(n))
+                    "INT2" | "INT4" => row
+                        .try_get::<Option<i32>, _>(idx)
+                        .ok()
+                        .flatten()
+                        .map(|n| serde_json::json!(n))
                         .unwrap_or(serde_json::Value::Null),
-                    "INT8" | "OID" => row.try_get::<Option<i64>, _>(idx)
-                        .ok().flatten().map(|n| serde_json::json!(n))
+                    "INT8" | "OID" => row
+                        .try_get::<Option<i64>, _>(idx)
+                        .ok()
+                        .flatten()
+                        .map(|n| serde_json::json!(n))
                         .unwrap_or(serde_json::Value::Null),
-                    "FLOAT4" | "FLOAT8" | "NUMERIC" => row.try_get::<Option<f64>, _>(idx)
-                        .ok().flatten().map(|n| serde_json::json!(n))
+                    "FLOAT4" | "FLOAT8" | "NUMERIC" => row
+                        .try_get::<Option<f64>, _>(idx)
+                        .ok()
+                        .flatten()
+                        .map(|n| serde_json::json!(n))
                         .unwrap_or(serde_json::Value::Null),
-                    "JSONB" | "JSON" => row.try_get::<Option<serde_json::Value>, _>(idx)
-                        .ok().flatten()
+                    "JSONB" | "JSON" => row
+                        .try_get::<Option<serde_json::Value>, _>(idx)
+                        .ok()
+                        .flatten()
                         .unwrap_or(serde_json::Value::Null),
-                    "UUID" => row.try_get::<Option<uuid::Uuid>, _>(idx)
-                        .ok().flatten().map(|u| serde_json::Value::String(u.to_string()))
+                    "UUID" => row
+                        .try_get::<Option<uuid::Uuid>, _>(idx)
+                        .ok()
+                        .flatten()
+                        .map(|u| serde_json::Value::String(u.to_string()))
                         .unwrap_or(serde_json::Value::Null),
-                    "TIMESTAMPTZ" => row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>(idx)
-                        .ok().flatten().map(|t| serde_json::Value::String(t.to_rfc3339()))
+                    "TIMESTAMPTZ" => row
+                        .try_get::<Option<chrono::DateTime<chrono::Utc>>, _>(idx)
+                        .ok()
+                        .flatten()
+                        .map(|t| serde_json::Value::String(t.to_rfc3339()))
                         .unwrap_or(serde_json::Value::Null),
-                    "TIMESTAMP" => row.try_get::<Option<chrono::NaiveDateTime>, _>(idx)
-                        .ok().flatten().map(|t| serde_json::Value::String(t.to_string()))
+                    "TIMESTAMP" => row
+                        .try_get::<Option<chrono::NaiveDateTime>, _>(idx)
+                        .ok()
+                        .flatten()
+                        .map(|t| serde_json::Value::String(t.to_string()))
                         .unwrap_or(serde_json::Value::Null),
-                    "DATE" => row.try_get::<Option<chrono::NaiveDate>, _>(idx)
-                        .ok().flatten().map(|d| serde_json::Value::String(d.to_string()))
+                    "DATE" => row
+                        .try_get::<Option<chrono::NaiveDate>, _>(idx)
+                        .ok()
+                        .flatten()
+                        .map(|d| serde_json::Value::String(d.to_string()))
                         .unwrap_or(serde_json::Value::Null),
-                    "TIME" => row.try_get::<Option<chrono::NaiveTime>, _>(idx)
-                        .ok().flatten().map(|t| serde_json::Value::String(t.to_string()))
+                    "TIME" => row
+                        .try_get::<Option<chrono::NaiveTime>, _>(idx)
+                        .ok()
+                        .flatten()
+                        .map(|t| serde_json::Value::String(t.to_string()))
                         .unwrap_or(serde_json::Value::Null),
-                    "BYTEA" => row.try_get::<Option<Vec<u8>>, _>(idx)
-                        .ok().flatten()
+                    "BYTEA" => row
+                        .try_get::<Option<Vec<u8>>, _>(idx)
+                        .ok()
+                        .flatten()
                         .map(|b| {
                             let hex: String = b.iter().map(|x| format!("{:02x}", x)).collect();
                             serde_json::Value::String(format!("\\x{}", hex))
                         })
                         .unwrap_or(serde_json::Value::Null),
-                    _ => row.try_get::<Option<String>, _>(idx)
-                        .ok().flatten().map(serde_json::Value::String)
+                    _ => row
+                        .try_get::<Option<String>, _>(idx)
+                        .ok()
+                        .flatten()
+                        .map(serde_json::Value::String)
                         .unwrap_or(serde_json::Value::Null),
                 };
                 obj.insert(col.name().to_string(), val);
@@ -922,7 +958,9 @@ pub async fn run_sql(
         })
         .collect();
 
-    Ok(Json(serde_json::json!({ "columns": columns, "rows": result_rows })))
+    Ok(Json(
+        serde_json::json!({ "columns": columns, "rows": result_rows }),
+    ))
 }
 
 // ── MCP Catalog ───────────────────────────────────────────────────────────────
@@ -952,11 +990,10 @@ pub async fn list_catalog(
     auth: AuthUser,
 ) -> AppResult<Json<Vec<CatalogEntry>>> {
     guard_admin(&auth)?;
-    let rows = sqlx::query_as::<_, CatalogEntry>(
-        "SELECT * FROM mcp_catalog ORDER BY created_at ASC",
-    )
-    .fetch_all(&state.pool)
-    .await?;
+    let rows =
+        sqlx::query_as::<_, CatalogEntry>("SELECT * FROM mcp_catalog ORDER BY created_at ASC")
+            .fetch_all(&state.pool)
+            .await?;
     Ok(Json(rows))
 }
 

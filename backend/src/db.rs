@@ -22,7 +22,9 @@ use pgvector::Vector;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use agentix::request::{Content, ImageContent, ImageData, Message, ToolCall as AgentToolCall, UserContent};
+use agentix::request::{
+    Content, ImageContent, ImageData, Message, ToolCall as AgentToolCall, UserContent,
+};
 
 use crate::sandbox::SandboxManager;
 
@@ -312,13 +314,7 @@ impl Db {
                 } else {
                     serde_json::to_string(content).unwrap_or_default()
                 };
-                (
-                    "tool",
-                    Some(serialized),
-                    None,
-                    Some(call_id.clone()),
-                    None,
-                )
+                ("tool", Some(serialized), None, Some(call_id.clone()), None)
             }
         };
         let now = unix_now();
@@ -404,11 +400,7 @@ impl Db {
     /// Point the conversation at a specific subtree. Walks `message_id`
     /// to its deepest descendant and sets that as `active_message_id`.
     /// Returns the new active leaf id.
-    pub async fn activate(
-        &self,
-        conversation_id: Uuid,
-        message_id: i64,
-    ) -> anyhow::Result<i64> {
+    pub async fn activate(&self, conversation_id: Uuid, message_id: i64) -> anyhow::Result<i64> {
         let leaf = self.walk_to_leaf(message_id).await?;
         sqlx::query("UPDATE conversations SET active_message_id = $1 WHERE id = $2")
             .bind(leaf)
@@ -425,14 +417,12 @@ impl Db {
         summary: &str,
         tokens: i32,
     ) -> anyhow::Result<()> {
-        sqlx::query(
-            "UPDATE messages SET summary_text = $1, summary_tokens = $2 WHERE id = $3",
-        )
-        .bind(summary)
-        .bind(tokens)
-        .bind(message_id)
-        .execute(&self.pool)
-        .await?;
+        sqlx::query("UPDATE messages SET summary_text = $1, summary_tokens = $2 WHERE id = $3")
+            .bind(summary)
+            .bind(tokens)
+            .bind(message_id)
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 
@@ -482,25 +472,27 @@ impl Db {
         .fetch_all(&self.pool)
         .await?
         .into_iter()
-        .map(|r| (
-            MessageRow {
-                id: r.id,
-                conversation_id: r.conversation_id,
-                role: r.role,
-                name: r.name,
-                content: r.content,
-                spell_casts: r.spell_casts,
-                spell_cast_id: r.spell_cast_id,
-                reasoning: r.reasoning,
-                created_at: r.created_at,
-                parent_id: r.parent_id,
-                streaming: r.streaming,
-                job_id: r.job_id,
-                summary_text: r.summary_text,
-                summary_tokens: r.summary_tokens,
-            },
-            r.siblings,
-        ))
+        .map(|r| {
+            (
+                MessageRow {
+                    id: r.id,
+                    conversation_id: r.conversation_id,
+                    role: r.role,
+                    name: r.name,
+                    content: r.content,
+                    spell_casts: r.spell_casts,
+                    spell_cast_id: r.spell_cast_id,
+                    reasoning: r.reasoning,
+                    created_at: r.created_at,
+                    parent_id: r.parent_id,
+                    streaming: r.streaming,
+                    job_id: r.job_id,
+                    summary_text: r.summary_text,
+                    summary_tokens: r.summary_tokens,
+                },
+                r.siblings,
+            )
+        })
         .collect();
 
         Ok(rows)
@@ -531,10 +523,8 @@ impl Db {
         let rows = self
             .load_active_rows_filtered(conversation_id, after_msg_id)
             .await?;
-        let mut messages: Vec<Message> =
-            rows.iter().cloned().map(row_to_message).collect();
-        resolve_sandbox_images(&mut messages, &self.sandbox, user_id, conversation_id)
-            .await;
+        let mut messages: Vec<Message> = rows.iter().cloned().map(row_to_message).collect();
+        resolve_sandbox_images(&mut messages, &self.sandbox, user_id, conversation_id).await;
         Ok((rows, messages))
     }
 
@@ -658,7 +648,6 @@ impl Db {
 
         Ok(rows)
     }
-
 }
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
@@ -831,12 +820,18 @@ async fn resolve_sandbox_images(
                 _ => &[],
             };
             parts.iter().enumerate().filter_map(move |(pi, p)| {
-                if matches!(p, UserContent::Image(_)) { Some((mi, pi)) } else { None }
+                if matches!(p, UserContent::Image(_)) {
+                    Some((mi, pi))
+                } else {
+                    None
+                }
             })
         })
         .last();
 
-    let Some((keep_mi, keep_pi)) = last_img_pos else { return };
+    let Some((keep_mi, keep_pi)) = last_img_pos else {
+        return;
+    };
 
     for (mi, msg) in messages.iter_mut().enumerate() {
         let parts: &mut Vec<UserContent> = match msg {
@@ -845,7 +840,9 @@ async fn resolve_sandbox_images(
             _ => continue,
         };
         for (pi, part) in parts.iter_mut().enumerate() {
-            let UserContent::Image(img) = part else { continue };
+            let UserContent::Image(img) = part else {
+                continue;
+            };
 
             if mi == keep_mi && pi == keep_pi {
                 // Latest image: resolve __sandbox__: → base64 if needed.
@@ -872,8 +869,9 @@ async fn resolve_sandbox_images(
             } else {
                 // Older image: replace with a text note giving the sandbox path.
                 let sandbox_path = match &img.data {
-                    ImageData::Url(u) if u.starts_with("__sandbox__:") =>
-                        format!("/workspace/{}", &u["__sandbox__:".len()..]),
+                    ImageData::Url(u) if u.starts_with("__sandbox__:") => {
+                        format!("/workspace/{}", &u["__sandbox__:".len()..])
+                    }
                     ImageData::Url(u) => u.clone(),
                     ImageData::Base64(_) => "(inline image)".to_string(),
                 };

@@ -1,6 +1,6 @@
 use agentix::request::{Content, ImageContent, ImageData};
-use base64::Engine as _;
 use agentix::tool;
+use base64::Engine as _;
 use reqwest::Client;
 use serde::Deserialize;
 use serde_json::json;
@@ -33,9 +33,15 @@ struct ImageResponse {
 
 fn ext_from_mime(mime: Option<&str>, url: &str) -> &'static str {
     if let Some(m) = mime {
-        if m.contains("jpeg") || m.contains("jpg") { return "jpg"; }
-        if m.contains("webp") { return "webp"; }
-        if m.contains("gif") { return "gif"; }
+        if m.contains("jpeg") || m.contains("jpg") {
+            return "jpg";
+        }
+        if m.contains("webp") {
+            return "webp";
+        }
+        if m.contains("gif") {
+            return "gif";
+        }
     }
     let path = url.split('?').next().unwrap_or(url);
     match path.rsplit('.').next() {
@@ -80,19 +86,35 @@ impl Tool for GenerateImageSpell {
                     return vec![Content::text("SiliconFlow API key not configured")];
                 };
                 self.generate_siliconflow(
-                    api_key, model, prompt, image_size, n, negative_prompt, seed,
-                ).await
+                    api_key,
+                    model,
+                    prompt,
+                    image_size,
+                    n,
+                    negative_prompt,
+                    seed,
+                )
+                .await
             }
             "fal" => {
                 let Some(ref api_key) = self.fal_api_key else {
                     return vec![Content::text("fal.ai API key not configured")];
                 };
                 self.generate_fal(
-                    api_key, model, prompt, image_size, n, seed,
-                    safety_tolerance, enable_safety_checker,
-                ).await
+                    api_key,
+                    model,
+                    prompt,
+                    image_size,
+                    n,
+                    seed,
+                    safety_tolerance,
+                    enable_safety_checker,
+                )
+                .await
             }
-            other => vec![Content::text(format!("Unknown provider '{other}'. Use 'siliconflow' or 'fal'."))],
+            other => vec![Content::text(format!(
+                "Unknown provider '{other}'. Use 'siliconflow' or 'fal'."
+            ))],
         }
     }
 }
@@ -121,7 +143,8 @@ impl GenerateImageSpell {
             body["seed"] = json!(s);
         }
 
-        let resp = self.http
+        let resp = self
+            .http
             .post("https://api.siliconflow.cn/v1/images/generations")
             .header("Authorization", format!("Bearer {api_key}"))
             .json(&body)
@@ -161,12 +184,19 @@ impl GenerateImageSpell {
             "num_images": n.unwrap_or(1),
             "image_size": image_size.as_deref().unwrap_or("portrait_4_3"),
         });
-        if let Some(s) = seed { body["seed"] = json!(s); }
-        if let Some(st) = safety_tolerance { body["safety_tolerance"] = json!(st); }
-        if let Some(sc) = enable_safety_checker { body["enable_safety_checker"] = json!(sc); }
+        if let Some(s) = seed {
+            body["seed"] = json!(s);
+        }
+        if let Some(st) = safety_tolerance {
+            body["safety_tolerance"] = json!(st);
+        }
+        if let Some(sc) = enable_safety_checker {
+            body["enable_safety_checker"] = json!(sc);
+        }
 
         let url = format!("https://fal.run/{model}");
-        let resp = self.http
+        let resp = self
+            .http
             .post(&url)
             .header("Authorization", format!("Key {api_key}"))
             .json(&body)
@@ -195,7 +225,8 @@ impl GenerateImageSpell {
             return vec![Content::text("No images returned")];
         }
 
-        let conv_dir = self.sandbox
+        let conv_dir = self
+            .sandbox
             .get_conversation_dir(self.user_id, self.conversation_id)
             .join("public");
         let _ = tokio::fs::create_dir_all(&conv_dir).await;
@@ -208,10 +239,22 @@ impl GenerateImageSpell {
             let bytes = match self.http.get(&img.url).send().await {
                 Ok(r) if r.status().is_success() => match r.bytes().await {
                     Ok(b) => b,
-                    Err(e) => { results.push(Content::text(format!("download error: {e}"))); continue; }
+                    Err(e) => {
+                        results.push(Content::text(format!("download error: {e}")));
+                        continue;
+                    }
                 },
-                Ok(r) => { results.push(Content::text(format!("image download failed: HTTP {}", r.status()))); continue; }
-                Err(e) => { results.push(Content::text(format!("image download error: {e}"))); continue; }
+                Ok(r) => {
+                    results.push(Content::text(format!(
+                        "image download failed: HTTP {}",
+                        r.status()
+                    )));
+                    continue;
+                }
+                Err(e) => {
+                    results.push(Content::text(format!("image download error: {e}")));
+                    continue;
+                }
             };
 
             // Use MD5 of bytes as filename — db.append will compute the same hash

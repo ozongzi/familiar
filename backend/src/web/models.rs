@@ -379,4 +379,3 @@ pub async fn admin_delete_model(
 
     Ok(Json(json!({ "ok": true })))
 }
-

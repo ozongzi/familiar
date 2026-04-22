@@ -223,7 +223,9 @@ pub async fn load_for_generation(
     conversation_id: Uuid,
     user_id: Uuid,
 ) -> anyhow::Result<Vec<Message>> {
-    let (rows, messages) = db.restore_after_rows(conversation_id, user_id, None).await?;
+    let (rows, messages) = db
+        .restore_after_rows(conversation_id, user_id, None)
+        .await?;
     debug_assert_eq!(rows.len(), messages.len());
 
     let budget = model.compact_trigger_tokens;
@@ -236,7 +238,9 @@ pub async fn load_for_generation(
     // Walk from the tip back to the root; use the first anchor whose
     // (summary + strictly-after-tail) fits the budget.
     for i in (0..rows.len()).rev() {
-        let Some(summary_text) = rows[i].summary_text.as_ref() else { continue };
+        let Some(summary_text) = rows[i].summary_text.as_ref() else {
+            continue;
+        };
         let summary_tokens = rows[i]
             .summary_tokens
             .map(i64::from)

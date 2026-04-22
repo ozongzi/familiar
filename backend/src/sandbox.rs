@@ -28,7 +28,10 @@ impl SandboxManager {
                 error!("Failed to create sandbox base path {:?}: {}", base_path, e);
             });
         }
-        Self { base_path, host_base_path }
+        Self {
+            base_path,
+            host_base_path,
+        }
     }
 
     pub fn get_conversation_dir(&self, user_id: Uuid, conversation_id: Uuid) -> PathBuf {
@@ -131,10 +134,16 @@ impl SandboxManager {
         match rm_status {
             Ok(status) if status.success() => {}
             Ok(_) => {
-                info!("Sandbox container {} did not exist or could not be removed", container_name);
+                info!(
+                    "Sandbox container {} did not exist or could not be removed",
+                    container_name
+                );
             }
             Err(err) => {
-                error!("Failed to remove sandbox container {}: {}", container_name, err);
+                error!(
+                    "Failed to remove sandbox container {}: {}",
+                    container_name, err
+                );
             }
         }
 
@@ -146,6 +155,7 @@ impl SandboxManager {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn remove_container(&self, conversation_id: Uuid) {
         let container_name = Self::container_name(conversation_id);
         let rm_status = Command::new("docker")
@@ -156,15 +166,25 @@ impl SandboxManager {
                 info!("Removed sandbox container {}", container_name);
             }
             Ok(_) => {
-                info!("Sandbox container {} did not exist or could not be removed", container_name);
+                info!(
+                    "Sandbox container {} did not exist or could not be removed",
+                    container_name
+                );
             }
             Err(err) => {
-                error!("Failed to remove sandbox container {}: {}", container_name, err);
+                error!(
+                    "Failed to remove sandbox container {}: {}",
+                    container_name, err
+                );
             }
         }
     }
 
-    pub fn remove_user_resources(&self, user_id: Uuid, conversation_ids: &[Uuid]) -> Result<(), String> {
+    pub fn remove_user_resources(
+        &self,
+        user_id: Uuid,
+        conversation_ids: &[Uuid],
+    ) -> Result<(), String> {
         for &conversation_id in conversation_ids {
             self.remove_conversation_resources(user_id, conversation_id)?;
         }

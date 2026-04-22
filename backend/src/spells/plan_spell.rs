@@ -1,7 +1,7 @@
 use agentix::schemars::JsonSchema;
 use agentix::tool;
 use serde::Deserialize;
-use serde_json::{json};
+use serde_json::json;
 use sqlx::PgPool;
 use uuid::Uuid;
 

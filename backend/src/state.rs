@@ -145,7 +145,9 @@ impl AppState {
         let state = self.clone();
         let msg = msg.clone();
         tokio::spawn(async move {
-            state.persist_message_async(conversation_id, user_id, msg).await;
+            state
+                .persist_message_async(conversation_id, user_id, msg)
+                .await;
         });
     }
 

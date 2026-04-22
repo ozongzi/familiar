@@ -45,7 +45,10 @@ fn is_hidden_tool_event(payload: &str) -> bool {
     let Some(t) = v.get("type").and_then(|t| t.as_str()) else {
         return false;
     };
-    if !matches!(t, "tool_call" | "tool_call_complete" | "tool_result" | "tool_progress") {
+    if !matches!(
+        t,
+        "tool_call" | "tool_call_complete" | "tool_result" | "tool_progress"
+    ) {
         return false;
     }
     v.get("name")
@@ -188,7 +191,9 @@ pub async fn send_message_handler(
     let user_message_id = {
         use agentix::Message;
         let msg = Message::User(user_parts);
-        state.persist_message_async(conversation_id, auth.user_id, msg).await
+        state
+            .persist_message_async(conversation_id, auth.user_id, msg)
+            .await
     };
 
     // Siblings = ids of messages sharing this one's parent_id. The UI uses

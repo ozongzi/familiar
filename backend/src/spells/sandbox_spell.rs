@@ -97,14 +97,21 @@ fn build_tree(dir: &Path, prefix: &str, depth: usize, max_depth: usize) -> Strin
         let connector = if is_last { "└── " } else { "├── " };
         if path.is_dir() {
             result.push_str(&format!("{prefix}{connector}{name}/\n"));
-            let new_prefix = if is_last { format!("{prefix}    ") } else { format!("{prefix}│   ") };
+            let new_prefix = if is_last {
+                format!("{prefix}    ")
+            } else {
+                format!("{prefix}│   ")
+            };
             result.push_str(&build_tree(&path, &new_prefix, depth + 1, max_depth));
         } else {
             result.push_str(&format!("{prefix}{connector}{name}\n"));
         }
     }
     if total > MAX_DIR_ITEMS {
-        result.push_str(&format!("{prefix}└── ... ({} more items)\n", total - MAX_DIR_ITEMS));
+        result.push_str(&format!(
+            "{prefix}└── ... ({} more items)\n",
+            total - MAX_DIR_ITEMS
+        ));
     }
     result
 }
@@ -114,35 +121,57 @@ fn run_ctags(path: &Path) -> Option<String> {
         .args(["-f", "-", "--fields=n", "--sort=no", path.to_str()?])
         .output()
         .ok()?;
-    if !output.status.success() { return None; }
+    if !output.status.success() {
+        return None;
+    }
     String::from_utf8(output.stdout).ok()
 }
 
 fn parse_ctags_output(s: &str) -> Vec<(String, String, usize)> {
-    s.lines().filter_map(|line| {
-        let parts: Vec<&str> = line.split('\t').collect();
-        if parts.len() < 3 { return None; }
-        let name = parts[0].to_string();
-        let kind = parts.get(3).and_then(|s| s.strip_prefix("kind:")).unwrap_or("?").to_string();
-        let ln = parts.last().and_then(|s| s.strip_prefix("line:")).and_then(|s| s.parse().ok()).unwrap_or(0);
-        Some((name, kind, ln))
-    }).collect()
+    s.lines()
+        .filter_map(|line| {
+            let parts: Vec<&str> = line.split('\t').collect();
+            if parts.len() < 3 {
+                return None;
+            }
+            let name = parts[0].to_string();
+            let kind = parts
+                .get(3)
+                .and_then(|s| s.strip_prefix("kind:"))
+                .unwrap_or("?")
+                .to_string();
+            let ln = parts
+                .last()
+                .and_then(|s| s.strip_prefix("line:"))
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0);
+            Some((name, kind, ln))
+        })
+        .collect()
 }
 
 fn add_line_numbers(content: &str, start_line: usize) -> String {
-    content.lines().enumerate()
+    content
+        .lines()
+        .enumerate()
         .map(|(i, l)| format!("{:4} | {}", start_line + i, l))
-        .collect::<Vec<_>>().join("\n")
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn image_mime(path: &Path) -> Option<&'static str> {
-    match path.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()).as_deref() {
-        Some("png")  => Some("image/png"),
+    match path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("png") => Some("image/png"),
         Some("jpg") | Some("jpeg") => Some("image/jpeg"),
-        Some("gif")  => Some("image/gif"),
+        Some("gif") => Some("image/gif"),
         Some("webp") => Some("image/webp"),
-        Some("bmp")  => Some("image/bmp"),
-        Some("svg")  => Some("image/svg+xml"),
+        Some("bmp") => Some("image/bmp"),
+        Some("svg") => Some("image/svg+xml"),
         _ => None,
     }
 }
@@ -159,10 +188,14 @@ async fn read_as_contents(path: &str) -> Vec<Content> {
                         data: ImageData::Base64(b64),
                         mime_type: mime.to_string(),
                     }),
-                    Content::text(json!({ "type": "image", "path": path, "mime_type": mime }).to_string()),
+                    Content::text(
+                        json!({ "type": "image", "path": path, "mime_type": mime }).to_string(),
+                    ),
                 ]
             }
-            Err(e) => vec![Content::text(json!({ "error": format!("read failed: {e}"), "path": path }).to_string())],
+            Err(e) => vec![Content::text(
+                json!({ "error": format!("read failed: {e}"), "path": path }).to_string(),
+            )],
         }
     } else {
         let result = do_read(path, None, None, None, None, None, None, None).await;
@@ -196,7 +229,11 @@ async fn do_read(
     if outline_only.unwrap_or(false) {
         if let Some(ctags) = run_ctags(p) {
             let tags = parse_ctags_output(&ctags);
-            let outline = tags.iter().map(|(n, k, l)| format!("{l:4} | [{k}] {n}")).collect::<Vec<_>>().join("\n");
+            let outline = tags
+                .iter()
+                .map(|(n, k, l)| format!("{l:4} | [{k}] {n}"))
+                .collect::<Vec<_>>()
+                .join("\n");
             return json!({ "type": "outline", "path": path, "outline": outline });
         }
         return json!({ "type": "outline", "path": path, "outline": "(ctags not available or no symbols found)" });
@@ -207,7 +244,12 @@ async fn do_read(
             if let Some((_, _, tl)) = tags.iter().find(|(n, _, _)| n == &symbol) {
                 let tl = *tl;
                 let lines: Vec<&str> = content.lines().collect();
-                let end = tags.iter().filter(|(_, _, l)| *l > tl).map(|(_, _, l)| *l).min().unwrap_or(lines.len());
+                let end = tags
+                    .iter()
+                    .filter(|(_, _, l)| *l > tl)
+                    .map(|(_, _, l)| *l)
+                    .min()
+                    .unwrap_or(lines.len());
                 if let Some(body) = lines.get(tl - 1..end.saturating_sub(1)) {
                     let joined = body.join("\n");
                     return json!({ "type": "symbol", "path": path, "symbol": symbol, "content": add_line_numbers(&joined, 1) });
@@ -223,9 +265,18 @@ async fn do_read(
             Err(e) => return json!({ "error": format!("invalid regex: {e}") }),
         };
         let lines: Vec<&str> = content.lines().collect();
-        let matched: Vec<usize> = lines.iter().enumerate().filter(|(_, l)| re.is_match(l)).map(|(i, _)| i).collect();
+        let matched: Vec<usize> = lines
+            .iter()
+            .enumerate()
+            .filter(|(_, l)| re.is_match(l))
+            .map(|(i, _)| i)
+            .collect();
         let mut shown = std::collections::BTreeSet::new();
-        for &m in &matched { for i in m.saturating_sub(ctx)..(m + ctx + 1).min(lines.len()) { shown.insert(i); } }
+        for &m in &matched {
+            for i in m.saturating_sub(ctx)..(m + ctx + 1).min(lines.len()) {
+                shown.insert(i);
+            }
+        }
         let mut out = String::new();
         for i in shown {
             let marker = if matched.contains(&i) { ">>>" } else { "   " };
@@ -239,7 +290,11 @@ async fn do_read(
     let end = end_line.map(|e| e.min(total_lines)).unwrap_or(total_lines);
     let selected: Vec<&str> = lines.get(start..end).unwrap_or_default().to_vec();
     let truncated = selected.len() > MAX_LINES;
-    let show: Vec<&str> = if truncated { selected.iter().take(MAX_LINES).copied().collect() } else { selected };
+    let show: Vec<&str> = if truncated {
+        selected.iter().take(MAX_LINES).copied().collect()
+    } else {
+        selected
+    };
     json!({
         "type": "file", "path": path,
         "content": add_line_numbers(&show.join("\n"), start + 1),
@@ -262,7 +317,11 @@ async fn do_write(
     shebang: Option<String>,
 ) -> Value {
     let new_string = if let Some(ref s) = shebang {
-        let line = if s.starts_with("#!") { s.clone() } else { format!("#!/usr/bin/env {s}") };
+        let line = if s.starts_with("#!") {
+            s.clone()
+        } else {
+            format!("#!/usr/bin/env {s}")
+        };
         format!("{line}\n{new_string}")
     } else {
         new_string
@@ -326,9 +385,10 @@ async fn do_write(
 
     if let Some(parent) = Path::new(path).parent()
         && !parent.as_os_str().is_empty()
-        && let Err(e) = std::fs::create_dir_all(parent) {
-            return json!({ "error": format!("mkdir failed: {e}") });
-        }
+        && let Err(e) = std::fs::create_dir_all(parent)
+    {
+        return json!({ "error": format!("mkdir failed: {e}") });
+    }
     if let Err(e) = std::fs::write(path, &new_string) {
         return json!({ "error": format!("write failed: {e}") });
     }
@@ -338,7 +398,12 @@ async fn do_write(
 // ── autocheck ─────────────────────────────────────────────────────────────────
 
 #[derive(Debug)]
-enum Language { Rust, Go, Python, JavaScript }
+enum Language {
+    Rust,
+    Go,
+    Python,
+    JavaScript,
+}
 
 fn detect_language(path: &Path) -> Option<Language> {
     let ext = path.extension().and_then(|e| e.to_str());
@@ -368,12 +433,20 @@ fn root_markers(lang: &Language) -> &'static [&'static str] {
 }
 
 fn find_root(start: &Path, markers: &[&str]) -> Option<PathBuf> {
-    let mut cur = if start.is_file() { start.parent()?.to_path_buf() } else { start.to_path_buf() };
+    let mut cur = if start.is_file() {
+        start.parent()?.to_path_buf()
+    } else {
+        start.to_path_buf()
+    };
     loop {
         for marker in markers {
-            if cur.join(marker).exists() { return Some(cur); }
+            if cur.join(marker).exists() {
+                return Some(cur);
+            }
         }
-        if !cur.pop() { return None; }
+        if !cur.pop() {
+            return None;
+        }
     }
 }
 
@@ -390,11 +463,24 @@ fn parse_rust_diagnostics(stderr: &str, crate_root: &Path) -> Vec<Value> {
     let mut i = 0;
     while i < lines.len() {
         let line = lines[i];
-        let level = if line.starts_with("error") { "error" }
-            else if line.starts_with("warning") { "warning" }
-            else { i += 1; continue; };
-        if line.contains("aborting due to") || line.contains("could not compile") { i += 1; continue; }
-        let message = line.split_once(": ").map(|x| x.1).unwrap_or(line).trim().to_string();
+        let level = if line.starts_with("error") {
+            "error"
+        } else if line.starts_with("warning") {
+            "warning"
+        } else {
+            i += 1;
+            continue;
+        };
+        if line.contains("aborting due to") || line.contains("could not compile") {
+            i += 1;
+            continue;
+        }
+        let message = line
+            .split_once(": ")
+            .map(|x| x.1)
+            .unwrap_or(line)
+            .trim()
+            .to_string();
         let mut location: Option<(String, usize, usize)> = None;
         let mut j = i + 1;
         while j < lines.len() && j < i + 6 {
@@ -402,45 +488,63 @@ fn parse_rust_diagnostics(stderr: &str, crate_root: &Path) -> Vec<Value> {
             if let Some(rest) = loc.strip_prefix("--> ") {
                 let p: Vec<&str> = rest.splitn(3, ':').collect();
                 if p.len() >= 2
-                    && let Ok(row) = p[1].parse::<usize>() {
-                        let col = p.get(2).and_then(|s| s.parse().ok()).unwrap_or(1);
-                        location = Some((p[0].to_string(), row, col));
-                    }
+                    && let Ok(row) = p[1].parse::<usize>()
+                {
+                    let col = p.get(2).and_then(|s| s.parse().ok()).unwrap_or(1);
+                    location = Some((p[0].to_string(), row, col));
+                }
                 break;
             }
-            if lines[j].starts_with("error") || lines[j].starts_with("warning") { break; }
+            if lines[j].starts_with("error") || lines[j].starts_with("warning") {
+                break;
+            }
             j += 1;
         }
         let mut k = i + 1;
         let mut raw_lines = vec![line];
         while k < lines.len() {
             let next = lines[k];
-            let is_new = !next.starts_with(' ') && !next.starts_with('\t')
+            let is_new = !next.starts_with(' ')
+                && !next.starts_with('\t')
                 && (next.starts_with("error") || next.starts_with("warning"))
                 && !next.trim().is_empty();
-            if is_new { break; }
+            if is_new {
+                break;
+            }
             raw_lines.push(next);
             k += 1;
         }
         let source_context = location.as_ref().and_then(|(rel, row, _)| {
-            let abs = if Path::new(rel).is_absolute() { PathBuf::from(rel) } else { crate_root.join(rel) };
+            let abs = if Path::new(rel).is_absolute() {
+                PathBuf::from(rel)
+            } else {
+                crate_root.join(rel)
+            };
             let src = std::fs::read_to_string(&abs).ok()?;
             let src_lines: Vec<&str> = src.lines().collect();
             let center = row.saturating_sub(1);
             let start = center.saturating_sub(5);
             let end = (center + 6).min(src_lines.len());
-            let snippet: Vec<String> = src_lines[start..end].iter().enumerate().map(|(idx, l)| {
-                let lineno = start + idx + 1;
-                let marker = if lineno == *row { ">>>" } else { "   " };
-                format!("{marker} {lineno:4} | {l}")
-            }).collect();
+            let snippet: Vec<String> = src_lines[start..end]
+                .iter()
+                .enumerate()
+                .map(|(idx, l)| {
+                    let lineno = start + idx + 1;
+                    let marker = if lineno == *row { ">>>" } else { "   " };
+                    format!("{marker} {lineno:4} | {l}")
+                })
+                .collect();
             Some(json!({ "file": rel, "line": row, "snippet": snippet.join("\n") }))
         });
         let mut diag = json!({ "level": level, "message": message, "raw": raw_lines.join("\n") });
         if let Some((f, r, c)) = &location {
-            diag["file"] = json!(f); diag["line"] = json!(r); diag["col"] = json!(c);
+            diag["file"] = json!(f);
+            diag["line"] = json!(r);
+            diag["col"] = json!(c);
         }
-        if let Some(ctx) = source_context { diag["source_context"] = ctx; }
+        if let Some(ctx) = source_context {
+            diag["source_context"] = ctx;
+        }
         diags.push(diag);
         i = k;
     }
@@ -451,27 +555,57 @@ fn parse_generic_diagnostics(output: &str, root: &Path) -> Vec<Value> {
     let re = regex::Regex::new(r"(?m)^(.+?):(\d+)(?::(\d+))?:?\s*(.*)$").unwrap();
     let mut diags = Vec::new();
     for cap in re.captures_iter(output) {
-        let file = cap.get(1).map(|m| m.as_str().to_string()).unwrap_or_default();
-        let line = cap.get(2).and_then(|m| m.as_str().parse::<usize>().ok()).unwrap_or(1);
-        let col = cap.get(3).and_then(|m| m.as_str().parse::<usize>().ok()).unwrap_or(1);
-        let message = cap.get(4).map(|m| m.as_str().to_string()).unwrap_or_default();
-        if file.is_empty() || message.is_empty() { continue; }
-        let abs_path = if Path::new(&file).is_absolute() { PathBuf::from(&file) } else { root.join(&file) };
-        if !abs_path.exists() { continue; }
-        let level = if message.to_lowercase().contains("error") { "error" } else { "warning" };
-        let mut diag = json!({ "file": file, "line": line, "col": col, "message": message, "level": level });
+        let file = cap
+            .get(1)
+            .map(|m| m.as_str().to_string())
+            .unwrap_or_default();
+        let line = cap
+            .get(2)
+            .and_then(|m| m.as_str().parse::<usize>().ok())
+            .unwrap_or(1);
+        let col = cap
+            .get(3)
+            .and_then(|m| m.as_str().parse::<usize>().ok())
+            .unwrap_or(1);
+        let message = cap
+            .get(4)
+            .map(|m| m.as_str().to_string())
+            .unwrap_or_default();
+        if file.is_empty() || message.is_empty() {
+            continue;
+        }
+        let abs_path = if Path::new(&file).is_absolute() {
+            PathBuf::from(&file)
+        } else {
+            root.join(&file)
+        };
+        if !abs_path.exists() {
+            continue;
+        }
+        let level = if message.to_lowercase().contains("error") {
+            "error"
+        } else {
+            "warning"
+        };
+        let mut diag =
+            json!({ "file": file, "line": line, "col": col, "message": message, "level": level });
         if let Ok(src) = std::fs::read_to_string(&abs_path) {
             let src_lines: Vec<&str> = src.lines().collect();
             let center = line.saturating_sub(1);
             if center < src_lines.len() {
                 let start = center.saturating_sub(2);
                 let end = (center + 3).min(src_lines.len());
-                let snippet: Vec<String> = src_lines[start..end].iter().enumerate().map(|(idx, l)| {
-                    let lineno = start + idx + 1;
-                    let marker = if lineno == line { ">>>" } else { "   " };
-                    format!("{marker} {lineno:4} | {l}")
-                }).collect();
-                diag["source_context"] = json!({ "file": file, "line": line, "snippet": snippet.join("\n") });
+                let snippet: Vec<String> = src_lines[start..end]
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, l)| {
+                        let lineno = start + idx + 1;
+                        let marker = if lineno == line { ">>>" } else { "   " };
+                        format!("{marker} {lineno:4} | {l}")
+                    })
+                    .collect();
+                diag["source_context"] =
+                    json!({ "file": file, "line": line, "snippet": snippet.join("\n") });
             }
         }
         diags.push(diag);
@@ -494,11 +628,14 @@ async fn run_autocheck_in_container(
     let check_cmd = match lang {
         Language::Rust => format!("cd {root_str} && cargo clippy --message-format=human 2>&1"),
         Language::Go => format!("cd {root_str} && go vet ./... 2>&1"),
-        Language::Python => format!("cd {root_str} && ruff check . 2>&1 || python3 -m py_compile {path} 2>&1"),
+        Language::Python => {
+            format!("cd {root_str} && ruff check . 2>&1 || python3 -m py_compile {path} 2>&1")
+        }
         Language::JavaScript => format!("cd {root_str} && npx --yes eslint . 2>&1"),
     };
 
-    let (prog, args) = sandbox.wrap_mcp_command(user_id, conversation_id, "sh", &["-c", &check_cmd]);
+    let (prog, args) =
+        sandbox.wrap_mcp_command(user_id, conversation_id, "sh", &["-c", &check_cmd]);
     let output = tokio::process::Command::new(&prog)
         .args(&args)
         .output()
@@ -516,16 +653,30 @@ async fn run_autocheck_in_container(
         Language::Rust => parse_rust_diagnostics(&combined, &root),
         _ => parse_generic_diagnostics(&combined, &root),
     };
-    let errors: Vec<Value> = diags.iter().filter(|d| d["level"] == "error").cloned().collect();
-    let warnings: Vec<Value> = diags.iter().filter(|d| d["level"] == "warning").cloned().collect();
+    let errors: Vec<Value> = diags
+        .iter()
+        .filter(|d| d["level"] == "error")
+        .cloned()
+        .collect();
+    let warnings: Vec<Value> = diags
+        .iter()
+        .filter(|d| d["level"] == "warning")
+        .cloned()
+        .collect();
 
     let summary = if success {
         format!("✅ check passed ({} warning(s))", warnings.len())
     } else {
-        format!("❌ check failed: {} error(s), {} warning(s)", errors.len(), warnings.len())
+        format!(
+            "❌ check failed: {} error(s), {} warning(s)",
+            errors.len(),
+            warnings.len()
+        )
     };
 
-    Some(json!({ "success": success, "fix_ok": false, "summary": summary, "errors": errors, "warnings": warnings }))
+    Some(
+        json!({ "success": success, "fix_ok": false, "summary": summary, "errors": errors, "warnings": warnings }),
+    )
 }
 
 // ── bash streaming via docker exec ────────────────────────────────────────────
@@ -534,7 +685,10 @@ async fn run_autocheck_in_container(
 // (progress bars, spinners, \r rewrites) arrives immediately without waiting for \n.
 // Note: process-side buffering (e.g. Python's stdio) still batches writes until the
 // libc 4 KB threshold — that requires PTY allocation in sandbox.rs to fix properly.
-enum BashOutput { Chunk(String), Done(Value) }
+enum BashOutput {
+    Chunk(String),
+    Done(Value),
+}
 
 // Simulates a terminal line buffer so the Done result contains the final rendered
 // state rather than raw \r-interleaved progress spam. Handles \r (go to line start),
@@ -544,20 +698,28 @@ struct TerminalBuffer {
 }
 
 impl TerminalBuffer {
-    fn new() -> Self { Self { lines: vec![String::new()] } }
+    fn new() -> Self {
+        Self {
+            lines: vec![String::new()],
+        }
+    }
 
     fn push_str(&mut self, s: &str) {
         for ch in s.chars() {
             match ch {
                 '\r' => *self.lines.last_mut().unwrap() = String::new(),
                 '\n' => self.lines.push(String::new()),
-                '\x08' => { self.lines.last_mut().unwrap().pop(); }
+                '\x08' => {
+                    self.lines.last_mut().unwrap().pop();
+                }
                 c => self.lines.last_mut().unwrap().push(c),
             }
         }
     }
 
-    fn finish(self) -> String { self.lines.join("\n") }
+    fn finish(self) -> String {
+        self.lines.join("\n")
+    }
 }
 
 fn run_bash_in_container_streaming(
@@ -651,10 +813,14 @@ impl SandboxSpell {
     fn resolve_path(&self, path: &str) -> Result<String, Value> {
         // Reject absolute paths outside /workspace
         if Path::new(path).is_absolute() && !path.starts_with("/workspace") {
-            return Err(json!({ "error": format!("path '{path}' is outside /workspace. Use the bash tool instead (e.g. cat {path})") }));
+            return Err(
+                json!({ "error": format!("path '{path}' is outside /workspace. Use the bash tool instead (e.g. cat {path})") }),
+            );
         }
 
-        let conv_dir = self.sandbox.get_conversation_dir(self.user_id, self.conversation_id);
+        let conv_dir = self
+            .sandbox
+            .get_conversation_dir(self.user_id, self.conversation_id);
         let resolved = if let Some(rest) = path.strip_prefix("/workspace") {
             let rest = rest.trim_start_matches('/');
             if rest.is_empty() {
@@ -670,7 +836,9 @@ impl SandboxSpell {
         let mut normalized = PathBuf::new();
         for component in resolved.components() {
             match component {
-                std::path::Component::ParentDir => { normalized.pop(); }
+                std::path::Component::ParentDir => {
+                    normalized.pop();
+                }
                 std::path::Component::CurDir => {}
                 c => normalized.push(c),
             }
@@ -678,7 +846,9 @@ impl SandboxSpell {
 
         // After normalization, must still be inside conv_dir
         if !normalized.starts_with(&conv_dir) {
-            return Err(json!({ "error": format!("path '{path}' resolves outside /workspace (path traversal denied)") }));
+            return Err(
+                json!({ "error": format!("path '{path}' resolves outside /workspace (path traversal denied)") }),
+            );
         }
 
         Ok(normalized.to_string_lossy().into_owned())
@@ -693,7 +863,9 @@ impl SandboxSpell {
     /// `/workspace/...` form that the agent and sandbox container understand.
     /// Paths outside the conversation directory are returned unchanged.
     fn unresolve_path(&self, host_path: &str) -> String {
-        let conv_dir = self.sandbox.get_conversation_dir(self.user_id, self.conversation_id);
+        let conv_dir = self
+            .sandbox
+            .get_conversation_dir(self.user_id, self.conversation_id);
         let conv_str = conv_dir.to_string_lossy();
         if let Some(rest) = host_path.strip_prefix(conv_str.as_ref()) {
             let rest = rest.trim_start_matches('/');
@@ -751,7 +923,17 @@ impl agentix::Tool for SandboxSpell {
         if image_mime(Path::new(&path)).is_some() {
             return read_as_contents(&path).await;
         }
-        let result = do_read(&path, start_line, end_line, outline_only, extract_symbol, max_depth, search_regex, context_lines).await;
+        let result = do_read(
+            &path,
+            start_line,
+            end_line,
+            outline_only,
+            extract_symbol,
+            max_depth,
+            search_regex,
+            context_lines,
+        )
+        .await;
         vec![Content::text(self.fixup_result_paths(result).to_string())]
     }
 
@@ -763,21 +945,27 @@ impl agentix::Tool for SandboxSpell {
         for item in reads {
             let path = match self.require_workspace_path(&item.path) {
                 Ok(resolved) => resolved,
-                Err(e) => { contents.push(Content::text(e.to_string())); continue; }
+                Err(e) => {
+                    contents.push(Content::text(e.to_string()));
+                    continue;
+                }
             };
             if image_mime(Path::new(&path)).is_some() {
                 contents.extend(read_as_contents(&path).await);
             } else {
-                let result = self.fixup_result_paths(do_read(
-                    &path,
-                    item.start_line,
-                    item.end_line,
-                    item.outline_only,
-                    item.extract_symbol,
-                    item.max_depth,
-                    item.search_regex,
-                    item.context_lines,
-                ).await);
+                let result = self.fixup_result_paths(
+                    do_read(
+                        &path,
+                        item.start_line,
+                        item.end_line,
+                        item.outline_only,
+                        item.extract_symbol,
+                        item.max_depth,
+                        item.search_regex,
+                        item.context_lines,
+                    )
+                    .await,
+                );
                 contents.push(Content::text(result.to_string()));
             }
         }
@@ -808,7 +996,10 @@ impl agentix::Tool for SandboxSpell {
         let mut result = do_write(&path, new_string, old_string, count, append, shebang).await;
         if result.get("error").is_none() {
             result = self.fixup_result_paths(result);
-            if let Some(ac) = run_autocheck_in_container(&self.sandbox, self.user_id, self.conversation_id, &path).await {
+            if let Some(ac) =
+                run_autocheck_in_container(&self.sandbox, self.user_id, self.conversation_id, &path)
+                    .await
+            {
                 result["autocheck"] = ac;
             }
         }
@@ -825,7 +1016,11 @@ impl agentix::Tool for SandboxSpell {
         for item in &writes {
             let path = match self.require_workspace_path(&item.path) {
                 Ok(resolved) => resolved,
-                Err(e) => { results.push(e); failures.push(item.path.clone()); continue; }
+                Err(e) => {
+                    results.push(e);
+                    failures.push(item.path.clone());
+                    continue;
+                }
             };
             let write_result = do_write(
                 &path,
@@ -834,11 +1029,19 @@ impl agentix::Tool for SandboxSpell {
                 item.count,
                 item.append,
                 item.shebang.clone(),
-            ).await;
+            )
+            .await;
             let failed = write_result.get("error").is_some();
-            let write_result = if failed { write_result } else { self.fixup_result_paths(write_result) };
+            let write_result = if failed {
+                write_result
+            } else {
+                self.fixup_result_paths(write_result)
+            };
             results.push(write_result);
-            if failed { failures.push(path.clone()); continue; }
+            if failed {
+                failures.push(path.clone());
+                continue;
+            }
             let p = Path::new(&path);
             if let Some(lang) = detect_language(p) {
                 let markers = root_markers(&lang);
@@ -850,13 +1053,22 @@ impl agentix::Tool for SandboxSpell {
 
         let mut autochecks = Vec::new();
         for (root, _) in &affected {
-            if let Some(first_path) = results.iter().zip(writes.iter())
+            if let Some(first_path) = results
+                .iter()
+                .zip(writes.iter())
                 .filter(|(r, _)| r.get("error").is_none())
                 .map(|(_, w)| w.path.as_str())
                 .find(|p| Path::new(p).starts_with(root))
-                && let Some(ac) = run_autocheck_in_container(&self.sandbox, self.user_id, self.conversation_id, first_path).await {
-                    autochecks.push(ac);
-                }
+                && let Some(ac) = run_autocheck_in_container(
+                    &self.sandbox,
+                    self.user_id,
+                    self.conversation_id,
+                    first_path,
+                )
+                .await
+            {
+                autochecks.push(ac);
+            }
         }
 
         json!({ "results": results, "failed_paths": failures, "autochecks": autochecks })
@@ -869,14 +1081,17 @@ impl agentix::Tool for SandboxSpell {
         let text1 = std::fs::read_to_string(&path1).unwrap_or_default();
         let text2 = std::fs::read_to_string(&path2).unwrap_or_default();
         let diff = similar::TextDiff::from_lines(&text1, &text2);
-        let result = diff.unified_diff()
+        let result = diff
+            .unified_diff()
             .header(&format!("a/{path1}"), &format!("b/{path2}"))
             .to_string();
         if result.is_empty() {
             json!({ "diff": "(no changes)" })
         } else if result.len() > OUTPUT_LIMIT {
             let mut cut = OUTPUT_LIMIT;
-            while !result.is_char_boundary(cut) { cut -= 1; }
+            while !result.is_char_boundary(cut) {
+                cut -= 1;
+            }
             json!({ "diff": format!("{}... (truncated)", &result[..cut]) })
         } else {
             json!({ "diff": result })
