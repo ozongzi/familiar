@@ -348,7 +348,7 @@ pub async fn maybe_compact(
         anchor_msg_id = new_until_msg_id,
         summary_chars = new_summary.len(),
         summary_tokens,
-        "✅ compaction done"
+        " compaction done"
     );
 
     true
