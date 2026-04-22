@@ -65,6 +65,12 @@ export function BashTool({ bubble }: { bubble: ToolBubble }) {
       />
       {expanded && (
         <ToolBodyWrap>
+          {command && (
+            <div className={sharedStyles.cmdBar}>
+              <span className={sharedStyles.cmdPrompt}>$</span>
+              <span className={sharedStyles.cmdText}>{command}</span>
+            </div>
+          )}
           <TerminalView
             toolName="bash"
             command={command ?? undefined}
