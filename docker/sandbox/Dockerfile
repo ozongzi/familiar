@@ -19,6 +19,7 @@ ENV LANG=C.UTF-8
 RUN apt-get update && apt-get install -y --no-install-recommends \
     # build essentials
     build-essential gcc g++ make cmake pkg-config \
+    openssh-client \
     # shell / utils
     curl wget git jq unzip zip tree \
     ca-certificates gnupg lsb-release \

@@ -43,8 +43,12 @@ impl SandboxManager {
             .join(conversation_id.to_string())
     }
 
+    fn container_name(conversation_id: Uuid) -> String {
+        format!("familiar-sandbox-{}", conversation_id)
+    }
+
     pub fn ensure_container(&self, user_id: Uuid, conversation_id: Uuid) -> Result<String, String> {
-        let container_name = format!("familiar-sandbox-{}", conversation_id);
+        let container_name = Self::container_name(conversation_id);
         let conv_dir = self.get_conversation_dir(user_id, conversation_id);
         // host_conv_dir is what Docker daemon sees — must be a real host path.
         let host_conv_dir = self.get_host_conversation_dir(user_id, conversation_id);
@@ -84,10 +88,14 @@ impl SandboxManager {
                     .args([
                         "run",
                         "-d",
-                        "--restart",
-                        "always",
                         "--name",
                         &container_name,
+                        "--label",
+                        "familiar.managed=true",
+                        "--label",
+                        &format!("familiar.user_id={user_id}"),
+                        "--label",
+                        &format!("familiar.conversation_id={conversation_id}"),
                         "-v",
                         &format!("{}:/workspace", host_conv_dir.to_str().unwrap()),
                         "-w",
@@ -110,6 +118,65 @@ impl SandboxManager {
         }
     }
 
+    pub fn remove_conversation_resources(
+        &self,
+        user_id: Uuid,
+        conversation_id: Uuid,
+    ) -> Result<(), String> {
+        let container_name = Self::container_name(conversation_id);
+
+        let rm_status = Command::new("docker")
+            .args(["rm", "-f", &container_name])
+            .status();
+        match rm_status {
+            Ok(status) if status.success() => {}
+            Ok(_) => {
+                info!("Sandbox container {} did not exist or could not be removed", container_name);
+            }
+            Err(err) => {
+                error!("Failed to remove sandbox container {}: {}", container_name, err);
+            }
+        }
+
+        let conv_dir = self.get_conversation_dir(user_id, conversation_id);
+        if conv_dir.exists() {
+            std::fs::remove_dir_all(&conv_dir).map_err(|e| e.to_string())?;
+        }
+
+        Ok(())
+    }
+
+    pub fn remove_container(&self, conversation_id: Uuid) {
+        let container_name = Self::container_name(conversation_id);
+        let rm_status = Command::new("docker")
+            .args(["rm", "-f", &container_name])
+            .status();
+        match rm_status {
+            Ok(status) if status.success() => {
+                info!("Removed sandbox container {}", container_name);
+            }
+            Ok(_) => {
+                info!("Sandbox container {} did not exist or could not be removed", container_name);
+            }
+            Err(err) => {
+                error!("Failed to remove sandbox container {}: {}", container_name, err);
+            }
+        }
+    }
+
+    pub fn remove_user_resources(&self, user_id: Uuid, conversation_ids: &[Uuid]) -> Result<(), String> {
+        for &conversation_id in conversation_ids {
+            self.remove_conversation_resources(user_id, conversation_id)?;
+        }
+
+        let user_dir = self.base_path.join(user_id.to_string());
+        if user_dir.exists() {
+            std::fs::remove_dir_all(&user_dir).map_err(|e| e.to_string())?;
+        }
+
+        Ok(())
+    }
+
     pub fn wrap_mcp_command(
         &self,
         user_id: Uuid,
@@ -117,7 +184,7 @@ impl SandboxManager {
         command: &str,
         args: &[&str],
     ) -> (String, Vec<String>) {
-        let container_name = format!("familiar-sandbox-{}", conversation_id);
+        let container_name = Self::container_name(conversation_id);
 
         // Ensure container is running (best effort)
         let _ = self.ensure_container(user_id, conversation_id);

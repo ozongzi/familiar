@@ -81,6 +81,11 @@ async fn run_worker(ctx: WorkerContext) -> anyhow::Result<()> {
         }
     }
 
+    // MCP stdio processes and sandbox shell commands for this generation all
+    // run against the per-conversation container. Once the worker is done, we
+    // can drop that container and recreate it on demand next turn.
+    ctx.sandbox.remove_container(ctx.conversation_id);
+
     result
 }
 
@@ -1600,4 +1605,3 @@ pub(crate) fn sanitize_history(messages: Vec<Message>) -> Vec<Message> {
     }
     result
 }
-
