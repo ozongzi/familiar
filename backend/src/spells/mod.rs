@@ -1,4 +1,5 @@
 mod admin_spells;
+mod ast_spell;
 mod generate_image_spell;
 mod history_spell;
 mod manage_mcp_spell;
@@ -12,6 +13,7 @@ mod tavily_spell;
 mod ui_spells;
 
 use admin_spells::AdminSpells;
+use ast_spell::AstSpell;
 use generate_image_spell::GenerateImageSpell;
 use history_spell::HistorySpell;
 use memory_spell::MemorySpell;
@@ -103,7 +105,7 @@ pub fn build_all_spells(deps: SpellDeps) -> impl agentix::Tool {
         sandbox: deps.sandbox.clone(),
         user_id: deps.user_id,
         conversation_id: deps.conversation_id,
-    } + UiSpells {
+    } + AstSpell + UiSpells {
         user_id: deps.user_id,
         conversation_id: deps.conversation_id,
         sandbox: deps.sandbox.clone(),
