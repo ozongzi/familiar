@@ -53,28 +53,22 @@ pub struct MessageRow {
     pub summary_tokens: Option<i32>,
 }
 
-/// Provider-reported token counts for a single assistant message.
+/// Provider-reported context size snapshot for a single model turn.
 #[derive(Debug, Clone, Copy)]
-pub struct MessageTokens {
-    pub prompt: i64,
-    pub completion: i64,
-    pub cache_read: i64,
-    pub cache_creation: i64,
+pub struct MessageContext {
+    pub total: i64,
 }
 
-impl MessageTokens {
-    /// Build from an `agentix::UsageStats`.  Returns `None` if no tokens were
-    /// recorded (e.g., stream failed before any Usage event arrived).
+impl MessageContext {
+    /// Build from an `agentix::UsageStats`. Returns `None` when the provider
+    /// did not report any input-context size for this turn.
     pub fn from_usage(u: &agentix::types::UsageStats) -> Option<Self> {
-        if u.prompt_tokens == 0 && u.completion_tokens == 0 {
+        let total =
+            u.prompt_tokens as i64 + u.cache_read_tokens as i64 + u.cache_creation_tokens as i64;
+        if total == 0 {
             return None;
         }
-        Some(Self {
-            prompt: u.prompt_tokens as i64,
-            completion: u.completion_tokens as i64,
-            cache_read: u.cache_read_tokens as i64,
-            cache_creation: u.cache_creation_tokens as i64,
-        })
+        Some(Self { total })
     }
 }
 
@@ -155,7 +149,7 @@ impl Db {
         content: Option<&str>,
         reasoning: Option<&str>,
         tool_calls_json: Option<&str>,
-        tokens: Option<MessageTokens>,
+        context: Option<MessageContext>,
     ) -> anyhow::Result<()> {
         sqlx::query(
             "UPDATE messages
@@ -163,20 +157,14 @@ impl Db {
                  content               = COALESCE($2, content),
                  reasoning             = COALESCE($3, reasoning),
                  spell_casts           = $4,
-                 prompt_tokens         = $5,
-                 completion_tokens     = $6,
-                 cache_read_tokens     = $7,
-                 cache_creation_tokens = $8
+                 context_tokens        = $5
              WHERE id = $1",
         )
         .bind(message_id)
         .bind(content)
         .bind(reasoning)
         .bind(tool_calls_json)
-        .bind(tokens.map(|t| t.prompt))
-        .bind(tokens.map(|t| t.completion))
-        .bind(tokens.map(|t| t.cache_read))
-        .bind(tokens.map(|t| t.cache_creation))
+        .bind(context.map(|t| t.total))
         .execute(&self.pool)
         .await?;
         Ok(())

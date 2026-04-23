@@ -664,8 +664,8 @@ pub async fn get_token_usage(
                   COALESCE(SUM(total_tokens), 0)::bigint           AS total_tokens,
                   COALESCE(SUM(cache_read_tokens), 0)::bigint      AS cache_read_tokens,
                   COALESCE(SUM(cache_creation_tokens), 0)::bigint  AS cache_creation_tokens,
-                  COUNT(*)::bigint                                  AS conversation_count
-           FROM token_usage_log"#,
+                  COUNT(DISTINCT conversation_id)::bigint           AS conversation_count
+           FROM token_usage_events"#,
     )
     .fetch_one(&state.pool)
     .await?;
@@ -696,7 +696,7 @@ pub async fn get_token_usage_by_user(
                COALESCE(SUM(t.cache_read_tokens), 0)::bigint            AS cache_read_tokens,
                COALESCE(SUM(t.cache_creation_tokens), 0)::bigint        AS cache_creation_tokens
         FROM users u
-        LEFT JOIN token_usage_log t ON t.user_id = u.id
+        LEFT JOIN token_usage_events t ON t.user_id = u.id
         GROUP BY u.id, u.name
         ORDER BY total_tokens DESC
         "#,
@@ -736,15 +736,19 @@ pub async fn get_token_usage_conversations(
         sqlx::query(
             r#"
             SELECT t.conversation_id::text AS conv_id,
-                   COALESCE(t.conversation_name, '(deleted)') AS conv_name,
+                   COALESCE(MAX(t.conversation_name), '(deleted)') AS conv_name,
                    u.name AS username,
-                   TO_TIMESTAMP(t.recorded_at)::text AS created_at,
-                   t.prompt_tokens, t.completion_tokens, t.total_tokens,
-                   t.cache_read_tokens, t.cache_creation_tokens
-            FROM token_usage_log t
+                   TO_TIMESTAMP(MAX(t.created_at))::text AS created_at,
+                   COALESCE(SUM(t.prompt_tokens), 0)::bigint AS prompt_tokens,
+                   COALESCE(SUM(t.completion_tokens), 0)::bigint AS completion_tokens,
+                   COALESCE(SUM(t.total_tokens), 0)::bigint AS total_tokens,
+                   COALESCE(SUM(t.cache_read_tokens), 0)::bigint AS cache_read_tokens,
+                   COALESCE(SUM(t.cache_creation_tokens), 0)::bigint AS cache_creation_tokens
+            FROM token_usage_events t
             JOIN users u ON u.id = t.user_id
-            WHERE t.total_tokens > 0
-            ORDER BY t.recorded_at DESC
+            GROUP BY t.conversation_id, u.name
+            HAVING COALESCE(SUM(t.total_tokens), 0) > 0
+            ORDER BY MAX(t.created_at) DESC
             LIMIT 200
             "#,
         )
@@ -754,16 +758,20 @@ pub async fn get_token_usage_conversations(
         sqlx::query(
             r#"
             SELECT t.conversation_id::text AS conv_id,
-                   COALESCE(t.conversation_name, '(deleted)') AS conv_name,
+                   COALESCE(MAX(t.conversation_name), '(deleted)') AS conv_name,
                    u.name AS username,
-                   TO_TIMESTAMP(t.recorded_at)::text AS created_at,
-                   t.prompt_tokens, t.completion_tokens, t.total_tokens,
-                   t.cache_read_tokens, t.cache_creation_tokens
-            FROM token_usage_log t
+                   TO_TIMESTAMP(MAX(t.created_at))::text AS created_at,
+                   COALESCE(SUM(t.prompt_tokens), 0)::bigint AS prompt_tokens,
+                   COALESCE(SUM(t.completion_tokens), 0)::bigint AS completion_tokens,
+                   COALESCE(SUM(t.total_tokens), 0)::bigint AS total_tokens,
+                   COALESCE(SUM(t.cache_read_tokens), 0)::bigint AS cache_read_tokens,
+                   COALESCE(SUM(t.cache_creation_tokens), 0)::bigint AS cache_creation_tokens
+            FROM token_usage_events t
             JOIN users u ON u.id = t.user_id
             WHERE t.user_id = $1::uuid
-              AND t.total_tokens > 0
-            ORDER BY t.recorded_at DESC
+            GROUP BY t.conversation_id, u.name
+            HAVING COALESCE(SUM(t.total_tokens), 0) > 0
+            ORDER BY MAX(t.created_at) DESC
             LIMIT 200
             "#,
         )
@@ -807,10 +815,10 @@ pub async fn get_token_usage_daily(
                COALESCE(SUM(cache_read_tokens), 0)::bigint          AS cache_read_tokens,
                COALESCE(SUM(cache_creation_tokens), 0)::bigint      AS cache_creation_tokens,
                COUNT(*)::bigint                                      AS conversation_count
-        FROM token_usage_log
-        WHERE recorded_at >= EXTRACT(EPOCH FROM NOW() - INTERVAL '30 days')::bigint
+        FROM token_usage_events
+        WHERE created_at >= EXTRACT(EPOCH FROM NOW() - INTERVAL '30 days')::bigint
           AND total_tokens > 0
-        GROUP BY DATE(TO_TIMESTAMP(recorded_at))
+        GROUP BY DATE(TO_TIMESTAMP(created_at))
         ORDER BY day ASC
         "#,
     )

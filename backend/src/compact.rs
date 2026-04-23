@@ -10,9 +10,9 @@
 //! `messages.summary_tokens` — estimated token count of `summary_text`,
 //!                             used to decide if the summary + tail fits
 //!                             when raw history doesn't.
-//! `messages.prompt_tokens`  — provider-reported context size on the
-//!                             latest assistant message, used only to
-//!                             decide whether to trigger compaction.
+//! `messages.context_tokens` — provider-reported input-context size on the
+//!                             latest assistant message, used only to decide
+//!                             whether to trigger compaction.
 //!
 //! # Loading policy
 //!
@@ -48,7 +48,7 @@ use crate::worker::WorkerContext;
 const COMPACT_MAX_OUTPUT_TOKENS: u32 = 8_000;
 
 // Per-model thresholds live on `ModelConfig`:
-//   - compact_trigger_tokens: prompt_tokens at which a compact fires AND the
+//   - compact_trigger_tokens: context_tokens at which a compact fires AND the
 //                             budget below which raw history is preferred
 //   - compact_tail_tokens:    recent tail kept raw after compact
 
@@ -356,19 +356,14 @@ pub async fn maybe_compact(
 
 // ── Internal: boundary search ─────────────────────────────────────────────────
 
-/// Latest provider-reported context size on an assistant message. With
-/// Anthropic prompt caching, `prompt_tokens` alone only counts non-cached
-/// input — cached content is reported separately. The actual context the
-/// model processes is the sum of all three.
+/// Latest provider-reported input context size on an assistant message.
 async fn latest_context_tokens(pool: &PgPool, conv_id: Uuid) -> i64 {
     sqlx::query_scalar::<_, Option<i64>>(
-        "SELECT COALESCE(prompt_tokens, 0)
-              + COALESCE(cache_read_tokens, 0)
-              + COALESCE(cache_creation_tokens, 0)
+        "SELECT context_tokens
          FROM messages
          WHERE conversation_id = $1
            AND role = 'assistant'
-           AND prompt_tokens IS NOT NULL
+           AND context_tokens IS NOT NULL
          ORDER BY id DESC LIMIT 1",
     )
     .bind(conv_id)

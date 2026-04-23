@@ -41,8 +41,9 @@ pub struct ModelConfig {
     /// "claude-code" → subprocess-backed `Provider::ClaudeCode` via `Request`.
     #[serde(default = "default_model_kind")]
     pub kind: String,
-    /// Context size (prompt_tokens on the latest assistant turn) at which the
-    /// worker triggers a compaction pass using this model.
+    /// Input-context size snapshot (`messages.context_tokens` on the latest
+    /// assistant turn) at which the worker triggers a compaction pass using
+    /// this model.
     #[serde(default = "default_compact_trigger")]
     pub compact_trigger_tokens: i64,
     /// Tokens of recent history kept raw after a compaction (the live tail).
