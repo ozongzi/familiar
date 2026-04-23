@@ -10,6 +10,8 @@ type UserRow = {
   conversation_count: number;
   prompt_tokens: number;
   completion_tokens: number;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
   total_tokens: number;
 };
 
@@ -20,6 +22,8 @@ type ConvRow = {
   created_at: string;
   prompt_tokens: number;
   completion_tokens: number;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
   total_tokens: number;
 };
 
@@ -28,12 +32,27 @@ type DayRow = {
   total_tokens: number;
   prompt_tokens: number;
   completion_tokens: number;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
   conversation_count: number;
 };
 
+type Summary = {
+  prompt_tokens: number;
+  completion_tokens: number;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
+  total_tokens: number;
+  conversation_count: number;
+};
+
+function fmt(n: number): string {
+  return n.toLocaleString();
+}
+
 export function TokenUsageView() {
   const { token } = useAuth();
-  const [summary, setSummary] = useState<{ prompt_tokens: number; completion_tokens: number; total_tokens: number; conversation_count: number } | null>(null);
+  const [summary, setSummary] = useState<Summary | null>(null);
   const [users, setUsers] = useState<UserRow[]>([]);
   const [convs, setConvs] = useState<ConvRow[]>([]);
   const [days, setDays] = useState<DayRow[]>([]);
@@ -75,6 +94,18 @@ export function TokenUsageView() {
             backgroundColor: "rgba(34,197,94,0.7)",
             stack: "tokens",
           },
+          {
+            label: "Cache Read",
+            data: days.map(d => d.cache_read_tokens),
+            backgroundColor: "rgba(59,130,246,0.5)",
+            stack: "tokens",
+          },
+          {
+            label: "Cache Creation",
+            data: days.map(d => d.cache_creation_tokens),
+            backgroundColor: "rgba(251,191,36,0.5)",
+            stack: "tokens",
+          },
         ],
       },
       options: {
@@ -103,10 +134,12 @@ export function TokenUsageView() {
             ["总 Token", summary.total_tokens],
             ["Prompt", summary.prompt_tokens],
             ["Completion", summary.completion_tokens],
+            ["Cache Read", summary.cache_read_tokens],
+            ["Cache Creation", summary.cache_creation_tokens],
           ] as [string, number][]).map(([label, val]) => (
             <div key={label} className={styles.card}>
               <span className={styles.cardLabel}>{label}</span>
-              <strong className={styles.cardValue}>{val.toLocaleString()}</strong>
+              <strong className={styles.cardValue}>{fmt(val)}</strong>
             </div>
           ))}
         </div>
@@ -127,6 +160,7 @@ export function TokenUsageView() {
               <th>对话数</th>
               <th>Prompt</th>
               <th>Completion</th>
+              <th>Cache R/C</th>
               <th>总计</th>
               <th></th>
             </tr>
@@ -135,10 +169,11 @@ export function TokenUsageView() {
             {users.map(u => (
               <tr key={u.user_id} className={selectedUserId === u.user_id ? styles.rowSelected : ""}>
                 <td>{u.username}</td>
-                <td>{u.conversation_count.toLocaleString()}</td>
-                <td>{u.prompt_tokens.toLocaleString()}</td>
-                <td>{u.completion_tokens.toLocaleString()}</td>
-                <td><strong>{u.total_tokens.toLocaleString()}</strong></td>
+                <td>{fmt(u.conversation_count)}</td>
+                <td>{fmt(u.prompt_tokens)}</td>
+                <td>{fmt(u.completion_tokens)}</td>
+                <td>{fmt(u.cache_read_tokens)} / {fmt(u.cache_creation_tokens)}</td>
+                <td><strong>{fmt(u.total_tokens)}</strong></td>
                 <td>
                   <button
                     className={styles.filterBtn}
@@ -171,6 +206,7 @@ export function TokenUsageView() {
               <th>时间</th>
               <th>Prompt</th>
               <th>Completion</th>
+              <th>Cache R/C</th>
               <th>总计</th>
             </tr>
           </thead>
@@ -180,13 +216,14 @@ export function TokenUsageView() {
                 <td className={styles.convName}>{c.conv_name}</td>
                 <td>{c.username}</td>
                 <td className={styles.date}>{c.created_at.slice(0, 10)}</td>
-                <td>{c.prompt_tokens.toLocaleString()}</td>
-                <td>{c.completion_tokens.toLocaleString()}</td>
-                <td><strong>{c.total_tokens.toLocaleString()}</strong></td>
+                <td>{fmt(c.prompt_tokens)}</td>
+                <td>{fmt(c.completion_tokens)}</td>
+                <td>{fmt(c.cache_read_tokens)} / {fmt(c.cache_creation_tokens)}</td>
+                <td><strong>{fmt(c.total_tokens)}</strong></td>
               </tr>
             ))}
             {convs.length === 0 && (
-              <tr><td colSpan={6} className={styles.empty}>暂无数据</td></tr>
+              <tr><td colSpan={7} className={styles.empty}>暂无数据</td></tr>
             )}
           </tbody>
         </table>

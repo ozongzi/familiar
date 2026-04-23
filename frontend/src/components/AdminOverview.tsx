@@ -13,6 +13,8 @@ type Summary = {
   total_tokens: number;
   prompt_tokens: number;
   completion_tokens: number;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
   conversation_count: number;
 };
 
@@ -21,6 +23,8 @@ type DayRow = {
   total_tokens: number;
   prompt_tokens: number;
   completion_tokens: number;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
   conversation_count: number;
 };
 
@@ -30,6 +34,8 @@ type UserRow = {
   conversation_count: number;
   prompt_tokens: number;
   completion_tokens: number;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
   total_tokens: number;
 };
 
@@ -40,6 +46,8 @@ type ConvRow = {
   created_at: string;
   prompt_tokens: number;
   completion_tokens: number;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
   total_tokens: number;
 };
 
@@ -82,6 +90,8 @@ export function AdminOverview({ token, onNavigate }: Props) {
         datasets: [
           { label: "Prompt", data: days.map((d) => d.prompt_tokens), backgroundColor: "rgba(99,102,241,0.6)", stack: "t" },
           { label: "Completion", data: days.map((d) => d.completion_tokens), backgroundColor: "rgba(34,197,94,0.6)", stack: "t" },
+          { label: "Cache Read", data: days.map((d) => d.cache_read_tokens), backgroundColor: "rgba(59,130,246,0.45)", stack: "t" },
+          { label: "Cache Creation", data: days.map((d) => d.cache_creation_tokens), backgroundColor: "rgba(251,191,36,0.45)", stack: "t" },
         ],
       },
       options: {
@@ -106,6 +116,8 @@ export function AdminOverview({ token, onNavigate }: Props) {
         <StatCard label="总 Token 用量" value={fmt(summary?.total_tokens ?? 0)} sub="累计" />
         <StatCard label="今日 Token" value={fmt(todayTokens)} sub="过去24h" />
         <StatCard label="对话总数" value={fmt(summary?.conversation_count ?? 0)} sub="累计" />
+        <StatCard label="Cache Read" value={fmt(summary?.cache_read_tokens ?? 0)} sub="累计" />
+        <StatCard label="Cache Creation" value={fmt(summary?.cache_creation_tokens ?? 0)} sub="累计" />
         <StatCard label="全局模型" value={String(modelCount)} sub="已配置" onClick={() => onNavigate("models")} />
       </div>
 
@@ -128,6 +140,7 @@ export function AdminOverview({ token, onNavigate }: Props) {
                 <th>对话数</th>
                 <th>Prompt</th>
                 <th>Completion</th>
+                <th>Cache R/C</th>
                 <th>总计</th>
                 <th></th>
               </tr>
@@ -139,6 +152,7 @@ export function AdminOverview({ token, onNavigate }: Props) {
                   <td>{u.conversation_count}</td>
                   <td>{fmt(u.prompt_tokens)}</td>
                   <td>{fmt(u.completion_tokens)}</td>
+                  <td>{fmt(u.cache_read_tokens)} / {fmt(u.cache_creation_tokens)}</td>
                   <td><strong>{fmt(u.total_tokens)}</strong></td>
                   <td>
                     <button className={styles.filterBtn}
@@ -148,7 +162,7 @@ export function AdminOverview({ token, onNavigate }: Props) {
                   </td>
                 </tr>
               ))}
-              {users.length === 0 && <tr><td colSpan={6} className={styles.empty}>暂无数据</td></tr>}
+              {users.length === 0 && <tr><td colSpan={7} className={styles.empty}>暂无数据</td></tr>}
             </tbody>
           </table>
         </div>
@@ -168,6 +182,9 @@ export function AdminOverview({ token, onNavigate }: Props) {
                 <th>对话名</th>
                 <th>用户</th>
                 <th>时间</th>
+                <th>Prompt</th>
+                <th>Completion</th>
+                <th>Cache R/C</th>
                 <th>总计</th>
               </tr>
             </thead>
@@ -177,10 +194,13 @@ export function AdminOverview({ token, onNavigate }: Props) {
                   <td className={styles.username}>{c.conv_name}</td>
                   <td>{c.username}</td>
                   <td className={styles.date}>{c.created_at.slice(0, 10)}</td>
+                  <td>{fmt(c.prompt_tokens)}</td>
+                  <td>{fmt(c.completion_tokens)}</td>
+                  <td>{fmt(c.cache_read_tokens)} / {fmt(c.cache_creation_tokens)}</td>
                   <td><strong>{fmt(c.total_tokens)}</strong></td>
                 </tr>
               ))}
-              {convs.length === 0 && <tr><td colSpan={4} className={styles.empty}>暂无数据</td></tr>}
+              {convs.length === 0 && <tr><td colSpan={7} className={styles.empty}>暂无数据</td></tr>}
             </tbody>
           </table>
         </div>
