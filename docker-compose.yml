@@ -8,6 +8,7 @@ services:
       - "3000:3000"
     environment:
       - DATABASE_URL=postgres://familiar:familiar@postgres:5432/familiar
+      - AGENTIX_LOG_BODIES=${AGENTIX_LOG_BODIES:-}
       - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID:-}
       - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET:-}
       - GITHUB_REDIRECT_URI=${GITHUB_REDIRECT_URI:-}

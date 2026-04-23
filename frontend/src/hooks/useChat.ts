@@ -402,15 +402,19 @@ export function useChat(
         } catch {
           /* skip */
         }
-        if (m.content && m.content.trim().length > 0) {
+        const hasAssistantText = !!(m.content && m.content.trim().length > 0);
+        const hasAssistantReasoning = !!(m.reasoning && m.reasoning.trim().length > 0);
+        if (hasAssistantText || hasAssistantReasoning) {
           const key = uid();
           history.push({
             kind: "text",
             key,
             role: "assistant",
-            content: m.content,
+            content: m.content ?? "",
             reasoning: m.reasoning ?? "",
             streaming: m.streaming,
+            msgId: m.id,
+            siblings: m.siblings,
           });
           if (m.streaming) activeTextKeyRef.current = key;
         }
@@ -480,14 +484,14 @@ export function useChat(
         continue;
       }
 
-      if (
-        (m.role === "user" || m.role === "assistant") &&
-        m.content &&
-        m.content.trim().length > 0
-      ) {
+      const hasContent = !!(m.content && m.content.trim().length > 0);
+      const hasAssistantReasoningOnly =
+        m.role === "assistant" && !!(m.reasoning && m.reasoning.trim().length > 0);
+      if ((m.role === "user" || m.role === "assistant") && (hasContent || hasAssistantReasoningOnly)) {
+        const content = m.content ?? "";
         if (m.role === "user") {
           try {
-            const parsed = JSON.parse(m.content) as Record<string, unknown>;
+            const parsed = JSON.parse(content) as Record<string, unknown>;
             if (
               parsed.__type === "file_upload" &&
               typeof parsed.filename === "string" &&
@@ -511,8 +515,8 @@ export function useChat(
           }
 
           // Multimodal message: "__multimodal__:[{type,text/image_url,...}]"
-          if (m.content.startsWith("__multimodal__:")) {
-            const json = m.content.slice("__multimodal__:".length);
+          if (content.startsWith("__multimodal__:")) {
+            const json = content.slice("__multimodal__:".length);
             try {
               // agentix 0.10.1 internal tag format:
               //   { type: "text", text: "..." }
@@ -573,14 +577,14 @@ export function useChat(
         }
 
         const key = uid();
-        history.push({
-          kind: "text",
-          key,
-          role: m.role as "user" | "assistant",
-          content: m.content,
-          reasoning: m.reasoning ?? "",
-          streaming: m.streaming,
-          msgId: m.id,
+          history.push({
+            kind: "text",
+            key,
+            role: m.role as "user" | "assistant",
+            content,
+            reasoning: m.reasoning ?? "",
+            streaming: m.streaming,
+            msgId: m.id,
           siblings: m.siblings,
         });
         if (m.role === "assistant" && m.streaming) activeTextKeyRef.current = key;
