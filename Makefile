@@ -30,7 +30,7 @@ dev-client:
 
 # Start backend in dev mode (reads env from shell)
 dev-server:
-	cargo run -p familiar
+	AGENTIX_LOG_BODIES=1 cargo run -p familiar
 
 # ── Full build (backend + frontend) ───────────────────────────────────────────
 all: build-client build

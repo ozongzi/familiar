@@ -511,8 +511,9 @@ impl Db {
     /// so callers (e.g. `compact.rs`) can inspect per-message `id`,
     /// `summary_text`, etc. alongside the LLM-facing history.
     ///
-    /// Filters: streaming rows are excluded; empty assistant rows with no
-    /// tool calls are excluded. Pass `after_msg_id = Some(id)` to restrict
+    /// Filters: streaming rows are excluded; assistant rows whose content,
+    /// reasoning, and tool calls are all empty are excluded. Pass
+    /// `after_msg_id = Some(id)` to restrict
     /// to rows with `id > after_msg_id` on the active branch.
     pub async fn restore_after_rows(
         &self,
@@ -560,6 +561,7 @@ impl Db {
             WHERE streaming = false
               AND NOT (role = 'assistant'
                        AND (content IS NULL OR content = '')
+                       AND (reasoning IS NULL OR reasoning = '')
                        AND spell_casts IS NULL)
             ORDER BY id ASC
             "#,
