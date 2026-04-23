@@ -398,8 +398,7 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
             .map(sanitize_history)
             .unwrap_or(messages);
         }
-        generation_loop_claude_code(ctx, &frontier_cfg, system_prompt, messages, bundle, http)
-            .await
+        generation_loop_claude_code(ctx, &frontier_cfg, system_prompt, messages, bundle, http).await
     } else {
         let request = frontier_cfg.to_request().system_prompt(system_prompt);
         let http = reqwest::Client::new();
@@ -420,13 +419,6 @@ async fn generation_loop(
     let tool_defs: Vec<ToolDefinition> = tools.raw_tools();
     let mut ttft_written = false; // only record TTFT for the first LLM call
 
-    // Accumulate token usage across all LLM calls in this generation.
-    let mut acc_prompt: i64 = 0;
-    let mut acc_completion: i64 = 0;
-    let mut acc_total: i64 = 0;
-    let mut acc_cache_read: i64 = 0;
-    let mut acc_cache_creation: i64 = 0;
-
     loop {
         // ── Check abort / interrupt ───────────────────────────────────────
         if check_stop_reason(&ctx.pool, ctx.job_id).await.is_some() {
@@ -436,9 +428,9 @@ async fn generation_loop(
         }
 
         // ── Auto-compact at turn boundary ─────────────────────────────────
-        // Compact module checks provider-reported token counts from DB and
-        // decides whether to summarise. If it ran, reload messages via the
-        // unified loader so the worker sees the fresh [summary + tail].
+        // Compact checks the latest persisted input-context snapshot from DB
+        // and decides whether to summarise. If it ran, reload messages via
+        // the unified loader so the worker sees the fresh [summary + tail].
         if crate::compact::maybe_compact(ctx, &compact_model, http).await {
             messages = crate::compact::load_for_generation(
                 &ctx.db,
@@ -515,7 +507,7 @@ async fn generation_loop(
                             Some(&reasoning_buf)
                         },
                         None,
-                        crate::db::MessageTokens::from_usage(&usage),
+                        crate::db::MessageContext::from_usage(&usage),
                     )
                     .await;
                 emit(ctx, json!({"type": "aborted"})).await;
@@ -591,30 +583,7 @@ async fn generation_loop(
 
                 Some(LlmEvent::Usage(u)) => {
                     usage += u.clone();
-                    acc_prompt += u.prompt_tokens as i64;
-                    acc_completion += u.completion_tokens as i64;
-                    acc_total += u.total_tokens as i64;
-                    acc_cache_read += u.cache_read_tokens as i64;
-                    acc_cache_creation += u.cache_creation_tokens as i64;
-                    let pool = ctx.pool.clone();
-                    let conv_id = ctx.conversation_id;
-                    tokio::spawn(async move {
-                        let _ = sqlx::query(
-                            r#"UPDATE conversations
-                               SET token_usage = token_usage || jsonb_build_object(
-                                   'prompt_tokens',     (COALESCE((token_usage->>'prompt_tokens')::bigint, 0) + $1),
-                                   'completion_tokens', (COALESCE((token_usage->>'completion_tokens')::bigint, 0) + $2),
-                                   'total_tokens',      (COALESCE((token_usage->>'total_tokens')::bigint, 0) + $3)
-                               )
-                               WHERE id = $4"#,
-                        )
-                        .bind(u.prompt_tokens as i64)
-                        .bind(u.completion_tokens as i64)
-                        .bind(u.total_tokens as i64)
-                        .bind(conv_id)
-                        .execute(&pool)
-                        .await;
-                    });
+                    persist_usage_event(ctx, streaming_msg_id, &u).await;
                 }
 
                 Some(LlmEvent::Error(err_msg)) => {
@@ -678,7 +647,7 @@ async fn generation_loop(
                     Some(&reasoning_buf)
                 },
                 tc_json.as_deref(),
-                crate::db::MessageTokens::from_usage(&usage),
+                crate::db::MessageContext::from_usage(&usage),
             )
             .await;
 
@@ -857,34 +826,6 @@ async fn generation_loop(
         // Loop back → send tool results to LLM
     }
 
-    // Sync accumulated token usage to token_usage_log so stats survive conversation deletion.
-    if acc_total > 0 {
-        let _ = sqlx::query(
-            r#"INSERT INTO token_usage_log
-                   (conversation_id, user_id, conversation_name,
-                    prompt_tokens, completion_tokens, total_tokens,
-                    cache_read_tokens, cache_creation_tokens, recorded_at)
-               SELECT $1, user_id, name, $2, $3, $4, $5, $6, EXTRACT(EPOCH FROM NOW())::bigint
-               FROM conversations WHERE id = $1
-               ON CONFLICT (conversation_id) DO UPDATE
-                 SET conversation_name    = EXCLUDED.conversation_name,
-                     prompt_tokens        = token_usage_log.prompt_tokens + EXCLUDED.prompt_tokens,
-                     completion_tokens    = token_usage_log.completion_tokens + EXCLUDED.completion_tokens,
-                     total_tokens         = token_usage_log.total_tokens + EXCLUDED.total_tokens,
-                     cache_read_tokens    = token_usage_log.cache_read_tokens + EXCLUDED.cache_read_tokens,
-                     cache_creation_tokens = token_usage_log.cache_creation_tokens + EXCLUDED.cache_creation_tokens,
-                     recorded_at          = EXCLUDED.recorded_at"#,
-        )
-        .bind(ctx.conversation_id)
-        .bind(acc_prompt)
-        .bind(acc_completion)
-        .bind(acc_total)
-        .bind(acc_cache_read)
-        .bind(acc_cache_creation)
-        .execute(&ctx.pool)
-        .await;
-    }
-
     Ok(())
 }
 
@@ -927,12 +868,6 @@ async fn generation_loop_claude_code(
     let mut token_count: u32 = 0;
     let mut new_turn_pending = false;
 
-    // Usage accumulators (same shape as generation_loop).
-    let mut acc_prompt: i64 = 0;
-    let mut acc_completion: i64 = 0;
-    let mut acc_total: i64 = 0;
-    let mut acc_cache_read: i64 = 0;
-    let mut acc_cache_creation: i64 = 0;
     let mut usage = UsageStats::default();
     let mut ttft_logged = false;
     let t_llm = std::time::Instant::now();
@@ -952,7 +887,7 @@ async fn generation_loop_claude_code(
                             if reply_buf.is_empty() { None } else { Some(&reply_buf) },
                             if reasoning_buf.is_empty() { None } else { Some(&reasoning_buf) },
                             None,
-                            crate::db::MessageTokens::from_usage(&usage),
+                            crate::db::MessageContext::from_usage(&usage),
                         )
                         .await;
                     emit(ctx, json!({"type": "aborted"})).await;
@@ -997,7 +932,7 @@ async fn generation_loop_claude_code(
                         Some(&reasoning_buf)
                     },
                     tc_json.as_deref(),
-                    crate::db::MessageTokens::from_usage(&usage),
+                    crate::db::MessageContext::from_usage(&usage),
                 )
                 .await;
             if !reply_buf.is_empty() {
@@ -1152,7 +1087,7 @@ async fn generation_loop_claude_code(
                                 Some(&reasoning_buf)
                             },
                             None,
-                            crate::db::MessageTokens::from_usage(&usage),
+                            crate::db::MessageContext::from_usage(&usage),
                         )
                         .await;
                     drop(stream);
@@ -1163,30 +1098,7 @@ async fn generation_loop_claude_code(
             }
             AgentEvent::Usage(u) => {
                 usage += u.clone();
-                acc_prompt += u.prompt_tokens as i64;
-                acc_completion += u.completion_tokens as i64;
-                acc_total += u.total_tokens as i64;
-                acc_cache_read += u.cache_read_tokens as i64;
-                acc_cache_creation += u.cache_creation_tokens as i64;
-                let pool = ctx.pool.clone();
-                let conv_id = ctx.conversation_id;
-                tokio::spawn(async move {
-                    let _ = sqlx::query(
-                        r#"UPDATE conversations
-                           SET token_usage = token_usage || jsonb_build_object(
-                               'prompt_tokens',     (COALESCE((token_usage->>'prompt_tokens')::bigint, 0) + $1),
-                               'completion_tokens', (COALESCE((token_usage->>'completion_tokens')::bigint, 0) + $2),
-                               'total_tokens',      (COALESCE((token_usage->>'total_tokens')::bigint, 0) + $3)
-                           )
-                           WHERE id = $4"#,
-                    )
-                    .bind(u.prompt_tokens as i64)
-                    .bind(u.completion_tokens as i64)
-                    .bind(u.total_tokens as i64)
-                    .bind(conv_id)
-                    .execute(&pool)
-                    .await;
-                });
+                persist_usage_event(ctx, streaming_msg_id, &u).await;
             }
             AgentEvent::Warning(w) => {
                 warn!(conversation = %ctx.conversation_id, "claude-code warning: {w}");
@@ -1231,7 +1143,7 @@ async fn generation_loop_claude_code(
                 Some(&reasoning_buf)
             },
             tc_json.as_deref(),
-            crate::db::MessageTokens::from_usage(&usage),
+            crate::db::MessageContext::from_usage(&usage),
         )
         .await;
     if !reply_buf.is_empty() {
@@ -1251,34 +1163,44 @@ async fn generation_loop_claude_code(
         .await;
     }
 
-    if acc_total > 0 {
-        let _ = sqlx::query(
-            r#"INSERT INTO token_usage_log
-                   (conversation_id, user_id, conversation_name,
-                    prompt_tokens, completion_tokens, total_tokens,
-                    cache_read_tokens, cache_creation_tokens, recorded_at)
-               SELECT $1, user_id, name, $2, $3, $4, $5, $6, EXTRACT(EPOCH FROM NOW())::bigint
-               FROM conversations WHERE id = $1
-               ON CONFLICT (conversation_id) DO UPDATE
-                 SET conversation_name    = EXCLUDED.conversation_name,
-                     prompt_tokens        = token_usage_log.prompt_tokens + EXCLUDED.prompt_tokens,
-                     completion_tokens    = token_usage_log.completion_tokens + EXCLUDED.completion_tokens,
-                     total_tokens         = token_usage_log.total_tokens + EXCLUDED.total_tokens,
-                     cache_read_tokens    = token_usage_log.cache_read_tokens + EXCLUDED.cache_read_tokens,
-                     cache_creation_tokens = token_usage_log.cache_creation_tokens + EXCLUDED.cache_creation_tokens,
-                     recorded_at          = EXCLUDED.recorded_at"#,
-        )
-        .bind(ctx.conversation_id)
-        .bind(acc_prompt)
-        .bind(acc_completion)
-        .bind(acc_total)
-        .bind(acc_cache_read)
-        .bind(acc_cache_creation)
+    Ok(())
+}
+
+async fn persist_usage_event(ctx: &WorkerContext, message_id: i64, usage: &UsageStats) {
+    // Compact only needs the model's input-context size on this turn:
+    // non-cached prompt + cache read + cache creation.
+    let context_tokens = usage.prompt_tokens as i64
+        + usage.cache_read_tokens as i64
+        + usage.cache_creation_tokens as i64;
+    let now = chrono::Utc::now().timestamp();
+
+    let _ = sqlx::query(
+        r#"INSERT INTO token_usage_events
+               (job_id, conversation_id, user_id, message_id, conversation_name,
+                prompt_tokens, completion_tokens, cache_read_tokens,
+                cache_creation_tokens, total_tokens, created_at)
+           SELECT $1, c.id, c.user_id, $2, c.name,
+                  $3, $4, $5, $6, $7, $8
+           FROM conversations c
+           WHERE c.id = $9"#,
+    )
+    .bind(ctx.job_id)
+    .bind(message_id)
+    .bind(usage.prompt_tokens as i64)
+    .bind(usage.completion_tokens as i64)
+    .bind(usage.cache_read_tokens as i64)
+    .bind(usage.cache_creation_tokens as i64)
+    .bind(usage.total_tokens as i64)
+    .bind(now)
+    .bind(ctx.conversation_id)
+    .execute(&ctx.pool)
+    .await;
+
+    let _ = sqlx::query("UPDATE messages SET context_tokens = $2 WHERE id = $1")
+        .bind(message_id)
+        .bind(context_tokens)
         .execute(&ctx.pool)
         .await;
-    }
-
-    Ok(())
 }
 
 // ── MCP loading from DB ───────────────────────────────────────────────────────
