@@ -208,6 +208,7 @@ async fn run_direct_call_probe() -> anyhow::Result<()> {
                 eprintln!("\nERROR {e}");
                 break;
             }
+            _ => {}
         }
     }
 
@@ -262,6 +263,7 @@ async fn run_tool_visibility_probe() -> anyhow::Result<()> {
                 eprintln!("\nERROR {e}");
                 break;
             }
+            _ => {}
         }
     }
 
@@ -314,6 +316,7 @@ async fn run_raw_stream() -> anyhow::Result<()> {
                 eprintln!("\nERROR {e}");
                 break;
             }
+            _ => {}
         }
     }
 

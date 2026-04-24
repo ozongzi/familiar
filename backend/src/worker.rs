@@ -119,6 +119,7 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
 
     // ── Resolve frontier model: conversation model_id > global default ────
     let frontier_cfg: ModelConfig = {
+        #[allow(clippy::too_many_arguments)]
         fn model_from_row(
             provider: String,
             name: String,
@@ -128,6 +129,7 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
             kind: String,
             compact_trigger_tokens: i64,
             compact_tail_tokens: i64,
+            reasoning_effort: Option<String>,
         ) -> ModelConfig {
             let provider_parsed = serde_json::from_value::<crate::config::Provider>(
                 serde_json::Value::String(provider.clone()),
@@ -146,6 +148,7 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
                 kind,
                 compact_trigger_tokens,
                 compact_tail_tokens,
+                reasoning_effort: crate::config::parse_reasoning_effort(reasoning_effort.as_deref()),
             }
         }
 
@@ -154,10 +157,19 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
         // conversation owner. The UI filter + create_conversation guard should
         // catch this upstream; here we fall through to the default-model branch
         // so the job still completes rather than 500-ing.
-        let conv_model: Option<(String, String, String, String, Value, String, i64, i64)> =
-            sqlx::query_as(
-                "SELECT m.provider, m.model_name, m.api_base, m.api_key, m.extra_body, m.kind,
-                    m.compact_trigger_tokens, m.compact_tail_tokens
+        let conv_model: Option<(
+            String,
+            String,
+            String,
+            String,
+            Value,
+            String,
+            i64,
+            i64,
+            Option<String>,
+        )> = sqlx::query_as(
+            "SELECT m.provider, m.model_name, m.api_base, m.api_key, m.extra_body, m.kind,
+                    m.compact_trigger_tokens, m.compact_tail_tokens, m.reasoning_effort
              FROM conversations c
              JOIN models m ON m.id = c.model_id
              WHERE c.id = $1
@@ -175,23 +187,33 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
                         )
                     )
                )",
-            )
-            .bind(ctx.conversation_id)
-            .fetch_optional(&ctx.pool)
-            .await
-            .unwrap_or(None);
+        )
+        .bind(ctx.conversation_id)
+        .fetch_optional(&ctx.pool)
+        .await
+        .unwrap_or(None);
 
-        if let Some((provider, name, api_base, api_key, extra_body, kind, trig, tail)) = conv_model
+        if let Some((provider, name, api_base, api_key, extra_body, kind, trig, tail, effort)) =
+            conv_model
         {
             model_from_row(
-                provider, name, api_base, api_key, extra_body, kind, trig, tail,
+                provider, name, api_base, api_key, extra_body, kind, trig, tail, effort,
             )
         } else {
             // 2. global default model
-            let default_model: Option<(String, String, String, String, Value, String, i64, i64)> =
-                sqlx::query_as(
-                    "SELECT provider, model_name, api_base, api_key, extra_body, kind,
-                        compact_trigger_tokens, compact_tail_tokens
+            let default_model: Option<(
+                String,
+                String,
+                String,
+                String,
+                Value,
+                String,
+                i64,
+                i64,
+                Option<String>,
+            )> = sqlx::query_as(
+                "SELECT provider, model_name, api_base, api_key, extra_body, kind,
+                        compact_trigger_tokens, compact_tail_tokens, reasoning_effort
                  FROM models
                  WHERE scope = 'global'
                    AND is_default = true
@@ -204,17 +226,17 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
                         initial_available
                    )
                  LIMIT 1",
-                )
-                .bind(ctx.user_id)
-                .fetch_optional(&ctx.pool)
-                .await
-                .unwrap_or(None);
+            )
+            .bind(ctx.user_id)
+            .fetch_optional(&ctx.pool)
+            .await
+            .unwrap_or(None);
 
-            if let Some((provider, name, api_base, api_key, extra_body, kind, trig, tail)) =
+            if let Some((provider, name, api_base, api_key, extra_body, kind, trig, tail, effort)) =
                 default_model
             {
                 model_from_row(
-                    provider, name, api_base, api_key, extra_body, kind, trig, tail,
+                    provider, name, api_base, api_key, extra_body, kind, trig, tail, effort,
                 )
             } else {
                 // 3. fallback: cheap_model
@@ -487,7 +509,7 @@ async fn generation_loop(
             Err(e) => {
                 let _ = ctx
                     .db
-                    .seal_streaming_message(streaming_msg_id, None, None, None, None)
+                    .seal_streaming_message(streaming_msg_id, None, None, None, None, None)
                     .await;
                 return Err(anyhow::anyhow!("LLM stream failed: {e}"));
             }
@@ -497,6 +519,7 @@ async fn generation_loop(
         let mut reply_buf = String::new();
         let mut reasoning_buf = String::new();
         let mut tool_calls_buf: Vec<agentix::ToolCall> = Vec::new();
+        let mut provider_state: Option<serde_json::Value> = None;
         let mut usage = UsageStats::default();
         let mut token_count: u32 = 0;
         let mut ttft_logged = false;
@@ -523,6 +546,7 @@ async fn generation_loop(
                         },
                         None,
                         crate::db::MessageContext::from_usage(&usage),
+                        provider_state.as_ref(),
                     )
                     .await;
                 emit(ctx, json!({"type": "aborted"})).await;
@@ -601,6 +625,10 @@ async fn generation_loop(
                     persist_usage_event(ctx, streaming_msg_id, &u).await;
                 }
 
+                Some(LlmEvent::AssistantState(v)) => {
+                    provider_state = Some(v);
+                }
+
                 Some(LlmEvent::Error(err_msg)) => {
                     error!(conversation = %ctx.conversation_id, "stream error: {err_msg}");
                     let is_benign =
@@ -611,10 +639,12 @@ async fn generation_loop(
                     }
                     let _ = ctx
                         .db
-                        .seal_streaming_message(streaming_msg_id, None, None, None, None)
+                        .seal_streaming_message(streaming_msg_id, None, None, None, None, None)
                         .await;
                     return Err(anyhow::anyhow!("{err_msg}"));
                 }
+
+                Some(_) => {}
             }
         }
 
@@ -663,6 +693,7 @@ async fn generation_loop(
                 },
                 tc_json.as_deref(),
                 crate::db::MessageContext::from_usage(&usage),
+                provider_state.as_ref(),
             )
             .await;
 
@@ -683,6 +714,7 @@ async fn generation_loop(
                 Some(reasoning_buf)
             },
             tool_calls: tool_calls_buf.clone(),
+            provider_data: provider_state.clone(),
         };
         if !reply_buf.is_empty() || !tool_calls_buf.is_empty() {
             messages.push(assistant_msg);
@@ -1220,6 +1252,7 @@ pub(crate) fn sanitize_history(messages: Vec<Message>) -> Vec<Message> {
                 content,
                 reasoning,
                 tool_calls,
+                ..
             } if !tool_calls.is_empty() => {
                 let kept: Vec<_> = tool_calls
                     .iter()
@@ -1231,12 +1264,16 @@ pub(crate) fn sanitize_history(messages: Vec<Message>) -> Vec<Message> {
                         content: content.clone(),
                         reasoning: reasoning.clone(),
                         tool_calls: kept,
+                        // Filtering drops some tool_calls; any provider_data
+                        // would reference removed tool_use blocks by ID.
+                        provider_data: None,
                     });
                 } else if content.as_deref().map(|s| !s.is_empty()).unwrap_or(false) {
                     result.push(Message::Assistant {
                         content: content.clone(),
                         reasoning: reasoning.clone(),
                         tool_calls: vec![],
+                        provider_data: None,
                     });
                 }
             }

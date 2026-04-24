@@ -10,14 +10,15 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
 name = "agentix"
-version = "0.9.2"
+version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9bfd356c1504b61061d22d8ba41373ab6a194630a48c583b46737a01bda0ca08"
+checksum = "87dc77972dbe8ae5f1a8da3fe370e06ad99f0d5c263e6ed3d1cb86b19de9e2af"
 dependencies = [
  "agentix-macros",
  "async-stream",
  "async-trait",
  "axum",
+ "base64 0.22.1",
  "eventsource-stream",
  "futures",
  "reqwest",
@@ -34,9 +35,9 @@ dependencies = [
 
 [[package]]
 name = "agentix-macros"
-version = "0.4.0"
+version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fef266999e26cbcd39f0e0a9d022b7eba6bcc114bc79fe14f9e0f40e141cc9c2"
+checksum = "b82b310e153d4f7dd137d7d02bbdabf19fd273e2259f6a4cee1347e4adc4124e"
 dependencies = [
  "proc-macro2",
  "quote",

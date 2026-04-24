@@ -32,6 +32,7 @@ pub struct ModelRow {
     pub created_at: sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc>,
     pub compact_trigger_tokens: i64,
     pub compact_tail_tokens: i64,
+    pub reasoning_effort: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -49,6 +50,9 @@ pub struct ModelResponse {
     pub created_at: String,
     pub compact_trigger_tokens: i64,
     pub compact_tail_tokens: i64,
+    /// Null = leave provider default; one of
+    /// `'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'`.
+    pub reasoning_effort: Option<String>,
     // api_key intentionally omitted from responses
 }
 
@@ -68,6 +72,30 @@ impl From<ModelRow> for ModelResponse {
             created_at: r.created_at.to_rfc3339(),
             compact_trigger_tokens: r.compact_trigger_tokens,
             compact_tail_tokens: r.compact_tail_tokens,
+            reasoning_effort: r.reasoning_effort,
+        }
+    }
+}
+
+const VALID_REASONING_EFFORTS: &[&str] =
+    &["none", "minimal", "low", "medium", "high", "xhigh", "max"];
+
+/// Normalize incoming effort strings: treat empty/whitespace as null, and
+/// reject anything outside the known enum so a typo fails fast.
+fn normalize_reasoning_effort(raw: &Option<String>) -> AppResult<Option<String>> {
+    match raw {
+        None => Ok(None),
+        Some(s) => {
+            let trimmed = s.trim();
+            if trimmed.is_empty() {
+                return Ok(None);
+            }
+            if !VALID_REASONING_EFFORTS.contains(&trimmed) {
+                return Err(AppError::bad_request(
+                    "reasoning_effort 非法（仅允许 none/minimal/low/medium/high/xhigh/max 或留空）",
+                ));
+            }
+            Ok(Some(trimmed.to_string()))
         }
     }
 }
@@ -94,6 +122,9 @@ pub struct UpsertModelRequest {
     pub kind: String,
     pub compact_trigger_tokens: i64,
     pub compact_tail_tokens: i64,
+    /// Optional reasoning-effort hint. `None`/empty keeps provider default.
+    #[serde(default)]
+    pub reasoning_effort: Option<String>,
     // Admin-only knobs (optional; admin PUT applies them, user PUT ignores).
     #[serde(default)]
     pub role: Option<String>,
@@ -139,10 +170,11 @@ pub async fn create_model(
     auth: AuthUser,
     Json(req): Json<UpsertModelRequest>,
 ) -> AppResult<Json<ModelResponse>> {
+    let effort = normalize_reasoning_effort(&req.reasoning_effort)?;
     let row = sqlx::query_as::<_, ModelRow>(
         "INSERT INTO models (user_id, scope, label, provider, model_name, api_base, api_key, extra_body, kind,
-                             compact_trigger_tokens, compact_tail_tokens)
-         VALUES ($1, 'user', $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                             compact_trigger_tokens, compact_tail_tokens, reasoning_effort)
+         VALUES ($1, 'user', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
          RETURNING *",
     )
     .bind(auth.user_id)
@@ -155,6 +187,7 @@ pub async fn create_model(
     .bind(&req.kind)
     .bind(req.compact_trigger_tokens)
     .bind(req.compact_tail_tokens)
+    .bind(&effort)
     .fetch_one(&state.pool)
     .await?;
 
@@ -168,12 +201,14 @@ pub async fn update_model(
     Path(id): Path<Uuid>,
     Json(req): Json<UpsertModelRequest>,
 ) -> AppResult<Json<ModelResponse>> {
+    let effort = normalize_reasoning_effort(&req.reasoning_effort)?;
     let row = sqlx::query_as::<_, ModelRow>(
         "UPDATE models SET label=$1, provider=$2, model_name=$3, api_base=$4,
          api_key = CASE WHEN $5 = '' THEN api_key ELSE $5 END,
          extra_body=$6, kind=$7,
-         compact_trigger_tokens=$8, compact_tail_tokens=$9
-         WHERE id=$10 AND user_id=$11 AND scope='user'
+         compact_trigger_tokens=$8, compact_tail_tokens=$9,
+         reasoning_effort=$10
+         WHERE id=$11 AND user_id=$12 AND scope='user'
          RETURNING *",
     )
     .bind(&req.label)
@@ -185,6 +220,7 @@ pub async fn update_model(
     .bind(&req.kind)
     .bind(req.compact_trigger_tokens)
     .bind(req.compact_tail_tokens)
+    .bind(&effort)
     .bind(id)
     .bind(auth.user_id)
     .fetch_optional(&state.pool)
@@ -263,13 +299,14 @@ pub async fn admin_create_model(
             .await?;
     }
 
+    let effort = normalize_reasoning_effort(&req.reasoning_effort)?;
     let row = sqlx::query_as::<_, ModelRow>(
         "INSERT INTO models
            (user_id, scope, label, provider, model_name, api_base, api_key,
             extra_body, kind, role, initial_available, is_default,
-            compact_trigger_tokens, compact_tail_tokens)
+            compact_trigger_tokens, compact_tail_tokens, reasoning_effort)
          VALUES (NULL, 'global', $1, $2, $3, $4, $5, $6, $7,
-                 $8, COALESCE($9, true), COALESCE($10, false), $11, $12)
+                 $8, COALESCE($9, true), COALESCE($10, false), $11, $12, $13)
          RETURNING *",
     )
     .bind(&req.label)
@@ -284,6 +321,7 @@ pub async fn admin_create_model(
     .bind(req.is_default)
     .bind(req.compact_trigger_tokens)
     .bind(req.compact_tail_tokens)
+    .bind(&effort)
     .fetch_one(&mut *tx)
     .await?;
 
@@ -325,6 +363,7 @@ pub async fn admin_update_model(
     // admin-scoped fields directly. COALESCE wouldn't work for role: Option's
     // None ↔ JSON null conflation means sending `role: null` (to clear a
     // role) would read as "field omitted" and keep the old value.
+    let effort = normalize_reasoning_effort(&req.reasoning_effort)?;
     let row = sqlx::query_as::<_, ModelRow>(
         "UPDATE models SET label=$1, provider=$2, model_name=$3, api_base=$4,
          api_key = CASE WHEN $5 = '' THEN api_key ELSE $5 END,
@@ -333,8 +372,9 @@ pub async fn admin_update_model(
          initial_available = COALESCE($9, initial_available),
          is_default = COALESCE($10, is_default),
          compact_trigger_tokens = $11,
-         compact_tail_tokens    = $12
-         WHERE id=$13 AND scope='global'
+         compact_tail_tokens    = $12,
+         reasoning_effort       = $13
+         WHERE id=$14 AND scope='global'
          RETURNING *",
     )
     .bind(&req.label)
@@ -349,6 +389,7 @@ pub async fn admin_update_model(
     .bind(req.is_default)
     .bind(req.compact_trigger_tokens)
     .bind(req.compact_tail_tokens)
+    .bind(&effort)
     .bind(id)
     .fetch_optional(&mut *tx)
     .await?

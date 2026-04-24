@@ -51,6 +51,10 @@ pub struct MessageRow {
     /// summary; branches that don't traverse it fall back to raw history.
     pub summary_text: Option<String>,
     pub summary_tokens: Option<i32>,
+    /// Opaque per-turn provider state (e.g. Anthropic thinking blocks +
+    /// signatures). NULL for all rows except assistant turns produced by a
+    /// provider that emitted `LlmEvent::AssistantState`.
+    pub provider_data: Option<serde_json::Value>,
 }
 
 /// Provider-reported context size snapshot for a single model turn.
@@ -150,6 +154,7 @@ impl Db {
         reasoning: Option<&str>,
         tool_calls_json: Option<&str>,
         context: Option<MessageContext>,
+        provider_data: Option<&serde_json::Value>,
     ) -> anyhow::Result<()> {
         sqlx::query(
             "UPDATE messages
@@ -157,7 +162,8 @@ impl Db {
                  content               = COALESCE($2, content),
                  reasoning             = COALESCE($3, reasoning),
                  spell_casts           = $4,
-                 context_tokens        = $5
+                 context_tokens        = $5,
+                 provider_data         = COALESCE($6, provider_data)
              WHERE id = $1",
         )
         .bind(message_id)
@@ -165,6 +171,7 @@ impl Db {
         .bind(reasoning)
         .bind(tool_calls_json)
         .bind(context.map(|t| t.total))
+        .bind(provider_data)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -177,12 +184,13 @@ impl Db {
         msg: &Message,
         embedding: Option<Vector>,
     ) -> anyhow::Result<i64> {
-        let (role, content, tool_calls_json, tool_call_id, reasoning): (
+        let (role, content, tool_calls_json, tool_call_id, reasoning, provider_data): (
             &str,
             Option<String>,
             Option<String>,
             Option<String>,
             Option<String>,
+            Option<serde_json::Value>,
         ) = match msg {
             Message::User(parts) => {
                 let has_images = parts.iter().any(|p| matches!(p, UserContent::Image(_)));
@@ -236,12 +244,13 @@ impl Db {
                         .collect::<Vec<_>>()
                         .join("")
                 };
-                ("user", Some(content), None, None, None)
+                ("user", Some(content), None, None, None, None)
             }
             Message::Assistant {
                 content,
                 reasoning,
                 tool_calls,
+                provider_data,
             } => {
                 let tc_json = if tool_calls.is_empty() {
                     None
@@ -254,6 +263,7 @@ impl Db {
                     tc_json,
                     None,
                     reasoning.clone(),
+                    provider_data.clone(),
                 )
             }
             Message::ToolResult { call_id, content } => {
@@ -302,7 +312,7 @@ impl Db {
                 } else {
                     serde_json::to_string(content).unwrap_or_default()
                 };
-                ("tool", Some(serialized), None, Some(call_id.clone()), None)
+                ("tool", Some(serialized), None, Some(call_id.clone()), None, None)
             }
         };
         let now = unix_now();
@@ -320,8 +330,9 @@ impl Db {
             r#"
             INSERT INTO messages
                 (conversation_id, role, name, content, spell_casts, spell_cast_id,
-                 reasoning, created_at, embedding, parent_id, streaming, job_id)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, false, NULL)
+                 reasoning, created_at, embedding, parent_id, streaming, job_id,
+                 provider_data)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, false, NULL, $11)
             RETURNING id
             "#,
         )
@@ -335,6 +346,7 @@ impl Db {
         .bind(now)
         .bind(&embedding)
         .bind(parent_id)
+        .bind(&provider_data)
         .fetch_one(&mut *tx)
         .await?;
 
@@ -429,7 +441,7 @@ impl Db {
                 SELECT m.id, m.conversation_id, m.role, m.name, m.content,
                        m.spell_casts, m.spell_cast_id, m.reasoning,
                        m.created_at, m.parent_id, m.streaming, m.job_id,
-                       m.summary_text, m.summary_tokens
+                       m.summary_text, m.summary_tokens, m.provider_data
                 FROM messages m
                 JOIN conversations c ON c.id = $1
                 WHERE m.id = c.active_message_id
@@ -437,14 +449,14 @@ impl Db {
                 SELECT m.id, m.conversation_id, m.role, m.name, m.content,
                        m.spell_casts, m.spell_cast_id, m.reasoning,
                        m.created_at, m.parent_id, m.streaming, m.job_id,
-                       m.summary_text, m.summary_tokens
+                       m.summary_text, m.summary_tokens, m.provider_data
                 FROM messages m
                 JOIN branch b ON m.id = b.parent_id
             )
             SELECT b.id, b.conversation_id, b.role, b.name, b.content,
                    b.spell_casts, b.spell_cast_id, b.reasoning, b.created_at,
                    b.parent_id, b.streaming, b.job_id,
-                   b.summary_text, b.summary_tokens,
+                   b.summary_text, b.summary_tokens, b.provider_data,
                    COALESCE(
                        (SELECT array_agg(s.id ORDER BY s.id ASC)
                         FROM messages s
@@ -477,6 +489,7 @@ impl Db {
                     job_id: r.job_id,
                     summary_text: r.summary_text,
                     summary_tokens: r.summary_tokens,
+                    provider_data: r.provider_data,
                 },
                 r.siblings,
             )
@@ -529,7 +542,7 @@ impl Db {
                 SELECT m.id, m.conversation_id, m.role, m.name, m.content,
                        m.spell_casts, m.spell_cast_id, m.reasoning,
                        m.created_at, m.parent_id, m.streaming, m.job_id,
-                       m.summary_text, m.summary_tokens
+                       m.summary_text, m.summary_tokens, m.provider_data
                 FROM messages m
                 JOIN conversations c ON c.id = $1
                 WHERE m.id = c.active_message_id AND m.id > $2
@@ -537,14 +550,14 @@ impl Db {
                 SELECT m.id, m.conversation_id, m.role, m.name, m.content,
                        m.spell_casts, m.spell_cast_id, m.reasoning,
                        m.created_at, m.parent_id, m.streaming, m.job_id,
-                       m.summary_text, m.summary_tokens
+                       m.summary_text, m.summary_tokens, m.provider_data
                 FROM messages m
                 JOIN branch b ON m.id = b.parent_id
                 WHERE m.id > $2
             )
             SELECT id, conversation_id, role, name, content,
                    spell_casts, spell_cast_id, reasoning, created_at, parent_id,
-                   streaming, job_id, summary_text, summary_tokens
+                   streaming, job_id, summary_text, summary_tokens, provider_data
             FROM branch
             WHERE streaming = false
               AND NOT (role = 'assistant'
@@ -571,7 +584,8 @@ impl Db {
             r#"
             SELECT id, conversation_id, role, name, content,
                    spell_casts, spell_cast_id, reasoning, created_at,
-                   parent_id, streaming, job_id, summary_text, summary_tokens
+                   parent_id, streaming, job_id, summary_text, summary_tokens,
+                   provider_data
             FROM messages
             WHERE conversation_id = $1
               AND content_tsv @@ plainto_tsquery('simple', $2)
@@ -599,6 +613,7 @@ impl Db {
             SELECT id, conversation_id, role, name, content,
                    spell_casts, spell_cast_id, reasoning, created_at,
                    parent_id, streaming, job_id, summary_text, summary_tokens,
+                   provider_data,
                    (1 - (embedding <=> $2))::float4 AS similarity
             FROM messages
             WHERE conversation_id = $1
@@ -630,6 +645,7 @@ impl Db {
                     job_id: r.job_id,
                     summary_text: r.summary_text,
                     summary_tokens: r.summary_tokens,
+                    provider_data: r.provider_data,
                 },
                 r.similarity,
             )
@@ -658,6 +674,7 @@ struct SiblingRow {
     job_id: Option<Uuid>,
     summary_text: Option<String>,
     summary_tokens: Option<i32>,
+    provider_data: Option<serde_json::Value>,
     siblings: Vec<i64>,
 }
 
@@ -677,6 +694,7 @@ struct SemanticRow {
     job_id: Option<Uuid>,
     summary_text: Option<String>,
     summary_tokens: Option<i32>,
+    provider_data: Option<serde_json::Value>,
     similarity: f32,
 }
 
@@ -727,6 +745,7 @@ pub fn row_to_message(row: MessageRow) -> Message {
                 content: row.content,
                 reasoning: row.reasoning,
                 tool_calls,
+                provider_data: row.provider_data,
             }
         }
         _ => {

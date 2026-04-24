@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { api } from "../api/client";
-import type { Model, UpsertModelRequest } from "../api/types";
+import type { Model, ReasoningEffort, UpsertModelRequest } from "../api/types";
 import { ProviderSelector } from "./ProviderSelector";
 import styles from "./AdminModelsPanel.module.css";
 
@@ -14,7 +14,19 @@ const EMPTY_FORM: UpsertModelRequest = {
   api_key: "",
   compact_trigger_tokens: 50000,
   compact_tail_tokens: 16000,
+  reasoning_effort: null,
 };
+
+const REASONING_EFFORT_OPTIONS: { value: "" | ReasoningEffort; label: string }[] = [
+  { value: "", label: "默认（不设置）" },
+  { value: "none", label: "none — 显式关闭思考" },
+  { value: "minimal", label: "minimal" },
+  { value: "low", label: "low" },
+  { value: "medium", label: "medium" },
+  { value: "high", label: "high" },
+  { value: "xhigh", label: "xhigh" },
+  { value: "max", label: "max" },
+];
 
 interface Props {
   token: string;
@@ -63,6 +75,7 @@ export function UserModelsPanel({ token }: Props) {
       kind: m.kind,
       compact_trigger_tokens: m.compact_trigger_tokens,
       compact_tail_tokens: m.compact_tail_tokens,
+      reasoning_effort: m.reasoning_effort,
     });
     setEditing(m.id);
     setError("");
@@ -172,6 +185,25 @@ export function UserModelsPanel({ token }: Props) {
           }
           placeholder="16000"
         />
+      </div>
+      <div className={styles.row}>
+        <label>reasoning_effort</label>
+        <select
+          value={form.reasoning_effort ?? ""}
+          onChange={(e) =>
+            setForm({
+              ...form,
+              reasoning_effort:
+                e.target.value === "" ? null : (e.target.value as ReasoningEffort),
+            })
+          }
+        >
+          {REASONING_EFFORT_OPTIONS.map((opt) => (
+            <option key={opt.value || "_default"} value={opt.value}>
+              {opt.label}
+            </option>
+          ))}
+        </select>
       </div>
       <div className={styles.actions}>
         <button className={styles.saveBtn} onClick={save} disabled={saving}>
