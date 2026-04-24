@@ -258,9 +258,9 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
         crate::prompt_template::render_prompt(&raw, &[("USER_NAME", &user_name)])
     };
 
-    // ── Append memory section ────────────────────────────────────────────
+    let mut reminder_sections: Vec<String> = Vec::new();
     if let Some(mem) = &mem_section {
-        system_prompt.push_str(mem);
+        reminder_sections.push(mem.trim().to_string());
     }
 
     // ── Append skills ─────────────────────────────────────────────────────
@@ -322,10 +322,18 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
     .unwrap_or(None);
 
     if let Some((plan_title, plan_steps)) = plan_row {
-        system_prompt.push_str(&format!(
-            "\n\n## 当前执行计划\n标题：{plan_title}\n步骤（JSON）：{plan_steps}\n\n每次更新步骤状态时，调用 todo_list 工具同步最新进度。"
+        reminder_sections.push(format!(
+            "## 当前执行计划\n标题：{plan_title}\n步骤（JSON）：{plan_steps}\n\n每次更新步骤状态时，调用 todo_list 工具同步最新进度。"
         ));
     }
+    let runtime_reminder = if reminder_sections.is_empty() {
+        None
+    } else {
+        Some(format!(
+            "<runtime_context>\n以下内容由运行时注入，不是用户原话。它描述当前记忆、计划和会话状态；回答时自然使用，不要复述标签。\n\n{}\n</runtime_context>",
+            reminder_sections.join("\n\n")
+        ))
+    };
 
     // ── Load history from DB (summary + recent tail, transparently) ──────
     let t_restore = std::time::Instant::now();
@@ -405,7 +413,10 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
     // ── Run the LLM ↔ tool-call loop ─────────────────────────────────────
     // ModelConfig::to_request maps kind="claude-code" to Provider::ClaudeCode,
     // so every provider can share the same streaming/tool/persistence loop.
-    let request = frontier_cfg.to_request().system_prompt(system_prompt);
+    let mut request = frontier_cfg.to_request().system_prompt(system_prompt);
+    if let Some(reminder) = runtime_reminder {
+        request = request.reminder(reminder);
+    }
     let http = reqwest::Client::new();
     generation_loop(ctx, &http, &request, messages, &bundle, frontier_cfg).await
 }
