@@ -150,18 +150,31 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
         }
 
         // 1. conversation-level model_id
-        // Defense-in-depth: silently ignore admin_only models dispatched by
-        // non-admins. The UI filter + create_conversation guard should catch
-        // this upstream; here we fall through to the default-model branch so
-        // the job still completes rather than 500-ing.
+        // Defense-in-depth: silently ignore models not available to the
+        // conversation owner. The UI filter + create_conversation guard should
+        // catch this upstream; here we fall through to the default-model branch
+        // so the job still completes rather than 500-ing.
         let conv_model: Option<(String, String, String, String, Value, String, i64, i64)> =
             sqlx::query_as(
                 "SELECT m.provider, m.model_name, m.api_base, m.api_key, m.extra_body, m.kind,
                     m.compact_trigger_tokens, m.compact_tail_tokens
              FROM conversations c
              JOIN models m ON m.id = c.model_id
-             JOIN users u ON u.id = c.user_id
-             WHERE c.id = $1 AND (NOT m.admin_only OR u.is_admin)",
+             WHERE c.id = $1
+               AND (
+                    (m.scope = 'user' AND m.user_id = c.user_id)
+                    OR (
+                        m.scope = 'global'
+                        AND COALESCE(
+                            (
+                                SELECT allowed
+                                FROM user_model_permissions ump
+                                WHERE ump.user_id = c.user_id AND ump.model_id = m.id
+                            ),
+                            m.initial_available
+                        )
+                    )
+               )",
             )
             .bind(ctx.conversation_id)
             .fetch_optional(&ctx.pool)
@@ -179,8 +192,20 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
                 sqlx::query_as(
                     "SELECT provider, model_name, api_base, api_key, extra_body, kind,
                         compact_trigger_tokens, compact_tail_tokens
-                 FROM models WHERE scope = 'global' AND is_default = true LIMIT 1",
+                 FROM models
+                 WHERE scope = 'global'
+                   AND is_default = true
+                   AND COALESCE(
+                        (
+                            SELECT allowed
+                            FROM user_model_permissions ump
+                            WHERE ump.user_id = $1 AND ump.model_id = models.id
+                        ),
+                        initial_available
+                   )
+                 LIMIT 1",
                 )
+                .bind(ctx.user_id)
                 .fetch_optional(&ctx.pool)
                 .await
                 .unwrap_or(None);
@@ -304,7 +329,7 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
 
     // ── Load history from DB (summary + recent tail, transparently) ──────
     let t_restore = std::time::Instant::now();
-    let mut messages = match crate::compact::load_for_generation(
+    let messages = match crate::compact::load_for_generation(
         &ctx.db,
         &frontier_cfg,
         ctx.conversation_id,
@@ -378,32 +403,11 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
     }
 
     // ── Run the LLM ↔ tool-call loop ─────────────────────────────────────
-    // Branch on model kind: API providers run the in-process loop via HTTP
-    // streaming; 'claude-code' drives `claude -p` subprocess and consumes
-    // its AgentEvent stream.
-    //
-    // Compact runs at turn boundaries inside generation_loop for the API
-    // path; for claude-code (subprocess owns the tool loop) it fires once
-    // before the run.
-    if frontier_cfg.kind == "claude-code" {
-        let http = reqwest::Client::new();
-        if crate::compact::maybe_compact(ctx, &frontier_cfg, &http).await {
-            messages = crate::compact::load_for_generation(
-                &ctx.db,
-                &frontier_cfg,
-                ctx.conversation_id,
-                ctx.user_id,
-            )
-            .await
-            .map(sanitize_history)
-            .unwrap_or(messages);
-        }
-        generation_loop_claude_code(ctx, &frontier_cfg, system_prompt, messages, bundle, http).await
-    } else {
-        let request = frontier_cfg.to_request().system_prompt(system_prompt);
-        let http = reqwest::Client::new();
-        generation_loop(ctx, &http, &request, messages, &bundle, frontier_cfg).await
-    }
+    // ModelConfig::to_request maps kind="claude-code" to Provider::ClaudeCode,
+    // so every provider can share the same streaming/tool/persistence loop.
+    let request = frontier_cfg.to_request().system_prompt(system_prompt);
+    let http = reqwest::Client::new();
+    generation_loop(ctx, &http, &request, messages, &bundle, frontier_cfg).await
 }
 
 // ── Generation loop ───────────────────────────────────────────────────────────
@@ -824,343 +828,6 @@ async fn generation_loop(
         }
 
         // Loop back → send tool results to LLM
-    }
-
-    Ok(())
-}
-
-// ── claude-code generation loop ───────────────────────────────────────────────
-//
-// For kind='claude-code' models: drive `Provider::ClaudeCode` through
-// agentix's standard `agent()` loop instead of the plain HTTP path. Under the
-// hood that still shells out to `claude -p`; we just consume the resulting
-// AgentEvent stream and persist / emit the same SSE shape as `generation_loop`
-// so frontend code doesn't care.
-//
-// Turn boundary: claude emits Token… ToolCallStart… ToolResult… then more
-// Token…; when a Token arrives after a ToolResult it belongs to a new
-// assistant turn. We seal the previous streaming row at that transition.
-async fn generation_loop_claude_code(
-    ctx: &WorkerContext,
-    frontier_cfg: &ModelConfig,
-    system_prompt: String,
-    mut messages: Vec<Message>,
-    bundle: ToolBundle,
-    http: reqwest::Client,
-) -> anyhow::Result<()> {
-    use agentix::{AgentEvent, agent};
-
-    let history_budget = (frontier_cfg.compact_trigger_tokens * 5 / 4) as usize;
-    agentix::truncate_to_token_budget(&mut messages, history_budget);
-
-    let request = frontier_cfg.to_request().system_prompt(system_prompt);
-    let mut stream = agent(bundle, http, request, messages, Some(history_budget));
-
-    // Current assistant-turn accumulators.
-    let mut streaming_msg_id = ctx
-        .db
-        .append_streaming(ctx.conversation_id, ctx.job_id)
-        .await
-        .map_err(|e| anyhow::anyhow!("append_streaming failed: {e}"))?;
-    let mut reply_buf = String::new();
-    let mut reasoning_buf = String::new();
-    let mut tool_calls_buf: Vec<agentix::ToolCall> = Vec::new();
-    let mut token_count: u32 = 0;
-    let mut new_turn_pending = false;
-
-    let mut usage = UsageStats::default();
-    let mut ttft_logged = false;
-    let t_llm = std::time::Instant::now();
-
-    loop {
-        // Interleave abort checks with stream reads — a claude tool turn can
-        // stall the stream for seconds while our MCP server runs a spell.
-        let next = tokio::select! {
-            biased;
-            ev = stream.next() => ev,
-            _ = tokio::time::sleep(Duration::from_millis(500)) => {
-                if check_stop_reason(&ctx.pool, ctx.job_id).await.is_some() {
-                    let _ = ctx
-                        .db
-                        .seal_streaming_message(
-                            streaming_msg_id,
-                            if reply_buf.is_empty() { None } else { Some(&reply_buf) },
-                            if reasoning_buf.is_empty() { None } else { Some(&reasoning_buf) },
-                            None,
-                            crate::db::MessageContext::from_usage(&usage),
-                        )
-                        .await;
-                    emit(ctx, json!({"type": "aborted"})).await;
-                    set_job_status(&ctx.pool, ctx.job_id, "aborted", None).await;
-                    // Dropping the stream aborts the subprocess + MCP server.
-                    drop(stream);
-                    return Ok(());
-                }
-                continue;
-            }
-        };
-
-        let Some(event) = next else { break };
-
-        // New-turn transition: Token/Reasoning after a ToolResult means claude
-        // started a fresh assistant turn. Seal the previous streaming row
-        // before we append to the new turn.
-        if new_turn_pending && matches!(event, AgentEvent::Token(_) | AgentEvent::Reasoning(_)) {
-            // Drop tool calls whose arguments aren't complete JSON objects.
-            tool_calls_buf.retain(|tc| {
-                serde_json::from_str::<serde_json::Value>(&tc.arguments)
-                    .map(|v| v.is_object())
-                    .unwrap_or(false)
-            });
-            let tc_json = if tool_calls_buf.is_empty() {
-                None
-            } else {
-                serde_json::to_string(&tool_calls_buf).ok()
-            };
-            let _ = ctx
-                .db
-                .seal_streaming_message(
-                    streaming_msg_id,
-                    if reply_buf.is_empty() {
-                        None
-                    } else {
-                        Some(&reply_buf)
-                    },
-                    if reasoning_buf.is_empty() {
-                        None
-                    } else {
-                        Some(&reasoning_buf)
-                    },
-                    tc_json.as_deref(),
-                    crate::db::MessageContext::from_usage(&usage),
-                )
-                .await;
-            if !reply_buf.is_empty() {
-                embed_message_async(ctx, streaming_msg_id, reply_buf.clone());
-            }
-            reply_buf.clear();
-            reasoning_buf.clear();
-            tool_calls_buf.clear();
-            token_count = 0;
-            new_turn_pending = false;
-            streaming_msg_id = ctx
-                .db
-                .append_streaming(ctx.conversation_id, ctx.job_id)
-                .await
-                .map_err(|e| anyhow::anyhow!("append_streaming failed: {e}"))?;
-        }
-
-        match event {
-            AgentEvent::Token(t) => {
-                if !ttft_logged {
-                    ttft_logged = true;
-                    let ttft = t_llm.elapsed().as_millis() as i64;
-                    info!(ms = ttft, "⏱ TTFT (first token, claude-code)");
-                    record_job_latency(&ctx.pool, ctx.job_id, Some(ttft), None, None, None).await;
-                }
-                reply_buf.push_str(&t);
-                emit(ctx, json!({"type": "token", "content": t})).await;
-                token_count += 1;
-                if token_count.is_multiple_of(10) {
-                    let _ = ctx
-                        .db
-                        .update_streaming_content(streaming_msg_id, &reply_buf, &reasoning_buf)
-                        .await;
-                }
-            }
-            AgentEvent::Reasoning(t) => {
-                reasoning_buf.push_str(&t);
-                emit(ctx, json!({"type": "reasoning_token", "content": t})).await;
-            }
-            AgentEvent::ToolCallChunk(c) => {
-                emit(
-                    ctx,
-                    json!({"type": "tool_call", "id": c.id, "name": c.name, "delta": c.delta}),
-                )
-                .await;
-            }
-            AgentEvent::ToolCallStart(tc) => {
-                // Claude-code's stream-json doesn't chunk tool args — we get
-                // a single completed ToolCall. Emit tool_call with the full
-                // arguments as `delta` so the frontend creates a bubble (its
-                // handler only runs on tool_call, not tool_call_complete).
-                emit(
-                    ctx,
-                    json!({"type": "tool_call", "id": tc.id, "name": tc.name, "delta": tc.arguments}),
-                )
-                .await;
-                emit(
-                    ctx,
-                    json!({"type": "tool_call_complete", "id": tc.id, "name": tc.name}),
-                )
-                .await;
-                tool_calls_buf.push(tc);
-            }
-            AgentEvent::ToolProgress { id, name, progress } => {
-                emit(
-                    ctx,
-                    json!({"type": "tool_progress", "id": id, "name": name, "progress": progress}),
-                )
-                .await;
-            }
-            AgentEvent::ToolResult { id, name, content } => {
-                let tool_result_msg = Message::ToolResult {
-                    call_id: id.clone(),
-                    content: content.clone(),
-                };
-                persist_msg(ctx, &tool_result_msg).await;
-
-                let result_json: Value = content
-                    .iter()
-                    .find_map(|p| {
-                        if let agentix::Content::Text { text } = p {
-                            serde_json::from_str(text).ok()
-                        } else {
-                            None
-                        }
-                    })
-                    .unwrap_or(Value::Null);
-
-                let mut sse_images: Vec<Value> = Vec::new();
-                for part in &content {
-                    if let agentix::Content::Image(img) = part {
-                        use base64::Engine as _;
-                        let data_uri = match &img.data {
-                            agentix::request::ImageData::Url(u)
-                                if u.starts_with("__sandbox__:") =>
-                            {
-                                let filename = &u["__sandbox__:".len()..];
-                                let file_path = ctx
-                                    .sandbox
-                                    .get_conversation_dir(ctx.user_id, ctx.conversation_id)
-                                    .join(filename);
-                                match tokio::fs::read(&file_path).await {
-                                    Ok(bytes) => Some(format!(
-                                        "data:{};base64,{}",
-                                        img.mime_type,
-                                        base64::engine::general_purpose::STANDARD.encode(&bytes)
-                                    )),
-                                    Err(_) => None,
-                                }
-                            }
-                            agentix::request::ImageData::Url(u) => Some(u.clone()),
-                            agentix::request::ImageData::Base64(b) => {
-                                Some(format!("data:{};base64,{}", img.mime_type, b))
-                            }
-                        };
-                        if let Some(uri) = data_uri {
-                            sse_images.push(json!({"url": uri, "mime_type": img.mime_type}));
-                        }
-                    }
-                }
-
-                let mut payload =
-                    json!({"type": "tool_result", "id": id, "name": name, "result": result_json});
-                if !sse_images.is_empty() {
-                    payload["images"] = Value::Array(sse_images);
-                }
-                emit(ctx, payload).await;
-
-                if result_json.get("__ask__").and_then(|v| v.as_bool()) == Some(true) {
-                    emit(
-                        ctx,
-                        json!({
-                            "type": "ask",
-                            "question": result_json.get("question").and_then(|v| v.as_str()).unwrap_or(""),
-                            "description": result_json.get("description"),
-                            "options": result_json.get("options"),
-                        }),
-                    )
-                    .await;
-                    let _ = ctx
-                        .db
-                        .seal_streaming_message(
-                            streaming_msg_id,
-                            if reply_buf.is_empty() {
-                                None
-                            } else {
-                                Some(&reply_buf)
-                            },
-                            if reasoning_buf.is_empty() {
-                                None
-                            } else {
-                                Some(&reasoning_buf)
-                            },
-                            None,
-                            crate::db::MessageContext::from_usage(&usage),
-                        )
-                        .await;
-                    drop(stream);
-                    return Ok(());
-                }
-
-                new_turn_pending = true;
-            }
-            AgentEvent::Usage(u) => {
-                usage += u.clone();
-                persist_usage_event(ctx, streaming_msg_id, &u).await;
-            }
-            AgentEvent::Warning(w) => {
-                warn!(conversation = %ctx.conversation_id, "claude-code warning: {w}");
-            }
-            AgentEvent::Done(_) => {
-                break;
-            }
-            AgentEvent::Error(e) => {
-                error!(conversation = %ctx.conversation_id, "claude-code error: {e}");
-                let _ = ctx
-                    .db
-                    .seal_streaming_message(streaming_msg_id, None, None, None, None)
-                    .await;
-                return Err(anyhow::anyhow!("{e}"));
-            }
-        }
-    }
-
-    // Seal the final assistant turn.
-    tool_calls_buf.retain(|tc| {
-        serde_json::from_str::<serde_json::Value>(&tc.arguments)
-            .map(|v| v.is_object())
-            .unwrap_or(false)
-    });
-    let tc_json = if tool_calls_buf.is_empty() {
-        None
-    } else {
-        serde_json::to_string(&tool_calls_buf).ok()
-    };
-    let _ = ctx
-        .db
-        .seal_streaming_message(
-            streaming_msg_id,
-            if reply_buf.is_empty() {
-                None
-            } else {
-                Some(&reply_buf)
-            },
-            if reasoning_buf.is_empty() {
-                None
-            } else {
-                Some(&reasoning_buf)
-            },
-            tc_json.as_deref(),
-            crate::db::MessageContext::from_usage(&usage),
-        )
-        .await;
-    if !reply_buf.is_empty() {
-        embed_message_async(ctx, streaming_msg_id, reply_buf);
-    }
-
-    if usage.total_tokens > 0 {
-        emit(
-            ctx,
-            json!({
-                "type": "usage",
-                "prompt_tokens": usage.prompt_tokens,
-                "completion_tokens": usage.completion_tokens,
-                "total_tokens": usage.total_tokens,
-            }),
-        )
-        .await;
     }
 
     Ok(())

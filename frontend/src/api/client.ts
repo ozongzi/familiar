@@ -78,6 +78,8 @@ import type {
   SearchResult,
   Model,
   UpsertModelRequest,
+  ModelPermissionsResponse,
+  UpdateModelPermissionsRequest,
 } from "./types";
 
 export const api = {
@@ -260,6 +262,14 @@ export const api = {
 
   adminDeleteModel(token: string, id: string) {
     return del<{ ok: boolean }>(`/api/admin/models/${id}`, token);
+  },
+
+  getModelPermissions(token: string) {
+    return get<ModelPermissionsResponse>("/api/admin/model-permissions", token);
+  },
+
+  updateModelPermissions(token: string, body: UpdateModelPermissionsRequest) {
+    return request<{ ok: boolean }>("PUT", "/api/admin/model-permissions", body, token);
   },
 
   // ── MCPs ─────────────────────────────────────────────────────────────────
