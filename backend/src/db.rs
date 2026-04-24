@@ -797,77 +797,35 @@ async fn resolve_sandbox_images(
 ) {
     let conv_dir = sandbox.get_conversation_dir(user_id, conversation_id);
 
-    // Find the last image part across all messages — any format (sandbox URL
-    // or inline base64). Only that one is kept; all earlier images are
-    // replaced with a text note so the model knows where to find them.
-    let last_img_pos: Option<(usize, usize)> = messages
-        .iter()
-        .enumerate()
-        .flat_map(|(mi, msg)| {
-            let parts: &[UserContent] = match msg {
-                Message::User(p) => p,
-                Message::ToolResult { content, .. } => content,
-                _ => &[],
-            };
-            parts.iter().enumerate().filter_map(move |(pi, p)| {
-                if matches!(p, UserContent::Image(_)) {
-                    Some((mi, pi))
-                } else {
-                    None
-                }
-            })
-        })
-        .last();
-
-    let Some((keep_mi, keep_pi)) = last_img_pos else {
-        return;
-    };
-
-    for (mi, msg) in messages.iter_mut().enumerate() {
+    for msg in messages.iter_mut() {
         let parts: &mut Vec<UserContent> = match msg {
             Message::User(p) => p,
             Message::ToolResult { content, .. } => content,
             _ => continue,
         };
-        for (pi, part) in parts.iter_mut().enumerate() {
+        for part in parts.iter_mut() {
             let UserContent::Image(img) = part else {
                 continue;
             };
 
-            if mi == keep_mi && pi == keep_pi {
-                // Latest image: resolve __sandbox__: → base64 if needed.
-                if let ImageData::Url(url) = &img.data {
-                    if let Some(filename) = url.strip_prefix("__sandbox__:") {
-                        let path = conv_dir.join(filename);
-                        match tokio::fs::read(&path).await {
-                            Ok(bytes) => {
-                                // Re-detect mime type from magic bytes so a
-                                // mismatched stored type (e.g. image/png for a
-                                // JPEG file) doesn't cause provider 400 errors.
-                                if let Some(detected) = mime_from_bytes(&bytes) {
-                                    img.mime_type = detected.to_string();
-                                }
-                                img.data = ImageData::Base64(
-                                    base64::engine::general_purpose::STANDARD.encode(&bytes),
-                                );
-                            }
-                            Err(e) => tracing::warn!(?path, "sandbox image read failed: {e}"),
+            if let ImageData::Url(url) = &img.data
+                && let Some(filename) = url.strip_prefix("__sandbox__:")
+            {
+                let path = conv_dir.join(filename);
+                match tokio::fs::read(&path).await {
+                    Ok(bytes) => {
+                        // Re-detect mime type from magic bytes so a mismatched
+                        // stored type (e.g. image/png for a JPEG file) doesn't
+                        // cause provider 400 errors.
+                        if let Some(detected) = mime_from_bytes(&bytes) {
+                            img.mime_type = detected.to_string();
                         }
+                        img.data = ImageData::Base64(
+                            base64::engine::general_purpose::STANDARD.encode(&bytes),
+                        );
                     }
+                    Err(e) => tracing::warn!(?path, "sandbox image read failed: {e}"),
                 }
-                // Already base64 — leave as-is.
-            } else {
-                // Older image: replace with a text note giving the sandbox path.
-                let sandbox_path = match &img.data {
-                    ImageData::Url(u) if u.starts_with("__sandbox__:") => {
-                        format!("/workspace/{}", &u["__sandbox__:".len()..])
-                    }
-                    ImageData::Url(u) => u.clone(),
-                    ImageData::Base64(_) => "(inline image)".to_string(),
-                };
-                *part = UserContent::Text {
-                    text: format!("[图片未显示，已存储于 {sandbox_path}，如需查看可使用 read]"),
-                };
             }
         }
     }
