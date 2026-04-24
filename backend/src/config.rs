@@ -49,6 +49,10 @@ pub struct ModelConfig {
     /// Tokens of recent history kept raw after a compaction (the live tail).
     #[serde(default = "default_compact_tail")]
     pub compact_tail_tokens: i64,
+    /// Cross-provider thinking-mode dial. `None` keeps the provider default;
+    /// `Some(ReasoningEffort::None)` explicitly disables thinking.
+    #[serde(default)]
+    pub reasoning_effort: Option<agentix::ReasoningEffort>,
 }
 
 fn default_compact_trigger() -> i64 {
@@ -70,14 +74,16 @@ impl ModelConfig {
         } else {
             self.provider
         };
-        let req = agentix::Request::new(provider, &self.api_key)
+        let mut req = agentix::Request::new(provider, &self.api_key)
             .base_url(&self.api_base)
             .model(&self.name);
         if let Some(mt) = self.max_tokens {
-            req.max_tokens(mt)
-        } else {
-            req
+            req = req.max_tokens(mt);
         }
+        if let Some(effort) = self.reasoning_effort {
+            req = req.reasoning_effort(effort);
+        }
+        req
     }
 }
 
@@ -127,6 +133,22 @@ impl EnvConfig {
     }
 }
 
+/// Parse the `reasoning_effort` TEXT column into the typed enum. Treats
+/// unknown/invalid values as unset so a bad DB write never crashes the worker.
+pub fn parse_reasoning_effort(s: Option<&str>) -> Option<agentix::ReasoningEffort> {
+    use agentix::ReasoningEffort;
+    match s? {
+        "none" => Some(ReasoningEffort::None),
+        "minimal" => Some(ReasoningEffort::Minimal),
+        "low" => Some(ReasoningEffort::Low),
+        "medium" => Some(ReasoningEffort::Medium),
+        "high" => Some(ReasoningEffort::High),
+        "xhigh" => Some(ReasoningEffort::XHigh),
+        "max" => Some(ReasoningEffort::Max),
+        _ => None,
+    }
+}
+
 fn default_model() -> ModelConfig {
     ModelConfig {
         api_key: String::new(),
@@ -138,6 +160,7 @@ fn default_model() -> ModelConfig {
         kind: "api".to_string(),
         compact_trigger_tokens: default_compact_trigger(),
         compact_tail_tokens: default_compact_tail(),
+        reasoning_effort: None,
     }
 }
 
@@ -198,15 +221,16 @@ impl Config {
             .collect();
 
         // ── Load cheap model from models table ────────────────────────────
-        let cheap: Option<(String, String, String, String, Value, i64, i64)> = sqlx::query_as(
-            "SELECT provider, model_name, api_base, api_key, extra_body,
-                    compact_trigger_tokens, compact_tail_tokens
+        let cheap: Option<(String, String, String, String, Value, i64, i64, Option<String>)> =
+            sqlx::query_as(
+                "SELECT provider, model_name, api_base, api_key, extra_body,
+                    compact_trigger_tokens, compact_tail_tokens, reasoning_effort
              FROM models WHERE scope = 'global' AND role = 'cheap' LIMIT 1",
-        )
-        .fetch_optional(pool)
-        .await?;
+            )
+            .fetch_optional(pool)
+            .await?;
 
-        if let Some((provider, name, api_base, api_key, extra_body, trig, tail)) = cheap {
+        if let Some((provider, name, api_base, api_key, extra_body, trig, tail, effort)) = cheap {
             cfg.cheap_model = ModelConfig {
                 provider: serde_json::from_value(Value::String(provider))
                     .unwrap_or(Provider::DeepSeek),
@@ -221,19 +245,21 @@ impl Config {
                 kind: "api".to_string(),
                 compact_trigger_tokens: trig,
                 compact_tail_tokens: tail,
+                reasoning_effort: parse_reasoning_effort(effort.as_deref()),
             };
         }
 
         // ── Load embedding model from models table ────────────────────────
-        let embed: Option<(String, String, String, String, Value, i64, i64)> = sqlx::query_as(
-            "SELECT provider, model_name, api_base, api_key, extra_body,
-                    compact_trigger_tokens, compact_tail_tokens
+        let embed: Option<(String, String, String, String, Value, i64, i64, Option<String>)> =
+            sqlx::query_as(
+                "SELECT provider, model_name, api_base, api_key, extra_body,
+                    compact_trigger_tokens, compact_tail_tokens, reasoning_effort
              FROM models WHERE scope = 'global' AND role = 'embedding' LIMIT 1",
-        )
-        .fetch_optional(pool)
-        .await?;
+            )
+            .fetch_optional(pool)
+            .await?;
 
-        if let Some((provider, name, api_base, api_key, extra_body, trig, tail)) = embed {
+        if let Some((provider, name, api_base, api_key, extra_body, trig, tail, effort)) = embed {
             cfg.embedding = ModelConfig {
                 provider: serde_json::from_value(Value::String(provider))
                     .unwrap_or(Provider::DeepSeek),
@@ -248,6 +274,7 @@ impl Config {
                 kind: "api".to_string(),
                 compact_trigger_tokens: trig,
                 compact_tail_tokens: tail,
+                reasoning_effort: parse_reasoning_effort(effort.as_deref()),
             };
         }
 

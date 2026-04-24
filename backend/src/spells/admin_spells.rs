@@ -120,6 +120,7 @@ mod tests {
     use super::*;
     use agentix::Tool as _;
     use futures::StreamExt;
+    use serde_json::Value;
     use sqlx::{Executor, postgres::PgPoolOptions};
 
     /// Per-test database handle. Call `.cleanup().await` at the end of a

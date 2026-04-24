@@ -50,6 +50,18 @@ export interface CreateConversationRequest {
 
 export type ModelKind = "api" | "claude-code";
 
+/// Cross-provider thinking-mode dial.
+/// `null` / missing = keep provider default.
+/// `"none"` = explicitly disable thinking on providers that support a toggle.
+export type ReasoningEffort =
+  | "none"
+  | "minimal"
+  | "low"
+  | "medium"
+  | "high"
+  | "xhigh"
+  | "max";
+
 export interface Model {
   id: string;
   scope: "global" | "user";
@@ -64,6 +76,7 @@ export interface Model {
   created_at: string;
   compact_trigger_tokens: number;
   compact_tail_tokens: number;
+  reasoning_effort: ReasoningEffort | null;
 }
 
 export interface UpsertModelRequest {
@@ -76,6 +89,7 @@ export interface UpsertModelRequest {
   kind?: ModelKind;
   compact_trigger_tokens: number;
   compact_tail_tokens: number;
+  reasoning_effort?: ReasoningEffort | null;
   role?: "cheap" | "embedding" | null;
   initial_available?: boolean;
   is_default?: boolean;
