@@ -14,9 +14,8 @@ const EMPTY_FORM: UpsertModelRequest = {
   api_key: "",
   kind: "api",
   role: null,
-  visible: true,
+  initial_available: true,
   is_default: false,
-  admin_only: false,
   compact_trigger_tokens: 50000,
   compact_tail_tokens: 16000,
 };
@@ -68,9 +67,8 @@ export function AdminModelsPanel({ token }: Props) {
       api_key: "",
       kind: m.kind,
       role: m.role,
-      visible: m.visible,
+      initial_available: m.initial_available,
       is_default: m.is_default,
-      admin_only: m.admin_only,
       compact_trigger_tokens: m.compact_trigger_tokens,
       compact_tail_tokens: m.compact_tail_tokens,
     });
@@ -247,19 +245,11 @@ export function AdminModelsPanel({ token }: Props) {
             <label className={styles.checkRow}>
               <input
                 type="checkbox"
-                checked={form.visible ?? true}
-                onChange={(e) => setForm({ ...form, visible: e.target.checked })}
+                checked={form.initial_available ?? true}
+                onChange={(e) => setForm({ ...form, initial_available: e.target.checked })}
               />
-              在用户模型列表中可见
-            </label>
-            <label className={styles.checkRow}>
-              <input
-                type="checkbox"
-                checked={!!form.admin_only}
-                onChange={(e) => setForm({ ...form, admin_only: e.target.checked })}
-              />
-              仅管理员可用
-              <span className={styles.hint}>（claude-code 等受 ToS 约束的模型）</span>
+              初始可用
+              <span className={styles.hint}>（可在模型权限矩阵里按用户覆盖）</span>
             </label>
           </div>
 
@@ -294,8 +284,7 @@ export function AdminModelsPanel({ token }: Props) {
                 {m.role === "cheap" && <span className={styles.roleBadge}>cheap</span>}
                 {m.role === "embedding" && <span className={styles.roleBadge}>embedding</span>}
                 {m.kind === "claude-code" && <span className={styles.roleBadge}>claude-code</span>}
-                {m.admin_only && <span className={styles.roleBadge}>admin-only</span>}
-                {!m.visible && <span className={styles.roleBadge}>隐藏</span>}
+                {!m.initial_available && <span className={styles.roleBadge}>初始不可用</span>}
               </div>
               <span className={styles.itemMeta}>{m.provider} · {m.model_name}</span>
             </div>

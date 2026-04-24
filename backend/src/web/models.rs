@@ -4,8 +4,10 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
+use crate::audit::log_audit;
 use crate::errors::{AppError, AppResult};
 use crate::web::AppState;
 use crate::web::auth::AuthUser;
@@ -25,9 +27,8 @@ pub struct ModelRow {
     pub extra_body: Value,
     pub is_default: bool,
     pub role: Option<String>,
-    pub visible: bool,
     pub kind: String,
-    pub admin_only: bool,
+    pub initial_available: bool,
     pub created_at: sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc>,
     pub compact_trigger_tokens: i64,
     pub compact_tail_tokens: i64,
@@ -43,9 +44,8 @@ pub struct ModelResponse {
     pub api_base: String,
     pub is_default: bool,
     pub role: Option<String>,
-    pub visible: bool,
+    pub initial_available: bool,
     pub kind: String,
-    pub admin_only: bool,
     pub created_at: String,
     pub compact_trigger_tokens: i64,
     pub compact_tail_tokens: i64,
@@ -63,9 +63,8 @@ impl From<ModelRow> for ModelResponse {
             api_base: r.api_base,
             is_default: r.is_default,
             role: r.role,
-            visible: r.visible,
+            initial_available: r.initial_available,
             kind: r.kind,
-            admin_only: r.admin_only,
             created_at: r.created_at.to_rfc3339(),
             compact_trigger_tokens: r.compact_trigger_tokens,
             compact_tail_tokens: r.compact_tail_tokens,
@@ -78,9 +77,8 @@ fn default_kind() -> String {
 }
 
 /// Used by user-scoped and admin-scoped upsert endpoints.
-/// Admin-only fields (role/visible/is_default/admin_only) are accepted on the
-/// admin PUT but ignored by the user PUT — keeping a single request struct
-/// keeps the frontend types flat.
+/// Admin-only fields (role/initial_available/is_default) are accepted on the
+/// admin PUT but ignored by the user PUT.
 #[derive(Deserialize)]
 pub struct UpsertModelRequest {
     pub label: String,
@@ -100,31 +98,35 @@ pub struct UpsertModelRequest {
     #[serde(default)]
     pub role: Option<String>,
     #[serde(default)]
-    pub visible: Option<bool>,
+    pub initial_available: Option<bool>,
     #[serde(default)]
     pub is_default: Option<bool>,
-    #[serde(default)]
-    pub admin_only: Option<bool>,
 }
 
 // ── User endpoints ────────────────────────────────────────────────────────────
 
 /// List models visible to the current user: global + their own.
-/// admin_only models are filtered out for non-admins (ToS compliance for
-/// provider credentials that can only be shared with the instance operator).
 pub async fn list_models(
     State(state): State<AppState>,
     auth: AuthUser,
 ) -> AppResult<Json<Vec<ModelResponse>>> {
     let rows = sqlx::query_as::<_, ModelRow>(
         "SELECT * FROM models
-         WHERE (scope = 'global' OR user_id = $1)
-           AND visible = true
-           AND (NOT admin_only OR $2)
+         WHERE (
+             scope = 'global'
+             AND COALESCE(
+                 (
+                     SELECT allowed
+                     FROM user_model_permissions ump
+                     WHERE ump.user_id = $1 AND ump.model_id = models.id
+                 ),
+                 initial_available
+             )
+         )
+         OR (scope = 'user' AND user_id = $1)
          ORDER BY scope DESC, created_at ASC",
     )
     .bind(auth.user_id)
-    .bind(auth.is_admin)
     .fetch_all(&state.pool)
     .await?;
 
@@ -237,8 +239,8 @@ pub async fn admin_list_models(
 
 /// Admin: create a global model.
 ///
-/// Admin-only knobs (role/visible/is_default/admin_only) fall back to column
-/// defaults (NULL role, visible=true, is_default=false, admin_only=false)
+/// Admin-only knobs (role/initial_available/is_default) fall back to column
+/// defaults (NULL role, initial_available=true, is_default=false)
 /// when omitted — matching the legacy two-step create-then-set flow.
 pub async fn admin_create_model(
     State(state): State<AppState>,
@@ -264,11 +266,10 @@ pub async fn admin_create_model(
     let row = sqlx::query_as::<_, ModelRow>(
         "INSERT INTO models
            (user_id, scope, label, provider, model_name, api_base, api_key,
-            extra_body, kind, role, visible, is_default, admin_only,
+            extra_body, kind, role, initial_available, is_default,
             compact_trigger_tokens, compact_tail_tokens)
          VALUES (NULL, 'global', $1, $2, $3, $4, $5, $6, $7,
-                 $8, COALESCE($9, true), COALESCE($10, false), COALESCE($11, false),
-                 $12, $13)
+                 $8, COALESCE($9, true), COALESCE($10, false), $11, $12)
          RETURNING *",
     )
     .bind(&req.label)
@@ -279,9 +280,8 @@ pub async fn admin_create_model(
     .bind(&req.extra_body)
     .bind(&req.kind)
     .bind(&req.role)
-    .bind(req.visible)
+    .bind(req.initial_available)
     .bind(req.is_default)
-    .bind(req.admin_only)
     .bind(req.compact_trigger_tokens)
     .bind(req.compact_tail_tokens)
     .fetch_one(&mut *tx)
@@ -296,8 +296,8 @@ pub async fn admin_create_model(
 ///
 /// Applies every field the admin form sends in a single transaction:
 /// base fields (label/provider/…/kind), role, visibility, default flag, and
-/// admin_only. If is_default=true is set here, all other global defaults are
-/// cleared atomically. Same single-winner semantics apply to role.
+/// initial_available. If is_default=true is set here, all other global
+/// defaults are cleared atomically. Same single-winner semantics apply to role.
 pub async fn admin_update_model(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -330,12 +330,11 @@ pub async fn admin_update_model(
          api_key = CASE WHEN $5 = '' THEN api_key ELSE $5 END,
          extra_body=$6, kind=$7,
          role       = $8,
-         visible    = COALESCE($9,  visible),
+         initial_available = COALESCE($9, initial_available),
          is_default = COALESCE($10, is_default),
-         admin_only = COALESCE($11, admin_only),
-         compact_trigger_tokens = $12,
-         compact_tail_tokens    = $13
-         WHERE id=$14 AND scope='global'
+         compact_trigger_tokens = $11,
+         compact_tail_tokens    = $12
+         WHERE id=$13 AND scope='global'
          RETURNING *",
     )
     .bind(&req.label)
@@ -346,9 +345,8 @@ pub async fn admin_update_model(
     .bind(&req.extra_body)
     .bind(&req.kind)
     .bind(&req.role)
-    .bind(req.visible)
+    .bind(req.initial_available)
     .bind(req.is_default)
-    .bind(req.admin_only)
     .bind(req.compact_trigger_tokens)
     .bind(req.compact_tail_tokens)
     .bind(id)
@@ -376,6 +374,191 @@ pub async fn admin_delete_model(
     if result.rows_affected() == 0 {
         return Err(AppError::not_found("模型不存在"));
     }
+
+    Ok(Json(json!({ "ok": true })))
+}
+
+// ── Admin: model permission matrix ───────────────────────────────────────────
+
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct AdminModelPermissionUser {
+    pub id: Uuid,
+    pub name: String,
+    pub email: Option<String>,
+    pub display_name: Option<String>,
+    pub is_admin: bool,
+    pub is_banned: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AdminModelPermissionCell {
+    pub user_id: Uuid,
+    pub model_id: Uuid,
+    /// The stored override. `null` means the user inherits the global default.
+    pub override_allowed: Option<bool>,
+    /// What the model picker will actually show for this user.
+    pub effective_allowed: bool,
+    pub inherited: bool,
+    /// Reserved for hard blockers. Currently model access is fully controlled
+    /// by `initial_available` plus per-user overrides.
+    pub blocked_reason: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AdminModelPermissionsResponse {
+    pub users: Vec<AdminModelPermissionUser>,
+    pub models: Vec<ModelResponse>,
+    pub permissions: Vec<AdminModelPermissionCell>,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct PermissionOverrideRow {
+    user_id: Uuid,
+    model_id: Uuid,
+    allowed: bool,
+}
+
+pub async fn admin_list_model_permissions(
+    State(state): State<AppState>,
+    auth: AuthUser,
+) -> AppResult<Json<AdminModelPermissionsResponse>> {
+    guard_admin(&auth)?;
+
+    let users = sqlx::query_as::<_, AdminModelPermissionUser>(
+        "SELECT id, name, email, display_name, is_admin, COALESCE(is_banned, false) AS is_banned
+         FROM users
+         ORDER BY created_at DESC",
+    )
+    .fetch_all(&state.pool)
+    .await?;
+
+    let model_rows = sqlx::query_as::<_, ModelRow>(
+        "SELECT * FROM models WHERE scope = 'global' ORDER BY created_at ASC",
+    )
+    .fetch_all(&state.pool)
+    .await?;
+
+    let overrides = sqlx::query_as::<_, PermissionOverrideRow>(
+        "SELECT user_id, model_id, allowed FROM user_model_permissions",
+    )
+    .fetch_all(&state.pool)
+    .await?;
+
+    let override_map: HashMap<(Uuid, Uuid), bool> = overrides
+        .into_iter()
+        .map(|row| ((row.user_id, row.model_id), row.allowed))
+        .collect();
+
+    let mut permissions = Vec::with_capacity(users.len() * model_rows.len());
+    for user in &users {
+        for model in &model_rows {
+            let override_allowed = override_map.get(&(user.id, model.id)).copied();
+            let effective_allowed = override_allowed.unwrap_or(model.initial_available);
+
+            permissions.push(AdminModelPermissionCell {
+                user_id: user.id,
+                model_id: model.id,
+                override_allowed,
+                effective_allowed,
+                inherited: override_allowed.is_none(),
+                blocked_reason: None,
+            });
+        }
+    }
+
+    Ok(Json(AdminModelPermissionsResponse {
+        users,
+        models: model_rows.into_iter().map(ModelResponse::from).collect(),
+        permissions,
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ModelPermissionChange {
+    pub user_id: Uuid,
+    pub model_id: Uuid,
+    /// `null` removes the override and returns the cell to inherited behavior.
+    pub allowed: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateModelPermissionsRequest {
+    pub changes: Vec<ModelPermissionChange>,
+}
+
+pub async fn admin_update_model_permissions(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Json(req): Json<UpdateModelPermissionsRequest>,
+) -> AppResult<Json<Value>> {
+    guard_admin(&auth)?;
+
+    if req.changes.len() > 2_000 {
+        return Err(AppError::bad_request("一次最多更新 2000 个权限单元"));
+    }
+
+    let user_ids: HashSet<Uuid> = req.changes.iter().map(|c| c.user_id).collect();
+    let model_ids: HashSet<Uuid> = req.changes.iter().map(|c| c.model_id).collect();
+
+    if !user_ids.is_empty() {
+        let existing_users: Vec<Uuid> =
+            sqlx::query_scalar("SELECT id FROM users WHERE id = ANY($1)")
+                .bind(user_ids.iter().copied().collect::<Vec<_>>())
+                .fetch_all(&state.pool)
+                .await?;
+        if existing_users.len() != user_ids.len() {
+            return Err(AppError::bad_request("包含不存在的用户"));
+        }
+    }
+
+    if !model_ids.is_empty() {
+        let existing_models: Vec<Uuid> =
+            sqlx::query_scalar("SELECT id FROM models WHERE scope = 'global' AND id = ANY($1)")
+                .bind(model_ids.iter().copied().collect::<Vec<_>>())
+                .fetch_all(&state.pool)
+                .await?;
+        if existing_models.len() != model_ids.len() {
+            return Err(AppError::bad_request("包含不存在的全局模型"));
+        }
+    }
+
+    let mut tx = state.pool.begin().await?;
+    for change in &req.changes {
+        if let Some(allowed) = change.allowed {
+            sqlx::query(
+                "INSERT INTO user_model_permissions (user_id, model_id, allowed, updated_by)
+                 VALUES ($1, $2, $3, $4)
+                 ON CONFLICT (user_id, model_id)
+                 DO UPDATE SET
+                    allowed = EXCLUDED.allowed,
+                    updated_by = EXCLUDED.updated_by,
+                    updated_at = NOW()",
+            )
+            .bind(change.user_id)
+            .bind(change.model_id)
+            .bind(allowed)
+            .bind(auth.user_id)
+            .execute(&mut *tx)
+            .await?;
+        } else {
+            sqlx::query("DELETE FROM user_model_permissions WHERE user_id = $1 AND model_id = $2")
+                .bind(change.user_id)
+                .bind(change.model_id)
+                .execute(&mut *tx)
+                .await?;
+        }
+    }
+    tx.commit().await?;
+
+    log_audit(
+        &state.pool,
+        Some(auth.user_id),
+        None,
+        "update_model_permissions",
+        Some(json!({ "changes": req.changes.len() })),
+        None,
+    )
+    .await?;
 
     Ok(Json(json!({ "ok": true })))
 }

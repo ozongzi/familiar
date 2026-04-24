@@ -75,16 +75,34 @@ pub async fn create_conversation(
 ) -> AppResult<Json<ConversationResponse>> {
     let name = req.name.unwrap_or_else(|| "新对话".to_string());
 
-    if let Some(model_id) = req.model_id
-        && !auth.is_admin
-    {
-        let admin_only: Option<bool> =
-            sqlx::query_scalar("SELECT admin_only FROM models WHERE id = $1")
-                .bind(model_id)
-                .fetch_optional(&state.pool)
-                .await?;
-        if admin_only == Some(true) {
-            return Err(AppError::forbidden("该模型仅管理员可用"));
+    if let Some(model_id) = req.model_id {
+        let allowed: Option<bool> = sqlx::query_scalar(
+            "SELECT EXISTS(
+                    SELECT 1
+                    FROM models m
+                    WHERE m.id = $1
+                      AND (
+                        (m.scope = 'user' AND m.user_id = $2)
+                        OR (
+                            m.scope = 'global'
+                            AND COALESCE(
+                                (
+                                    SELECT allowed
+                                    FROM user_model_permissions ump
+                                    WHERE ump.user_id = $2 AND ump.model_id = m.id
+                                ),
+                                m.initial_available
+                            )
+                        )
+                      )
+                )",
+        )
+        .bind(model_id)
+        .bind(auth.user_id)
+        .fetch_optional(&state.pool)
+        .await?;
+        if allowed != Some(true) {
+            return Err(AppError::forbidden("该模型未对当前用户开放"));
         }
     }
 

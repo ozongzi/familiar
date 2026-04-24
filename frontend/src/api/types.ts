@@ -59,9 +59,8 @@ export interface Model {
   api_base: string;
   is_default: boolean;
   role: "cheap" | "embedding" | null;
-  visible: boolean;
+  initial_available: boolean;
   kind: ModelKind;
-  admin_only: boolean;
   created_at: string;
   compact_trigger_tokens: number;
   compact_tail_tokens: number;
@@ -78,9 +77,42 @@ export interface UpsertModelRequest {
   compact_trigger_tokens: number;
   compact_tail_tokens: number;
   role?: "cheap" | "embedding" | null;
-  visible?: boolean;
+  initial_available?: boolean;
   is_default?: boolean;
-  admin_only?: boolean;
+}
+
+export interface ModelPermissionUser {
+  id: string;
+  name: string;
+  email?: string | null;
+  display_name?: string | null;
+  is_admin: boolean;
+  is_banned: boolean;
+}
+
+export interface ModelPermissionCell {
+  user_id: string;
+  model_id: string;
+  override_allowed: boolean | null;
+  effective_allowed: boolean;
+  inherited: boolean;
+  blocked_reason?: string | null;
+}
+
+export interface ModelPermissionsResponse {
+  users: ModelPermissionUser[];
+  models: Model[];
+  permissions: ModelPermissionCell[];
+}
+
+export interface ModelPermissionChange {
+  user_id: string;
+  model_id: string;
+  allowed: boolean | null;
+}
+
+export interface UpdateModelPermissionsRequest {
+  changes: ModelPermissionChange[];
 }
 
 export interface RenameConversationRequest {

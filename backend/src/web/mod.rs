@@ -30,8 +30,9 @@ use axum::{
 };
 use mcps::{create_mcp, delete_mcp, list_mcps, update_mcp};
 use models::{
-    admin_create_model, admin_delete_model, admin_list_models, admin_update_model, create_model,
-    delete_model, list_models, update_model,
+    admin_create_model, admin_delete_model, admin_list_model_permissions, admin_list_models,
+    admin_update_model, admin_update_model_permissions, create_model, delete_model, list_models,
+    update_model,
 };
 use settings::{
     create_skill, delete_skill, get_settings, list_skills, update_settings, update_skill,
@@ -186,6 +187,14 @@ pub fn create_router(state: AppState, allowed_origin: Option<&str>) -> Router {
         .route("/api/admin/models", post(admin_create_model))
         .route("/api/admin/models/{id}", put(admin_update_model))
         .route("/api/admin/models/{id}", delete(admin_delete_model))
+        .route(
+            "/api/admin/model-permissions",
+            get(admin_list_model_permissions),
+        )
+        .route(
+            "/api/admin/model-permissions",
+            put(admin_update_model_permissions),
+        )
         // ── File download / preview ───────────────────────────────────────────
         .route("/api/files", get(download_file))
         .route("/api/files", post(upload_file))

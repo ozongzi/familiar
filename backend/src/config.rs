@@ -65,7 +65,12 @@ fn default_model_kind() -> String {
 impl ModelConfig {
     /// Build an [`agentix::Request`] pre-filled with provider, key, base URL, and model.
     pub fn to_request(&self) -> agentix::Request {
-        let req = agentix::Request::new(self.provider, &self.api_key)
+        let provider = if self.kind == "claude-code" {
+            Provider::ClaudeCode
+        } else {
+            self.provider
+        };
+        let req = agentix::Request::new(provider, &self.api_key)
             .base_url(&self.api_base)
             .model(&self.name);
         if let Some(mt) = self.max_tokens {
