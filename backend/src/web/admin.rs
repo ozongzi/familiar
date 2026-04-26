@@ -857,6 +857,18 @@ pub async fn run_sql(
     Json(payload): Json<SqlQuery>,
 ) -> AppResult<Json<serde_json::Value>> {
     guard_admin(&auth)?;
+
+    // Audit before execution so attempts (including ones that error out) are recorded.
+    let _ = crate::audit::log_audit(
+        &state.pool,
+        Some(auth.user_id),
+        None,
+        "run_sql",
+        Some(serde_json::json!({ "sql": payload.sql })),
+        None,
+    )
+    .await;
+
     use sqlx::Row;
 
     use sqlx::postgres::PgRow;
