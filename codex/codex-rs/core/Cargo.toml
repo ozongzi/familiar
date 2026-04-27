@@ -18,6 +18,10 @@ workspace = true
 
 [dependencies]
 agentix = { workspace = true }
+# agentix is built against reqwest 0.13, but codex uses reqwest 0.12.
+# Pull in 0.13 under a different name so we can construct a `Client` of
+# the right type to pass into `agentix::Request::stream`.
+agentix-http-client = { package = "reqwest", version = "0.13", default-features = false, features = ["json", "stream"] }
 anyhow = { workspace = true }
 arc-swap = { workspace = true }
 async-channel = { workspace = true }
