@@ -48,12 +48,17 @@ pub enum WireApi {
     /// The Responses API exposed by OpenAI at `/v1/responses`.
     #[default]
     Responses,
+    /// Streaming via the `agentix` crate. The concrete wire format
+    /// (Anthropic / OpenAI / DeepSeek / Gemini / Kimi / Glm / Minimax / Grok /
+    /// OpenRouter / ClaudeCode CLI) is selected by `agentix_provider`.
+    Agentix,
 }
 
 impl fmt::Display for WireApi {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let value = match self {
             Self::Responses => "responses",
+            Self::Agentix => "agentix",
         };
         f.write_str(value)
     }
@@ -67,8 +72,12 @@ impl<'de> Deserialize<'de> for WireApi {
         let value = String::deserialize(deserializer)?;
         match value.as_str() {
             "responses" => Ok(Self::Responses),
+            "agentix" => Ok(Self::Agentix),
             "chat" => Err(serde::de::Error::custom(CHAT_WIRE_API_REMOVED_ERROR)),
-            _ => Err(serde::de::Error::unknown_variant(&value, &["responses"])),
+            _ => Err(serde::de::Error::unknown_variant(
+                &value,
+                &["responses", "agentix"],
+            )),
         }
     }
 }
@@ -99,6 +108,11 @@ pub struct ModelProviderInfo {
     /// Which wire protocol this provider expects.
     #[serde(default)]
     pub wire_api: WireApi,
+    /// When `wire_api == "agentix"`, the agentix provider id to use
+    /// (e.g. "anthropic", "openai", "deepseek", "gemini", "kimi", "glm",
+    /// "minimax", "grok", "openrouter", "claude-code"). Required when
+    /// `wire_api` is `agentix`; ignored otherwise.
+    pub agentix_provider: Option<String>,
     /// Optional query parameters to append to the base URL.
     pub query_params: Option<HashMap<String, String>>,
     /// Additional HTTP headers to include in requests to this provider where
@@ -320,6 +334,7 @@ impl ModelProviderInfo {
             auth: None,
             aws: None,
             wire_api: WireApi::Responses,
+            agentix_provider: None,
             query_params: None,
             http_headers: Some(
                 [("version".to_string(), env!("CARGO_PKG_VERSION").to_string())]
@@ -362,6 +377,7 @@ impl ModelProviderInfo {
                 region: None,
             })),
             wire_api: WireApi::Responses,
+            agentix_provider: None,
             query_params: None,
             http_headers: None,
             env_http_headers: None,
@@ -493,6 +509,7 @@ pub fn create_oss_provider_with_base_url(base_url: &str, wire_api: WireApi) -> M
         auth: None,
         aws: None,
         wire_api,
+        agentix_provider: None,
         query_params: None,
         http_headers: None,
         env_http_headers: None,

@@ -17,9 +17,11 @@ path = "src/bin/config_schema.rs"
 workspace = true
 
 [dependencies]
+agentix = { workspace = true }
 anyhow = { workspace = true }
 arc-swap = { workspace = true }
 async-channel = { workspace = true }
+async-stream = { workspace = true }
 async-trait = { workspace = true }
 base64 = { workspace = true }
 bm25 = { workspace = true }

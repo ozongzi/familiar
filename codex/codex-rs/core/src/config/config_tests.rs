@@ -5367,6 +5367,7 @@ model_verbosity = "high"
         base_url: Some("https://api.openai.com/v1".to_string()),
         env_key: Some("OPENAI_API_KEY".to_string()),
         wire_api: WireApi::Responses,
+        agentix_provider: None,
         env_key_instructions: None,
         experimental_bearer_token: None,
         auth: None,
