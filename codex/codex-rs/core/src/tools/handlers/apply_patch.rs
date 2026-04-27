@@ -386,11 +386,22 @@ impl ToolHandler for ApplyPatchHandler {
             codex_apply_patch::MaybeApplyPatchVerified::Body(changes) => {
                 let (file_paths, effective_additional_permissions, file_system_sandbox_policy) =
                     effective_patch_permissions(session.as_ref(), turn.as_ref(), &changes).await;
+                let autocheck_paths: Vec<std::path::PathBuf> = file_paths
+                    .iter()
+                    .map(|p| p.as_path().to_path_buf())
+                    .collect();
+                let autocheck_cwd = turn.cwd.as_path().to_path_buf();
                 match apply_patch::apply_patch(turn.as_ref(), &file_system_sandbox_policy, changes)
                     .await
                 {
                     InternalApplyPatchInvocation::Output(item) => {
                         let content = item?;
+                        let content = append_autocheck_block(
+                            content,
+                            &autocheck_paths,
+                            &autocheck_cwd,
+                        )
+                        .await;
                         Ok(ApplyPatchToolOutput::from_text(content))
                     }
                     InternalApplyPatchInvocation::DelegateToRuntime(apply) => {
@@ -441,6 +452,12 @@ impl ToolHandler for ApplyPatchHandler {
                             Some(&tracker),
                         );
                         let content = emitter.finish(event_ctx, out).await?;
+                        let content = append_autocheck_block(
+                            content,
+                            &autocheck_paths,
+                            &autocheck_cwd,
+                        )
+                        .await;
                         Ok(ApplyPatchToolOutput::from_text(content))
                     }
                 }
@@ -563,6 +580,22 @@ pub(crate) async fn intercept_apply_patch(
             Ok(None)
         }
         codex_apply_patch::MaybeApplyPatchVerified::NotApplyPatch => Ok(None),
+    }
+}
+
+/// Run synchronous post-edit autocheck on the files touched by this patch
+/// and append the resulting diagnostics block to `content`. Doing this in
+/// the same tool result lets the model see lint/type errors and fix them in
+/// the same turn — issuing a separate "now run the linter" tool call would
+/// roughly double the per-turn token spend (full context replay).
+async fn append_autocheck_block(
+    content: String,
+    file_paths: &[std::path::PathBuf],
+    cwd: &std::path::Path,
+) -> String {
+    match crate::tools::handlers::autocheck::run_autocheck_for_paths(file_paths, cwd).await {
+        Some(block) => format!("{content}\n\n{block}"),
+        None => content,
     }
 }
 
