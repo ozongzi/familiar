@@ -1532,6 +1532,27 @@ impl ModelClientSession {
                 )
                 .await
             }
+            WireApi::Agentix => {
+                let info = self.client.state.provider.info();
+                let agentix_provider_id = info.agentix_provider.as_deref().ok_or_else(|| {
+                    codex_protocol::error::CodexErr::Stream(
+                        "wire_api = \"agentix\" but `agentix_provider` is not set on the model provider".to_string(),
+                        None,
+                    )
+                })?;
+                let api_key = info
+                    .experimental_bearer_token
+                    .clone()
+                    .or_else(|| info.env_key.as_deref().and_then(|k| std::env::var(k).ok()))
+                    .unwrap_or_default();
+                crate::agentix_stream::stream_via_agentix(
+                    prompt,
+                    &model_info.slug,
+                    agentix_provider_id,
+                    api_key,
+                )
+                .await
+            }
         }
     }
 
