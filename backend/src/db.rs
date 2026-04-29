@@ -312,7 +312,14 @@ impl Db {
                 } else {
                     serde_json::to_string(content).unwrap_or_default()
                 };
-                ("tool", Some(serialized), None, Some(call_id.clone()), None, None)
+                (
+                    "tool",
+                    Some(serialized),
+                    None,
+                    Some(call_id.clone()),
+                    None,
+                    None,
+                )
             }
         };
         let now = unix_now();

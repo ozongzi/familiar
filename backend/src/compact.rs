@@ -359,10 +359,19 @@ pub async fn maybe_compact(
 /// Latest provider-reported input context size on an assistant message.
 async fn latest_context_tokens(pool: &PgPool, conv_id: Uuid) -> i64 {
     sqlx::query_scalar::<_, Option<i64>>(
-        "SELECT context_tokens
-         FROM messages
-         WHERE conversation_id = $1
-           AND role = 'assistant'
+        "WITH RECURSIVE branch AS (
+             SELECT m.id, m.parent_id, m.role, m.context_tokens
+             FROM messages m
+             JOIN conversations c ON c.id = $1
+             WHERE m.id = c.active_message_id
+             UNION ALL
+             SELECT m.id, m.parent_id, m.role, m.context_tokens
+             FROM messages m
+             JOIN branch b ON m.id = b.parent_id
+         )
+         SELECT context_tokens
+         FROM branch
+         WHERE role = 'assistant'
            AND context_tokens IS NOT NULL
          ORDER BY id DESC LIMIT 1",
     )
@@ -426,6 +435,305 @@ fn snap_boundary(delta: &[Message], start: usize) -> usize {
         idx += 1;
     }
     delta.len()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::Provider;
+    use crate::db::Db;
+    use crate::sandbox::SandboxManager;
+    use crate::worker::WorkerContext;
+    use agentix::{Message, UserContent};
+    use sqlx::{Executor, PgPool, postgres::PgPoolOptions};
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    struct TestDb {
+        pool: PgPool,
+        admin_url: String,
+        db_name: String,
+    }
+
+    impl TestDb {
+        async fn cleanup(self) {
+            let Self {
+                pool,
+                admin_url,
+                db_name,
+            } = self;
+            pool.close().await;
+            if let Ok(admin) = PgPoolOptions::new()
+                .max_connections(1)
+                .connect(&admin_url)
+                .await
+            {
+                let _ = admin
+                    .execute(format!("DROP DATABASE IF EXISTS \"{db_name}\" WITH (FORCE)").as_str())
+                    .await;
+            }
+        }
+    }
+
+    async fn fresh_db() -> TestDb {
+        let admin_url = std::env::var("DATABASE_URL_TEST")
+            .expect("DATABASE_URL_TEST must be set for integration tests");
+        let admin = PgPoolOptions::new()
+            .max_connections(1)
+            .connect(&admin_url)
+            .await
+            .expect("connect admin pool");
+        let db_name = format!("familiar_test_{}", Uuid::new_v4().simple());
+        admin
+            .execute(format!("CREATE DATABASE \"{db_name}\"").as_str())
+            .await
+            .expect("create test db");
+
+        let test_url = switch_db(&admin_url, &db_name);
+        let pool = PgPoolOptions::new()
+            .max_connections(4)
+            .connect(&test_url)
+            .await
+            .expect("connect test pool");
+        sqlx::migrate!("./migrations")
+            .run(&pool)
+            .await
+            .expect("run migrations");
+        TestDb {
+            pool,
+            admin_url,
+            db_name,
+        }
+    }
+
+    fn switch_db(url: &str, db: &str) -> String {
+        let (scheme_host, rest) = url.split_once("://").expect("postgres:// URL");
+        let (auth_host, tail) = rest.split_once('/').unwrap_or((rest, ""));
+        let query = tail
+            .split_once('?')
+            .map(|(_, q)| format!("?{q}"))
+            .unwrap_or_default();
+        format!("{scheme_host}://{auth_host}/{db}{query}")
+    }
+
+    async fn seed(pool: &PgPool) -> (Uuid, Uuid, Uuid) {
+        let user_id: Uuid = sqlx::query_scalar(
+            "INSERT INTO users (name, password_hash) VALUES ($1, $2) RETURNING id",
+        )
+        .bind(format!("compact-tester-{}", Uuid::new_v4()))
+        .bind("$2b$12$dummyhash")
+        .fetch_one(pool)
+        .await
+        .expect("insert user");
+
+        let conv_id: Uuid =
+            sqlx::query_scalar("INSERT INTO conversations (user_id) VALUES ($1) RETURNING id")
+                .bind(user_id)
+                .fetch_one(pool)
+                .await
+                .expect("insert conversation");
+
+        let job_id: Uuid = sqlx::query_scalar(
+            "INSERT INTO generation_jobs (conversation_id, user_id) VALUES ($1, $2) RETURNING id",
+        )
+        .bind(conv_id)
+        .bind(user_id)
+        .fetch_one(pool)
+        .await
+        .expect("insert generation job");
+
+        (user_id, conv_id, job_id)
+    }
+
+    async fn start_anthropic_mock() -> (String, Arc<AtomicUsize>) {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind mock server");
+        let addr = listener.local_addr().expect("mock addr");
+        let hits = Arc::new(AtomicUsize::new(0));
+        let hits_for_task = Arc::clone(&hits);
+
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut socket, _)) = listener.accept().await else {
+                    break;
+                };
+                hits_for_task.fetch_add(1, Ordering::SeqCst);
+                tokio::spawn(async move {
+                    let mut buf = vec![0; 4096];
+                    let _ = socket.read(&mut buf).await;
+                    let body = concat!(
+                        "event: message_start\n",
+                        "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":10,\"output_tokens\":0}}}\n\n",
+                        "event: content_block_start\n",
+                        "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n",
+                        "event: content_block_delta\n",
+                        "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"mock summary\"}}\n\n",
+                        "event: content_block_stop\n",
+                        "data: {\"type\":\"content_block_stop\",\"index\":0}\n\n",
+                        "event: message_delta\n",
+                        "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"input_tokens\":0,\"output_tokens\":2}}\n\n",
+                        "event: message_stop\n",
+                        "data: {\"type\":\"message_stop\"}\n\n"
+                    );
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                        body.len(),
+                        body
+                    );
+                    let _ = socket.write_all(response.as_bytes()).await;
+                });
+            }
+        });
+
+        (format!("http://{addr}"), hits)
+    }
+
+    fn user_msg(text: impl Into<String>) -> Message {
+        Message::User(vec![UserContent::Text { text: text.into() }])
+    }
+
+    fn assistant_msg(text: impl Into<String>) -> Message {
+        Message::Assistant {
+            content: Some(text.into()),
+            reasoning: None,
+            tool_calls: vec![],
+            provider_data: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn compact_trigger_uses_latest_context_on_active_branch_only() {
+        let test_db = fresh_db().await;
+        let pool = test_db.pool.clone();
+        let sandbox = Arc::new(SandboxManager::new(PathBuf::from(
+            "/tmp/familiar-compact-test",
+        )));
+        let db = Db::new(pool.clone(), Arc::clone(&sandbox));
+        let (user_id, conv_id, job_id) = seed(&pool).await;
+        let (mock_base, mock_hits) = start_anthropic_mock().await;
+
+        // Active branch: context snapshot is below the trigger, but the raw
+        // active path is large enough that the old conversation-wide trigger
+        // would have compacted it if polluted by another branch.
+        let root = db
+            .append(conv_id, user_id, &user_msg("root"), None)
+            .await
+            .expect("append root");
+        let _active_a1 = db
+            .append(conv_id, user_id, &assistant_msg("active a1"), None)
+            .await
+            .expect("append active a1");
+        let _active_u2 = db
+            .append(
+                conv_id,
+                user_id,
+                &user_msg("active tail ".repeat(300)),
+                None,
+            )
+            .await
+            .expect("append active u2");
+        let active_leaf = db
+            .append(conv_id, user_id, &assistant_msg("active leaf"), None)
+            .await
+            .expect("append active leaf");
+        sqlx::query("UPDATE messages SET context_tokens = 100 WHERE id = $1")
+            .bind(active_leaf)
+            .execute(&pool)
+            .await
+            .expect("set active context");
+
+        // Inactive branch has the newest assistant row and a high context
+        // snapshot. The regression was that this row triggered compacting the
+        // active branch even though it is not on the active path.
+        sqlx::query("UPDATE conversations SET active_message_id = $1 WHERE id = $2")
+            .bind(root)
+            .bind(conv_id)
+            .execute(&pool)
+            .await
+            .expect("rewind to branch root");
+        let _inactive_user = db
+            .append(conv_id, user_id, &user_msg("inactive branch"), None)
+            .await
+            .expect("append inactive user");
+        let inactive_leaf = db
+            .append(
+                conv_id,
+                user_id,
+                &assistant_msg("inactive high context"),
+                None,
+            )
+            .await
+            .expect("append inactive leaf");
+        sqlx::query("UPDATE messages SET context_tokens = 5_000 WHERE id = $1")
+            .bind(inactive_leaf)
+            .execute(&pool)
+            .await
+            .expect("set inactive context");
+
+        sqlx::query("UPDATE conversations SET active_message_id = $1 WHERE id = $2")
+            .bind(active_leaf)
+            .bind(conv_id)
+            .execute(&pool)
+            .await
+            .expect("restore active branch");
+
+        let ctx = WorkerContext {
+            job_id,
+            conversation_id: conv_id,
+            user_id,
+            pool: pool.clone(),
+            db,
+            sandbox,
+            tunnel_registry: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+        };
+        let model = ModelConfig {
+            api_key: "test-key".to_string(),
+            api_base: mock_base,
+            name: "claude-test".to_string(),
+            provider: Provider::Anthropic,
+            extra_body: HashMap::new(),
+            max_tokens: None,
+            kind: "api".to_string(),
+            compact_trigger_tokens: 1_000,
+            compact_tail_tokens: 100,
+            reasoning_effort: None,
+        };
+
+        let compacted = maybe_compact(&ctx, &model, &reqwest::Client::new()).await;
+        assert!(
+            !compacted,
+            "inactive branch context must not trigger active branch compaction"
+        );
+        assert_eq!(
+            mock_hits.load(Ordering::SeqCst),
+            0,
+            "summarizer mock should not be called when only inactive branch is over trigger"
+        );
+
+        let summary_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM messages WHERE conversation_id = $1 AND summary_text IS NOT NULL",
+        )
+        .bind(conv_id)
+        .fetch_one(&pool)
+        .await
+        .expect("count summaries");
+        assert_eq!(summary_count, 0, "no summary anchor should be written");
+
+        let active_context = latest_context_tokens(&pool, conv_id).await;
+        assert_eq!(
+            active_context, 100,
+            "latest context snapshot should come from the active branch"
+        );
+
+        test_db.cleanup().await;
+    }
 }
 
 // ── Internal: summariser ──────────────────────────────────────────────────────

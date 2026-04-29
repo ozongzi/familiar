@@ -221,14 +221,22 @@ impl Config {
             .collect();
 
         // ── Load cheap model from models table ────────────────────────────
-        let cheap: Option<(String, String, String, String, Value, i64, i64, Option<String>)> =
-            sqlx::query_as(
-                "SELECT provider, model_name, api_base, api_key, extra_body,
+        let cheap: Option<(
+            String,
+            String,
+            String,
+            String,
+            Value,
+            i64,
+            i64,
+            Option<String>,
+        )> = sqlx::query_as(
+            "SELECT provider, model_name, api_base, api_key, extra_body,
                     compact_trigger_tokens, compact_tail_tokens, reasoning_effort
              FROM models WHERE scope = 'global' AND role = 'cheap' LIMIT 1",
-            )
-            .fetch_optional(pool)
-            .await?;
+        )
+        .fetch_optional(pool)
+        .await?;
 
         if let Some((provider, name, api_base, api_key, extra_body, trig, tail, effort)) = cheap {
             cfg.cheap_model = ModelConfig {
@@ -250,14 +258,22 @@ impl Config {
         }
 
         // ── Load embedding model from models table ────────────────────────
-        let embed: Option<(String, String, String, String, Value, i64, i64, Option<String>)> =
-            sqlx::query_as(
-                "SELECT provider, model_name, api_base, api_key, extra_body,
+        let embed: Option<(
+            String,
+            String,
+            String,
+            String,
+            Value,
+            i64,
+            i64,
+            Option<String>,
+        )> = sqlx::query_as(
+            "SELECT provider, model_name, api_base, api_key, extra_body,
                     compact_trigger_tokens, compact_tail_tokens, reasoning_effort
              FROM models WHERE scope = 'global' AND role = 'embedding' LIMIT 1",
-            )
-            .fetch_optional(pool)
-            .await?;
+        )
+        .fetch_optional(pool)
+        .await?;
 
         if let Some((provider, name, api_base, api_key, extra_body, trig, tail, effort)) = embed {
             cfg.embedding = ModelConfig {

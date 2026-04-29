@@ -148,7 +148,9 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
                 kind,
                 compact_trigger_tokens,
                 compact_tail_tokens,
-                reasoning_effort: crate::config::parse_reasoning_effort(reasoning_effort.as_deref()),
+                reasoning_effort: crate::config::parse_reasoning_effort(
+                    reasoning_effort.as_deref(),
+                ),
             }
         }
 
