@@ -303,6 +303,7 @@ pub async fn maybe_compact(
         None => {
             info!(
                 conversation = %ctx.conversation_id,
+                ctx_tokens,
                 delta_len = delta_msgs.len(),
                 "nothing to summarise after boundary search"
             );
@@ -608,7 +609,95 @@ mod tests {
         }
     }
 
+    #[derive(Clone, Copy)]
+    struct BranchNode {
+        id: i64,
+        parent_id: Option<i64>,
+        is_assistant: bool,
+        context_tokens: Option<i64>,
+    }
+
+    fn latest_context_from_active_branch(active_id: i64, nodes: &[BranchNode]) -> i64 {
+        let mut current = Some(active_id);
+        while let Some(id) = current {
+            let Some(node) = nodes.iter().find(|n| n.id == id) else {
+                break;
+            };
+            if node.is_assistant
+                && let Some(tokens) = node.context_tokens
+            {
+                return tokens;
+            }
+            current = node.parent_id;
+        }
+        0
+    }
+
+    #[test]
+    fn latest_context_selection_ignores_newer_inactive_branch_rows() {
+        let nodes = [
+            BranchNode {
+                id: 1,
+                parent_id: None,
+                is_assistant: false,
+                context_tokens: None,
+            },
+            BranchNode {
+                id: 2,
+                parent_id: Some(1),
+                is_assistant: true,
+                context_tokens: Some(100),
+            },
+            BranchNode {
+                id: 3,
+                parent_id: Some(2),
+                is_assistant: false,
+                context_tokens: None,
+            },
+            BranchNode {
+                id: 4,
+                parent_id: Some(3),
+                is_assistant: true,
+                context_tokens: None,
+            },
+            BranchNode {
+                id: 5,
+                parent_id: Some(4),
+                is_assistant: false,
+                context_tokens: None,
+            },
+            BranchNode {
+                id: 6,
+                parent_id: Some(1),
+                is_assistant: false,
+                context_tokens: None,
+            },
+            BranchNode {
+                id: 7,
+                parent_id: Some(6),
+                is_assistant: true,
+                context_tokens: Some(5_000),
+            },
+            BranchNode {
+                id: 8,
+                parent_id: Some(7),
+                is_assistant: false,
+                context_tokens: None,
+            },
+            BranchNode {
+                id: 9,
+                parent_id: Some(8),
+                is_assistant: true,
+                context_tokens: Some(9_000),
+            },
+        ];
+
+        assert_eq!(latest_context_from_active_branch(5, &nodes), 100);
+        assert_eq!(latest_context_from_active_branch(9, &nodes), 9_000);
+    }
+
     #[tokio::test]
+    #[ignore = "requires DATABASE_URL_TEST pointing at a Postgres server that can CREATE DATABASE"]
     async fn compact_trigger_uses_latest_context_on_active_branch_only() {
         let test_db = fresh_db().await;
         let pool = test_db.pool.clone();
