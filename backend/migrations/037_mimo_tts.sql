@@ -1,0 +1,8 @@
+ALTER TABLE app_config
+    ADD COLUMN IF NOT EXISTS mimo_api_key TEXT;
+
+ALTER TABLE messages
+    ADD COLUMN IF NOT EXISTS tts_audio_path TEXT,
+    ADD COLUMN IF NOT EXISTS tts_voice TEXT,
+    ADD COLUMN IF NOT EXISTS tts_style TEXT,
+    ADD COLUMN IF NOT EXISTS tts_generated_at TIMESTAMPTZ;
