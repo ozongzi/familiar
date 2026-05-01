@@ -10,6 +10,7 @@ pub mod models;
 pub mod sessions;
 pub mod settings;
 pub mod sse;
+pub mod tts;
 pub mod tunnel;
 pub mod users;
 
@@ -48,6 +49,7 @@ use sse::{
     activate_handler, branch_handler, reattach_handler, send_message_handler, sse_handler,
     stream_abort_handler, stream_answer_handler, stream_interrupt_handler,
 };
+use tts::synthesize_message_tts;
 use users::*;
 
 /// Web-layer application state — cheaply cloneable.
@@ -85,30 +87,21 @@ pub fn create_router(state: AppState, allowed_origin: Option<&str>) -> Router {
     let artifacts_path = Path::new(&state.artifacts_path);
 
     Router::new()
-        // ── Auth ──────────────────────────────────────────────────────────────
         .route("/api/sessions", post(login))
         .route("/api/sessions", delete(logout))
         .route("/api/auth/github", get(github_oauth::github_login))
-        .route(
-            "/api/auth/github/callback",
-            get(github_oauth::github_callback),
-        )
+        .route("/api/auth/github/callback", get(github_oauth::github_callback))
         .route("/api/auth/register", post(invite_codes::register_with_invite))
-        // ── Invite Codes (admin) ──────────────────────────────────────────────
         .route("/api/admin/invite-codes", get(invite_codes::list_invite_codes))
         .route("/api/admin/invite-codes", post(invite_codes::create_invite_code))
         .route("/api/admin/invite-codes/{code}", delete(invite_codes::delete_invite_code))
-        // ── Users ─────────────────────────────────────────────────────────────
         .route("/api/users/me", get(get_me))
         .route("/api/users/me/profile", put(update_profile))
         .route("/api/users/me/password", put(update_password))
         .route("/api/users/me/avatar", post(upload_avatar))
-        // ── Avatars ───────────────────────────────────────────────────────────
         .route("/api/avatars/{user_id}", get(get_avatar))
-        // ── Settings ──────────────────────────────────────────────────────────
         .route("/api/settings", get(get_settings))
         .route("/api/settings", post(update_settings))
-        // ── Admin Config ─────────────────────────────────────────────────────
         .route("/api/admin/config", get(get_admin_config))
         .route("/api/admin/config", post(update_admin_config))
         .route("/api/admin/mcps", get(list_global_mcps))
@@ -123,48 +116,33 @@ pub fn create_router(state: AppState, allowed_origin: Option<&str>) -> Router {
         .route("/api/admin/skills", post(create_app_skill))
         .route("/api/admin/skills/{id}", put(update_app_skill))
         .route("/api/admin/skills/{id}", delete(delete_app_skill))
-        // ── Admin User Management ────────────────────────────────────────────
         .route("/api/admin/users", get(list_users))
         .route("/api/admin/users", post(create_user))
         .route("/api/admin/users/{id}", put(update_user))
         .route("/api/admin/users/{id}", delete(delete_user))
-        .route(
-            "/api/admin/users/{id}/reset-password",
-            post(reset_user_password),
-        )
-        // ── Admin Audit Logs ─────────────────────────────────────────────────
+        .route("/api/admin/users/{id}/reset-password", post(reset_user_password))
         .route("/api/admin/audit-logs", get(list_audit_logs))
         .route("/api/admin/token-usage", get(get_token_usage))
-        .route(
-            "/api/admin/token-usage/by-user",
-            get(get_token_usage_by_user),
-        )
-        .route(
-            "/api/admin/token-usage/conversations",
-            get(get_token_usage_conversations),
-        )
+        .route("/api/admin/token-usage/by-user", get(get_token_usage_by_user))
+        .route("/api/admin/token-usage/conversations", get(get_token_usage_conversations))
         .route("/api/admin/token-usage/daily", get(get_token_usage_daily))
         .route("/api/admin/sql", post(run_sql))
-        // ── User Skills (per-user) ─────────────────────────────────────────────
         .route("/api/skills", get(list_skills))
         .route("/api/skills", post(create_skill))
         .route("/api/skills/{id}", put(update_skill))
         .route("/api/skills/{id}", delete(delete_skill))
-        // ── Conversations ─────────────────────────────────────────────────────
         .route("/api/conversations", get(list_conversations))
         .route("/api/conversations", post(create_conversation))
         .route("/api/conversations/{id}", delete(delete_conversation))
         .route("/api/conversations/{id}", patch(rename_conversation))
         .route("/api/conversations/{id}/title", post(auto_title))
-        // ── Messages ──────────────────────────────────────────────────────────
         .route("/api/conversations/{id}/messages", get(list_messages))
+        .route("/api/conversations/{id}/messages/{message_id}/tts", post(synthesize_message_tts))
         .route("/api/search", get(search_messages))
-        // ── MCPs ──────────────────────────────────────────────────────────────
         .route("/api/mcps", get(list_mcps))
         .route("/api/mcps", post(create_mcp))
         .route("/api/mcps/{id}", put(update_mcp))
         .route("/api/mcps/{id}", delete(delete_mcp))
-        // ── Models ────────────────────────────────────────────────────────────
         .route("/api/models", get(list_models))
         .route("/api/models", post(create_model))
         .route("/api/models/{id}", put(update_model))
@@ -173,33 +151,19 @@ pub fn create_router(state: AppState, allowed_origin: Option<&str>) -> Router {
         .route("/api/admin/models", post(admin_create_model))
         .route("/api/admin/models/{id}", put(admin_update_model))
         .route("/api/admin/models/{id}", delete(admin_delete_model))
-        // ── File download / preview ───────────────────────────────────────────
         .route("/api/files", get(download_file))
         .route("/api/files", post(upload_file))
         .route("/api/files/preview", get(preview_file))
-        // ── 客户端隧道 (WebSocket) ────────────────────────────────────────────
         .route("/api/tunnel", get(tunnel::tunnel_handler))
-        // ── Chat (SSE streaming) ──────────────────────────────────────────────
-        .route(
-            "/api/conversations/{id}/messages",
-            post(send_message_handler),
-        )
+        .route("/api/conversations/{id}/messages", post(send_message_handler))
         .route("/api/conversations/{id}/reattach", post(reattach_handler))
         .route("/api/conversations/{id}/branch", post(branch_handler))
         .route("/api/conversations/{id}/activate", post(activate_handler))
         .route("/api/stream/{stream_id}", get(sse_handler))
         .route("/api/stream/{stream_id}/abort", post(stream_abort_handler))
-        .route(
-            "/api/stream/{stream_id}/interrupt",
-            post(stream_interrupt_handler),
-        )
-        .route(
-            "/api/stream/{stream_id}/answer",
-            post(stream_answer_handler),
-        )
-        // model artifacts
+        .route("/api/stream/{stream_id}/interrupt", post(stream_interrupt_handler))
+        .route("/api/stream/{stream_id}/answer", post(stream_answer_handler))
         .nest_service("/artifacts", ServeDir::new(artifacts_path))
-        // ── Static frontend ───────────────────────────────────────────────────
         .fallback_service(
             ServeDir::new(public_path)
                 .not_found_service(ServeFile::new(public_path.join("index.html"))),
