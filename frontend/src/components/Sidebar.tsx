@@ -1,17 +1,95 @@
 import { useState, useRef, useEffect, type KeyboardEvent } from "react";
-import type { Conversation, MeResponse } from "../api/types";
+import type { Conversation, Folder, MeResponse } from "../api/types";
 import { Avatar } from "./Avatar";
 import styles from "./Sidebar.module.css";
 import { useNavigate } from "react-router-dom";
 
+/* ─── Tree types ──────────────────────────────────────────────────────────── */
+
+interface FolderNode {
+  type: "folder";
+  id: string;
+  name: string;
+  children: TreeNode[];
+}
+
+interface ConvNode {
+  type: "conversation";
+  id: string;
+  name: string;
+  folder_id: string | null;
+}
+
+type TreeNode = FolderNode | ConvNode;
+
+function buildTree(
+  folders: Folder[],
+  conversations: Conversation[],
+): TreeNode[] {
+  const folderMap = new Map<string, FolderNode>();
+  const roots: TreeNode[] = [];
+
+  // Create folder nodes
+  for (const f of folders) {
+    folderMap.set(f.id, {
+      type: "folder",
+      id: f.id,
+      name: f.name,
+      children: [],
+    });
+  }
+
+  // Link folders into tree
+  for (const f of folders) {
+    const node = folderMap.get(f.id)!;
+    if (f.parent_id && folderMap.has(f.parent_id)) {
+      folderMap.get(f.parent_id)!.children.push(node);
+    } else {
+      roots.push(node);
+    }
+  }
+
+  // Place conversations into their folders or root
+  for (const c of conversations) {
+    const convNode: ConvNode = {
+      type: "conversation",
+      id: c.id,
+      name: c.name,
+      folder_id: c.folder_id,
+    };
+    if (c.folder_id && folderMap.has(c.folder_id)) {
+      folderMap.get(c.folder_id)!.children.push(convNode);
+    } else {
+      roots.push(convNode);
+    }
+  }
+
+  return roots;
+}
+
+/* ─── Context menu state ──────────────────────────────────────────────────── */
+
+interface ContextMenuState {
+  x: number;
+  y: number;
+  target: { type: "folder"; id: string } | { type: "conversation"; id: string };
+}
+
+/* ─── Props ───────────────────────────────────────────────────────────────── */
+
 interface Props {
   conversations: Conversation[];
+  folders: Folder[];
   activeId: string | null;
   loading: boolean;
   onSelect: (id: string) => void;
   onCreate: () => void;
   onDelete: (id: string) => void;
   onRename: (id: string, name: string) => void;
+  onCreateFolder: (name: string, parentId?: string | null) => void;
+  onDeleteFolder: (id: string) => void;
+  onRenameFolder: (id: string, name: string) => void;
+  onMoveConversation: (convId: string, folderId: string | null) => void;
   userName: string;
   user?: MeResponse | null;
   onLogout: () => void;
@@ -21,14 +99,21 @@ interface Props {
   onClose?: () => void;
 }
 
+/* ─── Main component ──────────────────────────────────────────────────────── */
+
 export function Sidebar({
   conversations,
+  folders,
   activeId,
   loading,
   onSelect,
   onCreate,
   onDelete,
   onRename,
+  onCreateFolder,
+  onDeleteFolder,
+  onRenameFolder,
+  onMoveConversation,
   userName,
   user,
   onLogout,
@@ -43,6 +128,43 @@ export function Sidebar({
   const editInputRef = useRef<HTMLInputElement>(null);
   const confirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const navigate = useNavigate();
+
+  // Expanded folder state, persisted in localStorage
+  const [expanded, setExpanded] = useState<Set<string>>(() => {
+    try {
+      const saved = localStorage.getItem("familiar-folders-expanded");
+      return saved ? new Set(JSON.parse(saved)) : new Set();
+    } catch {
+      return new Set();
+    }
+  });
+
+  useEffect(() => {
+    localStorage.setItem(
+      "familiar-folders-expanded",
+      JSON.stringify([...expanded]),
+    );
+  }, [expanded]);
+
+  // Context menu state
+  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+  // Move-to submenu open
+  const [moveToOpen, setMoveToOpen] = useState(false);
+
+  // Drag state
+  const [dragOverTarget, setDragOverTarget] = useState<string | null>(null);
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+
+  // Close context menu on click outside
+  useEffect(() => {
+    if (!contextMenu) return;
+    const handleClick = () => {
+      setContextMenu(null);
+      setMoveToOpen(false);
+    };
+    document.addEventListener("click", handleClick);
+    return () => document.removeEventListener("click", handleClick);
+  }, [contextMenu]);
 
   // Focus the rename input when it appears
   useEffect(() => {
@@ -60,17 +182,36 @@ export function Sidebar({
     };
   }, []);
 
-  function startRename(conv: Conversation) {
+  // Build the tree
+  const tree = buildTree(folders, conversations);
+
+  /* ── Rename helpers ─────────────────────────────────────────────────── */
+
+  function startRenameConversation(conv: { id: string; name: string }) {
     setEditingId(conv.id);
     setEditValue(conv.name);
     setConfirmDeleteId(null);
+    setContextMenu(null);
+  }
+
+  function startRenameFolder(folder: { id: string; name: string }) {
+    setEditingId(folder.id);
+    setEditValue(folder.name);
+    setConfirmDeleteId(null);
+    setContextMenu(null);
   }
 
   function commitRename() {
     if (!editingId) return;
     const trimmed = editValue.trim();
     if (trimmed.length > 0) {
-      onRename(editingId, trimmed);
+      // Determine if this is a folder or conversation by checking folders array
+      const isFolder = folders.some((f) => f.id === editingId);
+      if (isFolder) {
+        onRenameFolder(editingId, trimmed);
+      } else {
+        onRename(editingId, trimmed);
+      }
     }
     setEditingId(null);
   }
@@ -79,6 +220,8 @@ export function Sidebar({
     if (e.key === "Enter") commitRename();
     if (e.key === "Escape") setEditingId(null);
   }
+
+  /* ── Delete helpers ─────────────────────────────────────────────────── */
 
   function handleDeleteClick(id: string) {
     if (confirmDeleteId === id) {
@@ -99,6 +242,345 @@ export function Sidebar({
     }
   }
 
+  /* ── Folder toggle ──────────────────────────────────────────────────── */
+
+  function toggleFolder(id: string) {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }
+
+  /* ── Context menu handlers ──────────────────────────────────────────── */
+
+  function handleContextMenu(
+    e: React.MouseEvent,
+    target: ContextMenuState["target"],
+  ) {
+    e.preventDefault();
+    e.stopPropagation();
+    setContextMenu({ x: e.clientX, y: e.clientY, target });
+    setMoveToOpen(false);
+  }
+
+  function handleNewFolder() {
+    onCreateFolder("New Folder");
+  }
+
+  /* ── Drag & Drop handlers ───────────────────────────────────────────── */
+
+  function handleDragStart(e: React.DragEvent, convId: string) {
+    e.dataTransfer.setData("application/familiar-conv", convId);
+    e.dataTransfer.effectAllowed = "move";
+    setDraggingId(convId);
+  }
+
+  function handleDragEnd() {
+    setDraggingId(null);
+    setDragOverTarget(null);
+  }
+
+  function handleDragOver(e: React.DragEvent, folderId: string) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    setDragOverTarget(folderId);
+  }
+
+  function handleDragLeave() {
+    setDragOverTarget(null);
+  }
+
+  function handleDrop(e: React.DragEvent, folderId: string) {
+    e.preventDefault();
+    const convId = e.dataTransfer.getData("application/familiar-conv");
+    if (convId) {
+      onMoveConversation(convId, folderId);
+    }
+    setDragOverTarget(null);
+    setDraggingId(null);
+  }
+
+  function handleRootDragOver(e: React.DragEvent) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+  }
+
+  function handleRootDrop(e: React.DragEvent) {
+    e.preventDefault();
+    const convId = e.dataTransfer.getData("application/familiar-conv");
+    if (convId) {
+      onMoveConversation(convId, null);
+    }
+    setDragOverTarget(null);
+    setDraggingId(null);
+  }
+
+  /* ── Recursive tree renderer ────────────────────────────────────────── */
+
+  function TreeNodeRenderer({
+    node,
+    depth,
+  }: {
+    node: TreeNode;
+    depth: number;
+  }) {
+    if (node.type === "folder") {
+      const isExpanded = expanded.has(node.id);
+      const isDropTarget = dragOverTarget === node.id;
+
+      return (
+        <div>
+          <div
+            className={`${styles.folderItem} ${isDropTarget ? styles.dropTarget : ""}`}
+            style={{ paddingLeft: 12 + depth * 16 }}
+            onClick={() => toggleFolder(node.id)}
+            onContextMenu={(e) =>
+              handleContextMenu(e, { type: "folder", id: node.id })
+            }
+            onDragOver={(e) => handleDragOver(e, node.id)}
+            onDragLeave={handleDragLeave}
+            onDrop={(e) => handleDrop(e, node.id)}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") toggleFolder(node.id);
+            }}
+          >
+            <span className={styles.chevron}>
+              {isExpanded ? <ChevronDownIcon /> : <ChevronRightIcon />}
+            </span>
+            <FolderIcon />
+            {editingId === node.id ? (
+              <input
+                ref={editInputRef}
+                className={styles.renameInput}
+                value={editValue}
+                onChange={(e) => setEditValue(e.target.value)}
+                onKeyDown={handleRenameKeyDown}
+                onBlur={commitRename}
+                onClick={(e) => e.stopPropagation()}
+                maxLength={80}
+                aria-label="Rename folder"
+              />
+            ) : (
+              <span className={styles.folderName}>{node.name}</span>
+            )}
+          </div>
+          {isExpanded && (
+            <div>
+              {node.children.map((child) => (
+                <TreeNodeRenderer
+                  key={child.id}
+                  node={child}
+                  depth={depth + 1}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // Conversation node
+    const conv = node;
+    const isActive = conv.id === activeId;
+    const isEditing = editingId === conv.id;
+    const isConfirming = confirmDeleteId === conv.id;
+    const isDragging = draggingId === conv.id;
+
+    return (
+      <div
+        className={`${styles.item} ${isActive ? styles.itemActive : ""} ${isDragging ? styles.dragging : ""}`}
+        style={{ paddingLeft: 12 + depth * 16 }}
+        onClick={() => {
+          if (!isEditing) onSelect(conv.id);
+        }}
+        onContextMenu={(e) =>
+          handleContextMenu(e, { type: "conversation", id: conv.id })
+        }
+        draggable={!isEditing}
+        onDragStart={(e) => handleDragStart(e, conv.id)}
+        onDragEnd={handleDragEnd}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            if (!isEditing) onSelect(conv.id);
+          }
+        }}
+        aria-current={isActive ? "page" : undefined}
+      >
+        <div className={styles.itemInner}>
+          {isEditing ? (
+            <input
+              ref={editInputRef}
+              className={styles.renameInput}
+              value={editValue}
+              onChange={(e) => setEditValue(e.target.value)}
+              onKeyDown={handleRenameKeyDown}
+              onBlur={commitRename}
+              onClick={(e) => e.stopPropagation()}
+              maxLength={80}
+              aria-label="Rename conversation"
+            />
+          ) : (
+            <span className={styles.convName}>{conv.name}</span>
+          )}
+        </div>
+
+        {/* Action buttons — only visible on hover / active */}
+        {!isEditing && (
+          <div className={styles.actions} onClick={(e) => e.stopPropagation()}>
+            <button
+              className={styles.actionBtn}
+              onClick={() => startRenameConversation(conv)}
+              title="Rename"
+              aria-label="Rename conversation"
+            >
+              <PencilIcon />
+            </button>
+            <button
+              className={`${styles.actionBtn} ${
+                isConfirming ? styles.actionBtnDanger : ""
+              }`}
+              onClick={() => handleDeleteClick(conv.id)}
+              title={isConfirming ? "Click again to confirm" : "Delete"}
+              aria-label={
+                isConfirming
+                  ? "Confirm delete conversation"
+                  : "Delete conversation"
+              }
+            >
+              {isConfirming ? <CheckIcon /> : <TrashIcon />}
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  /* ── Context menu component ─────────────────────────────────────────── */
+
+  function ContextMenu() {
+    if (!contextMenu) return null;
+
+    const { x, y, target } = contextMenu;
+
+    if (target.type === "folder") {
+      return (
+        <div
+          className={styles.contextMenu}
+          style={{ left: x, top: y }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            className={styles.contextMenuItem}
+            onClick={() => {
+              const folder = folders.find((f) => f.id === target.id);
+              if (folder) startRenameFolder(folder);
+              setContextMenu(null);
+            }}
+          >
+            <PencilIcon />
+            Rename
+          </button>
+          <div className={styles.contextMenuSeparator} />
+          <button
+            className={`${styles.contextMenuItem} ${styles.contextMenuDanger}`}
+            onClick={() => {
+              onDeleteFolder(target.id);
+              setContextMenu(null);
+            }}
+          >
+            <TrashIcon />
+            Delete
+          </button>
+        </div>
+      );
+    }
+
+    // Conversation context menu
+    return (
+      <div
+        className={styles.contextMenu}
+        style={{ left: x, top: y }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button
+          className={styles.contextMenuItem}
+          onClick={() => {
+            const conv = conversations.find((c) => c.id === target.id);
+            if (conv) startRenameConversation(conv);
+            setContextMenu(null);
+          }}
+        >
+          <PencilIcon />
+          Rename
+        </button>
+        <div className={styles.contextMenuSeparator} />
+        <div
+          className={styles.contextMenuSubmenu}
+          onMouseEnter={() => setMoveToOpen(true)}
+          onMouseLeave={() => setMoveToOpen(false)}
+        >
+          <button
+            className={styles.contextMenuItem}
+            onClick={() => setMoveToOpen(!moveToOpen)}
+          >
+            <FolderIcon />
+            Move to
+          </button>
+          {moveToOpen && (
+            <div className={styles.contextMenuSubmenuContent}>
+              <button
+                className={styles.contextMenuItem}
+                onClick={() => {
+                  onMoveConversation(target.id, null);
+                  setContextMenu(null);
+                  setMoveToOpen(false);
+                }}
+              >
+                Root
+              </button>
+              {folders.map((f) => (
+                <button
+                  key={f.id}
+                  className={styles.contextMenuItem}
+                  onClick={() => {
+                    onMoveConversation(target.id, f.id);
+                    setContextMenu(null);
+                    setMoveToOpen(false);
+                  }}
+                >
+                  <FolderIcon />
+                  {f.name}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+        <div className={styles.contextMenuSeparator} />
+        <button
+          className={`${styles.contextMenuItem} ${styles.contextMenuDanger}`}
+          onClick={() => {
+            onDelete(target.id);
+            setContextMenu(null);
+          }}
+        >
+          <TrashIcon />
+          Delete
+        </button>
+      </div>
+    );
+  }
+
+  /* ── Render ─────────────────────────────────────────────────────────── */
+
   return (
     <aside className={`${styles.sidebar} ${isOpen ? styles.open : ""}`}>
       {/* Header */}
@@ -106,7 +588,7 @@ export function Sidebar({
         <button
           className={styles.closeBtn}
           onClick={onClose}
-          aria-label="关闭菜单"
+          aria-label="Close menu"
         >
           <CloseIcon />
         </button>
@@ -117,99 +599,52 @@ export function Sidebar({
         <button
           className={styles.searchBtn}
           onClick={onOpenSearch}
-          title="搜索历史"
-          aria-label="搜索历史"
+          title="Search history"
+          aria-label="Search history"
         >
           <SearchIcon />
         </button>
         <button
           className={styles.newBtn}
+          onClick={handleNewFolder}
+          title="New folder"
+          aria-label="New folder"
+        >
+          <FolderPlusIcon />
+        </button>
+        <button
+          className={styles.newBtn}
           onClick={onCreate}
-          title="新建对话"
-          aria-label="新建对话"
+          title="New conversation"
+          aria-label="New conversation"
         >
           <PlusIcon />
         </button>
       </div>
 
       {/* Conversation list */}
-      <nav className={styles.list} aria-label="对话列表">
-        {loading && conversations.length === 0 && (
-          <p className={styles.empty}>加载中…</p>
+      <nav
+        className={styles.list}
+        aria-label="Conversation list"
+        onDragOver={handleRootDragOver}
+        onDrop={handleRootDrop}
+      >
+        {loading && conversations.length === 0 && folders.length === 0 && (
+          <p className={styles.empty}>Loading...</p>
         )}
-        {!loading && conversations.length === 0 && (
-          <p className={styles.empty}>还没有对话，点击 + 新建</p>
+        {!loading && conversations.length === 0 && folders.length === 0 && (
+          <p className={styles.empty}>
+            No conversations yet. Click + to create one.
+          </p>
         )}
 
-        {conversations.map((conv) => {
-          const isActive = conv.id === activeId;
-          const isEditing = editingId === conv.id;
-          const isConfirming = confirmDeleteId === conv.id;
-
-          return (
-            <div
-              key={conv.id}
-              className={`${styles.item} ${isActive ? styles.itemActive : ""}`}
-              onClick={() => {
-                if (!isEditing) onSelect(conv.id);
-              }}
-              role="button"
-              tabIndex={0}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") {
-                  if (!isEditing) onSelect(conv.id);
-                }
-              }}
-              aria-current={isActive ? "page" : undefined}
-            >
-              <div className={styles.itemInner}>
-                {isEditing ? (
-                  <input
-                    ref={editInputRef}
-                    className={styles.renameInput}
-                    value={editValue}
-                    onChange={(e) => setEditValue(e.target.value)}
-                    onKeyDown={handleRenameKeyDown}
-                    onBlur={commitRename}
-                    onClick={(e) => e.stopPropagation()}
-                    maxLength={80}
-                    aria-label="重命名对话"
-                  />
-                ) : (
-                  <span className={styles.convName}>{conv.name}</span>
-                )}
-              </div>
-
-              {/* Action buttons — only visible on hover / active */}
-              {!isEditing && (
-                <div
-                  className={styles.actions}
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  <button
-                    className={styles.actionBtn}
-                    onClick={() => startRename(conv)}
-                    title="重命名"
-                    aria-label="重命名对话"
-                  >
-                    <PencilIcon />
-                  </button>
-                  <button
-                    className={`${styles.actionBtn} ${
-                      isConfirming ? styles.actionBtnDanger : ""
-                    }`}
-                    onClick={() => handleDeleteClick(conv.id)}
-                    title={isConfirming ? "再次点击确认删除" : "删除"}
-                    aria-label={isConfirming ? "确认删除对话" : "删除对话"}
-                  >
-                    {isConfirming ? <CheckIcon /> : <TrashIcon />}
-                  </button>
-                </div>
-              )}
-            </div>
-          );
-        })}
+        {tree.map((node) => (
+          <TreeNodeRenderer key={node.id} node={node} depth={0} />
+        ))}
       </nav>
+
+      {/* Context Menu */}
+      <ContextMenu />
 
       {/* Footer / user info */}
       <div className={styles.footer}>
@@ -224,8 +659,8 @@ export function Sidebar({
             <button
               className={styles.adminBtn}
               onClick={() => navigate("/admin")}
-              title="管理面板"
-              aria-label="打开管理面板"
+              title="Admin panel"
+              aria-label="Open admin panel"
             >
               <AdminIcon />
             </button>
@@ -233,16 +668,16 @@ export function Sidebar({
           <button
             className={styles.logoutBtn}
             onClick={onOpenSettings}
-            title="设置"
-            aria-label="打开设置"
+            title="Settings"
+            aria-label="Open settings"
           >
             <SettingsIcon />
           </button>
           <button
             className={styles.logoutBtn}
             onClick={onLogout}
-            title="退出登录"
-            aria-label="退出登录"
+            title="Logout"
+            aria-label="Logout"
           >
             <LogoutIcon />
           </button>
@@ -256,7 +691,17 @@ export function Sidebar({
 
 function AdminIcon() {
   return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
       <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
     </svg>
   );
@@ -378,35 +823,6 @@ function CheckIcon() {
   );
 }
 
-// function UserIcon() {
-//   return (
-//     <svg
-//       width="14"
-//       height="14"
-//       viewBox="0 0 24 24"
-//       fill="none"
-//       stroke="currentColor"
-//       strokeWidth="2"
-//       strokeLinecap="round"
-//       strokeLinejoin="round"
-//       aria-hidden="true"
-//     >
-//       <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-//       <circle cx="12" cy="7" r="4" />
-//     </svg>
-//   );
-// }
-
-// function PlugIcon() {
-//   return (
-//     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-//       <path d="M18 7l-1.5-1.5" /><path d="M6 7l1.5-1.5" />
-//       <path d="M12 2v2" /><rect x="4" y="7" width="16" height="8" rx="2" />
-//       <path d="M12 17v3" /><path d="M9 20h6" />
-//     </svg>
-//   );
-// }
-
 function LogoutIcon() {
   return (
     <svg
@@ -442,6 +858,80 @@ function SearchIcon() {
     >
       <circle cx="11" cy="11" r="8" />
       <line x1="21" y1="21" x2="16.65" y2="16.65" />
+    </svg>
+  );
+}
+
+function FolderIcon() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+    </svg>
+  );
+}
+
+function ChevronRightIcon() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <polyline points="9 18 15 12 9 6" />
+    </svg>
+  );
+}
+
+function ChevronDownIcon() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <polyline points="6 9 12 15 18 9" />
+    </svg>
+  );
+}
+
+function FolderPlusIcon() {
+  return (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+      <line x1="12" y1="11" x2="12" y2="17" />
+      <line x1="9" y1="14" x2="15" y2="14" />
     </svg>
   );
 }

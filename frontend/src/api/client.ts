@@ -80,6 +80,10 @@ import type {
   UpsertModelRequest,
   ModelPermissionsResponse,
   UpdateModelPermissionsRequest,
+  Folder,
+  CreateFolderRequest,
+  UpdateFolderRequest,
+  MoveConversationRequest,
 } from "./types";
 
 export const api = {
@@ -93,20 +97,60 @@ export const api = {
   },
 
   getTokenUsage(token: string) {
-    return get<{ prompt_tokens: number; completion_tokens: number; cache_read_tokens: number; cache_creation_tokens: number; total_tokens: number; conversation_count: number }>("/api/admin/token-usage", token);
+    return get<{
+      prompt_tokens: number;
+      completion_tokens: number;
+      cache_read_tokens: number;
+      cache_creation_tokens: number;
+      total_tokens: number;
+      conversation_count: number;
+    }>("/api/admin/token-usage", token);
   },
 
   getTokenUsageByUser(token: string) {
-    return get<{ users: { user_id: string; username: string; conversation_count: number; prompt_tokens: number; completion_tokens: number; cache_read_tokens: number; cache_creation_tokens: number; total_tokens: number }[] }>("/api/admin/token-usage/by-user", token);
+    return get<{
+      users: {
+        user_id: string;
+        username: string;
+        conversation_count: number;
+        prompt_tokens: number;
+        completion_tokens: number;
+        cache_read_tokens: number;
+        cache_creation_tokens: number;
+        total_tokens: number;
+      }[];
+    }>("/api/admin/token-usage/by-user", token);
   },
 
   getTokenUsageConversations(token: string, userId?: string) {
     const q = userId ? `?user_id=${userId}` : "";
-    return get<{ conversations: { conv_id: string; conv_name: string; username: string; created_at: string; prompt_tokens: number; completion_tokens: number; cache_read_tokens: number; cache_creation_tokens: number; total_tokens: number }[] }>(`/api/admin/token-usage/conversations${q}`, token);
+    return get<{
+      conversations: {
+        conv_id: string;
+        conv_name: string;
+        username: string;
+        created_at: string;
+        prompt_tokens: number;
+        completion_tokens: number;
+        cache_read_tokens: number;
+        cache_creation_tokens: number;
+        total_tokens: number;
+      }[];
+    }>(`/api/admin/token-usage/conversations${q}`, token);
   },
 
   getTokenUsageDaily(token: string) {
-    return get<{ days: { day: string; total_tokens: number; prompt_tokens: number; completion_tokens: number; cache_read_tokens: number; cache_creation_tokens: number; conversation_count: number }[] }>("/api/admin/token-usage/daily", token);
+    return get<{
+      days: {
+        day: string;
+        total_tokens: number;
+        prompt_tokens: number;
+        completion_tokens: number;
+        cache_read_tokens: number;
+        cache_creation_tokens: number;
+        conversation_count: number;
+      }[];
+    }>("/api/admin/token-usage/daily", token);
   },
 
   getAdminConfig(token: string) {
@@ -206,11 +250,7 @@ export const api = {
     );
   },
 
-  activateMessage(
-    token: string,
-    conversationId: string,
-    messageId: number,
-  ) {
+  activateMessage(token: string, conversationId: string, messageId: number) {
     return post<{ active_message_id: number }>(
       `/api/conversations/${conversationId}/activate`,
       { message_id: messageId },
@@ -269,7 +309,41 @@ export const api = {
   },
 
   updateModelPermissions(token: string, body: UpdateModelPermissionsRequest) {
-    return request<{ ok: boolean }>("PUT", "/api/admin/model-permissions", body, token);
+    return request<{ ok: boolean }>(
+      "PUT",
+      "/api/admin/model-permissions",
+      body,
+      token,
+    );
+  },
+
+  // ── Folders ───────────────────────────────────────────────────────────
+  listFolders(token: string) {
+    return get<Folder[]>("/api/folders", token);
+  },
+
+  createFolder(token: string, body: CreateFolderRequest) {
+    return post<Folder>("/api/folders", body, token);
+  },
+
+  updateFolder(token: string, id: string, body: UpdateFolderRequest) {
+    return patch<Folder>(`/api/folders/${id}`, body, token);
+  },
+
+  deleteFolder(token: string, id: string) {
+    return del<{ ok: boolean }>(`/api/folders/${id}`, token);
+  },
+
+  moveConversation(
+    token: string,
+    convId: string,
+    body: MoveConversationRequest,
+  ) {
+    return patch<{ ok: boolean }>(
+      `/api/conversations/${convId}/move`,
+      body,
+      token,
+    );
   },
 
   // ── MCPs ─────────────────────────────────────────────────────────────────

@@ -26,10 +26,15 @@ export function ChatPage() {
 
   const {
     conversations,
+    folders,
     loading: convsLoading,
     createConversation,
     deleteConversation,
     renameConversation,
+    createFolder,
+    deleteFolder,
+    renameFolder,
+    moveConversation,
   } = useConversations(token);
 
   // Derived from URL
@@ -112,7 +117,8 @@ export function ChatPage() {
   // Watch whether the last bubble is inside the scroll viewport. When it
   // scrolls out of view (user scrolled up, or assistant reply grew past the
   // fold), surface a jump-to-bottom button.
-  const lastBubbleKey = bubbles.length > 0 ? bubbles[bubbles.length - 1].key : null;
+  const lastBubbleKey =
+    bubbles.length > 0 ? bubbles[bubbles.length - 1].key : null;
   useEffect(() => {
     const target = lastBubbleRef.current;
     const root = messagesRef.current;
@@ -177,9 +183,11 @@ export function ChatPage() {
   useEffect(() => {
     if (status !== "connecting" && status !== "streaming") return;
     requestAnimationFrame(() =>
-      lastUserBubbleRef.current?.scrollIntoView({ block: "start", behavior: "instant" })
+      lastUserBubbleRef.current?.scrollIntoView({
+        block: "start",
+        behavior: "instant",
+      }),
     );
-   
   }, [lastUserBubbleKey, status]);
 
   // ── Load history when switching to a real conversation ─────────────────
@@ -210,8 +218,11 @@ export function ChatPage() {
           // Scroll last bubble into view after history renders (double rAF for React flush)
           requestAnimationFrame(() =>
             requestAnimationFrame(() =>
-              lastBubbleRef.current?.scrollIntoView({ block: "end", behavior: "instant" })
-            )
+              lastBubbleRef.current?.scrollIntoView({
+                block: "end",
+                behavior: "instant",
+              }),
+            ),
           );
         }
       } catch {
@@ -364,12 +375,17 @@ export function ChatPage() {
       >
         <Sidebar
           conversations={conversations}
+          folders={folders}
           activeId={sidebarActiveId}
           loading={convsLoading}
           onSelect={handleSelectConversation}
           onCreate={handleCreate}
           onDelete={handleDelete}
           onRename={handleRename}
+          onCreateFolder={createFolder}
+          onDeleteFolder={deleteFolder}
+          onRenameFolder={renameFolder}
+          onMoveConversation={moveConversation}
           userName={user?.name ?? ""}
           user={user}
           onLogout={logout}
@@ -444,81 +460,83 @@ export function ChatPage() {
 
         {/* Message area */}
         <div className={styles.messagesWrapper}>
-        {showScrollDown && (
-          <button
-            type="button"
-            className={styles.scrollToBottomBtn}
-            onClick={handleScrollToBottom}
-            aria-label="滚动到最新消息"
-          >
-            <ScrollDownIcon />
-          </button>
-        )}
-        <div ref={messagesRef} className={styles.messages}>
-          {isDraft && bubbles.length === 0 && (
-            <div className={styles.empty}>
-              <img src="/favicon.svg" width={52} height={52} alt="" />
-              <p className={styles.emptyTitle}>{getZenGreetingBySeason()}</p>
-              {token && (
-                <ModelPicker
-                  token={token}
-                  value={draftModelId}
-                  onChange={setDraftModelId}
-                />
-              )}
-            </div>
+          {showScrollDown && (
+            <button
+              type="button"
+              className={styles.scrollToBottomBtn}
+              onClick={handleScrollToBottom}
+              aria-label="滚动到最新消息"
+            >
+              <ScrollDownIcon />
+            </button>
           )}
-
-          {!isDraft && historyLoading && (
-            <div className={styles.empty}>
-              <p className={styles.emptyHint}>加载消息中…</p>
-            </div>
-          )}
-
-          {!isDraft && !historyLoading && bubbles.length === 0 && (
-            <div className={styles.empty}>
-              <img src="/favicon.svg" width={44} height={44} alt="" />
-              <p className={styles.emptyHint}>发送消息开始对话</p>
-            </div>
-          )}
-
-          {bubbles.map((bubble, i) => {
-            const isLast = i === bubbles.length - 1;
-            const isLastUser =
-              bubble.role === "user" &&
-              !bubbles.slice(i + 1).some((b) => b.role === "user");
-            return (
-              <div
-                key={bubble.key}
-                ref={(el) => {
-                  if (isLast) lastBubbleRef.current = el;
-                  if (isLastUser) lastUserBubbleRef.current = el;
-                }}
-              >
-                <MessageBubble
-                  bubble={bubble}
-                  onAnswer={answerQuestion}
-                  conversationId={activeId === DRAFT_ID ? null : activeId}
-                  onBranch={branch}
-                  onSwitchSibling={switchSibling}
-                  fullReplyContent={replyCopyText.get(bubble.key)}
-                />
+          <div ref={messagesRef} className={styles.messages}>
+            {isDraft && bubbles.length === 0 && (
+              <div className={styles.empty}>
+                <img src="/favicon.svg" width={52} height={52} alt="" />
+                <p className={styles.emptyTitle}>{getZenGreetingBySeason()}</p>
+                {token && (
+                  <ModelPicker
+                    token={token}
+                    value={draftModelId}
+                    onChange={setDraftModelId}
+                  />
+                )}
               </div>
-            );
-          })}
+            )}
 
-          {errorMsg && (
-            <div className={styles.errorBanner} role="alert">
-              ⚠️ {errorMsg}
-            </div>
-          )}
+            {!isDraft && historyLoading && (
+              <div className={styles.empty}>
+                <p className={styles.emptyHint}>加载消息中…</p>
+              </div>
+            )}
 
-          {/* Spacer only during streaming so user message can scroll to top */}
-          {(status === "streaming" || status === "connecting") && (
-            <div style={{ minHeight: "100vh", flexShrink: 0 }} aria-hidden="true" />
-          )}
+            {!isDraft && !historyLoading && bubbles.length === 0 && (
+              <div className={styles.empty}>
+                <img src="/favicon.svg" width={44} height={44} alt="" />
+                <p className={styles.emptyHint}>发送消息开始对话</p>
+              </div>
+            )}
 
-        </div>
+            {bubbles.map((bubble, i) => {
+              const isLast = i === bubbles.length - 1;
+              const isLastUser =
+                bubble.role === "user" &&
+                !bubbles.slice(i + 1).some((b) => b.role === "user");
+              return (
+                <div
+                  key={bubble.key}
+                  ref={(el) => {
+                    if (isLast) lastBubbleRef.current = el;
+                    if (isLastUser) lastUserBubbleRef.current = el;
+                  }}
+                >
+                  <MessageBubble
+                    bubble={bubble}
+                    onAnswer={answerQuestion}
+                    conversationId={activeId === DRAFT_ID ? null : activeId}
+                    onBranch={branch}
+                    onSwitchSibling={switchSibling}
+                    fullReplyContent={replyCopyText.get(bubble.key)}
+                  />
+                </div>
+              );
+            })}
+
+            {errorMsg && (
+              <div className={styles.errorBanner} role="alert">
+                ⚠️ {errorMsg}
+              </div>
+            )}
+
+            {/* Spacer only during streaming so user message can scroll to top */}
+            {(status === "streaming" || status === "connecting") && (
+              <div
+                style={{ minHeight: "100vh", flexShrink: 0 }}
+                aria-hidden="true"
+              />
+            )}
+          </div>
         </div>
 
         {/* Input — always enabled in draft mode */}
@@ -636,4 +654,3 @@ function ScrollDownIcon() {
     </svg>
   );
 }
-

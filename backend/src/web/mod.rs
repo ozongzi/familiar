@@ -170,6 +170,12 @@ pub fn create_router(state: AppState, allowed_origin: Option<&str>) -> Router {
         .route("/api/conversations/{id}", delete(delete_conversation))
         .route("/api/conversations/{id}", patch(rename_conversation))
         .route("/api/conversations/{id}/title", post(auto_title))
+        // ── Folders ──────────────────────────────────────────────────────────────
+        .route("/api/folders", get(list_folders))
+        .route("/api/folders", post(create_folder))
+        .route("/api/folders/{id}", patch(update_folder))
+        .route("/api/folders/{id}", delete(delete_folder))
+        .route("/api/conversations/{id}/move", patch(move_conversation))
         // ── Messages ──────────────────────────────────────────────────────────
         .route("/api/conversations/{id}/messages", get(list_messages))
         .route("/api/search", get(search_messages))

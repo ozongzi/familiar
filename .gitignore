@@ -14,3 +14,4 @@ playwright-browsers*
 frontend/src-tauri/binaries
 **/target
 CLAUDE.md
+AGENTS.md

@@ -39,11 +39,37 @@ export interface Conversation {
   name: string;
   model_id: string | null;
   created_at: string;
+  folder_id: string | null;
+}
+
+export interface Folder {
+  id: string;
+  name: string;
+  parent_id: string | null;
+  position: number;
+  created_at: string;
+  conversation_count: number;
 }
 
 export interface CreateConversationRequest {
   name?: string;
   model_id?: string | null;
+  folder_id?: string | null;
+}
+
+export interface CreateFolderRequest {
+  name: string;
+  parent_id?: string | null;
+}
+
+export interface UpdateFolderRequest {
+  name?: string;
+  parent_id?: string | null;
+  position?: number;
+}
+
+export interface MoveConversationRequest {
+  folder_id?: string | null;
 }
 
 // ─── Models ───────────────────────────────────────────────────────────────
