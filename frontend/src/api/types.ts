@@ -273,7 +273,17 @@ export interface UserSettings {
   system_prompt: string | null;
 }
 
-export type Provider = "deepseek" | "openai" | "anthropic" | "gemini" | "kimi" | "glm" | "minimax" | "grok" | "openrouter";
+export type Provider =
+  | "deepseek"
+  | "openai"
+  | "anthropic"
+  | "gemini"
+  | "kimi"
+  | "glm"
+  | "minimax"
+  | "mimo"
+  | "grok"
+  | "openrouter";
 
 export interface ModelConfig {
   name: string;
@@ -293,7 +303,12 @@ export interface UpdateSettingsRequest {
 }
 
 export type McpServerConfig =
-  | { name: string; command: string; args?: string[]; env?: Record<string, string> }
+  | {
+      name: string;
+      command: string;
+      args?: string[];
+      env?: Record<string, string>;
+    }
   | { name: string; url: string };
 
 export interface McpCatalogEntry {
