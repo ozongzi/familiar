@@ -74,6 +74,7 @@ import type {
   Skill,
   CreateSkillRequest,
   AdminConfig,
+  MessageTtsResponse,
   AppSkill,
   SearchResult,
   Model,
@@ -159,6 +160,19 @@ export const api = {
 
   updateAdminConfig(token: string, body: AdminConfig) {
     return post<{ ok: boolean }>("/api/admin/config", body, token);
+  },
+
+  synthesizeMessageTts(
+    token: string,
+    conversationId: string,
+    messageId: number,
+    body: { style?: string | null },
+  ) {
+    return post<MessageTtsResponse>(
+      `/api/conversations/${conversationId}/messages/${messageId}/tts`,
+      body,
+      token,
+    );
   },
 
   listAdminSkills(token: string) {

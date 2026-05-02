@@ -15,6 +15,11 @@ pub struct Config {
     pub tavily_api_key: Option<String>,
     pub siliconflow_api_key: Option<String>,
     pub fal_api_key: Option<String>,
+    pub mimo_tts_api_key: Option<String>,
+    pub mimo_tts_api_base: Option<String>,
+    pub mimo_tts_model: Option<String>,
+    pub mimo_tts_voice: Option<String>,
+    pub mimo_tts_style: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -118,6 +123,11 @@ struct AppConfigRow {
     tavily_api_key: Option<String>,
     siliconflow_api_key: Option<String>,
     fal_api_key: Option<String>,
+    mimo_tts_api_key: Option<String>,
+    mimo_tts_api_base: Option<String>,
+    mimo_tts_model: Option<String>,
+    mimo_tts_voice: Option<String>,
+    mimo_tts_style: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -175,6 +185,11 @@ impl Default for Config {
             tavily_api_key: None,
             siliconflow_api_key: None,
             fal_api_key: None,
+            mimo_tts_api_key: None,
+            mimo_tts_api_base: Some("https://api.xiaomimimo.com/v1".to_string()),
+            mimo_tts_model: Some("mimo-v2.5-tts".to_string()),
+            mimo_tts_voice: Some("mimo_default".to_string()),
+            mimo_tts_style: Some("(河南话)".to_string()),
         }
     }
 }
@@ -185,7 +200,9 @@ impl Config {
 
         // ── Load API keys + mcp_catalog from app_config ───────────────────
         let row = sqlx::query_as::<_, AppConfigRow>(
-            "SELECT tavily_api_key, siliconflow_api_key, fal_api_key
+            "SELECT tavily_api_key, siliconflow_api_key, fal_api_key,
+                    mimo_tts_api_key, mimo_tts_api_base, mimo_tts_model,
+                    mimo_tts_voice, mimo_tts_style
              FROM app_config WHERE id = true",
         )
         .fetch_optional(pool)
@@ -195,6 +212,17 @@ impl Config {
             cfg.tavily_api_key = r.tavily_api_key;
             cfg.siliconflow_api_key = r.siliconflow_api_key;
             cfg.fal_api_key = r.fal_api_key;
+            cfg.mimo_tts_api_key = r.mimo_tts_api_key;
+            cfg.mimo_tts_api_base = r
+                .mimo_tts_api_base
+                .or_else(|| Some("https://api.xiaomimimo.com/v1".to_string()));
+            cfg.mimo_tts_model = r
+                .mimo_tts_model
+                .or_else(|| Some("mimo-v2.5-tts".to_string()));
+            cfg.mimo_tts_voice = r
+                .mimo_tts_voice
+                .or_else(|| Some("mimo_default".to_string()));
+            cfg.mimo_tts_style = r.mimo_tts_style.or_else(|| Some("(河南话)".to_string()));
         }
 
         // ── Load MCP catalog from dedicated table ─────────────────────────
@@ -349,18 +377,32 @@ impl Config {
     pub async fn upsert(pool: &PgPool, cfg: &Config) -> anyhow::Result<()> {
         sqlx::query(
             r#"
-            INSERT INTO app_config (id, tavily_api_key, siliconflow_api_key, fal_api_key, updated_at)
-            VALUES (true, $1, $2, $3, NOW())
+            INSERT INTO app_config (
+                id, tavily_api_key, siliconflow_api_key, fal_api_key,
+                mimo_tts_api_key, mimo_tts_api_base, mimo_tts_model,
+                mimo_tts_voice, mimo_tts_style, updated_at
+            )
+            VALUES (true, $1, $2, $3, $4, $5, $6, $7, $8, NOW())
             ON CONFLICT (id) DO UPDATE SET
                 tavily_api_key      = EXCLUDED.tavily_api_key,
                 siliconflow_api_key = EXCLUDED.siliconflow_api_key,
                 fal_api_key         = EXCLUDED.fal_api_key,
+                mimo_tts_api_key    = EXCLUDED.mimo_tts_api_key,
+                mimo_tts_api_base   = EXCLUDED.mimo_tts_api_base,
+                mimo_tts_model      = EXCLUDED.mimo_tts_model,
+                mimo_tts_voice      = EXCLUDED.mimo_tts_voice,
+                mimo_tts_style      = EXCLUDED.mimo_tts_style,
                 updated_at          = NOW()
             "#,
         )
         .bind(&cfg.tavily_api_key)
         .bind(&cfg.siliconflow_api_key)
         .bind(&cfg.fal_api_key)
+        .bind(&cfg.mimo_tts_api_key)
+        .bind(&cfg.mimo_tts_api_base)
+        .bind(&cfg.mimo_tts_model)
+        .bind(&cfg.mimo_tts_voice)
+        .bind(&cfg.mimo_tts_style)
         .execute(pool)
         .await?;
 

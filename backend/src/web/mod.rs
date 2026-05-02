@@ -10,6 +10,7 @@ pub mod models;
 pub mod sessions;
 pub mod settings;
 pub mod sse;
+pub mod tts;
 pub mod tunnel;
 pub mod users;
 
@@ -178,6 +179,10 @@ pub fn create_router(state: AppState, allowed_origin: Option<&str>) -> Router {
         .route("/api/conversations/{id}/move", patch(move_conversation))
         // ── Messages ──────────────────────────────────────────────────────────
         .route("/api/conversations/{id}/messages", get(list_messages))
+        .route(
+            "/api/conversations/{id}/messages/{message_id}/tts",
+            post(tts::synthesize_message_tts),
+        )
         .route("/api/search", get(search_messages))
         // ── MCPs ──────────────────────────────────────────────────────────────
         .route("/api/mcps", get(list_mcps))

@@ -371,6 +371,10 @@ fn mime_from_filename(name: &str) -> &'static str {
         "gif" => "image/gif",
         "webp" => "image/webp",
         "ico" => "image/x-icon",
+        // Audio
+        "wav" => "audio/wav",
+        "mp3" => "audio/mpeg",
+        "pcm" => "audio/L16",
         // Archives
         "zip" => "application/zip",
         "tar" => "application/x-tar",

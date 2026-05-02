@@ -174,6 +174,57 @@ export function AdminConfig() {
                   placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx:..."
                 />
               </div>
+              <div className={styles.field}>
+                <label>MiMo TTS API Key</label>
+                <input
+                  type="password"
+                  value={config.mimo_tts_api_key ?? ""}
+                  onChange={(e) => setConfig({ ...config, mimo_tts_api_key: e.target.value || null })}
+                  placeholder="sk-..."
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className={styles.group}>
+            <h4>MiMo TTS</h4>
+            <div className={styles.fieldRow}>
+              <div className={styles.field}>
+                <label>Base URL</label>
+                <input
+                  type="text"
+                  value={config.mimo_tts_api_base ?? "https://api.xiaomimimo.com/v1"}
+                  onChange={(e) => setConfig({ ...config, mimo_tts_api_base: e.target.value || null })}
+                  placeholder="https://api.xiaomimimo.com/v1"
+                />
+              </div>
+              <div className={styles.field}>
+                <label>Model</label>
+                <input
+                  type="text"
+                  value={config.mimo_tts_model ?? "mimo-v2.5-tts"}
+                  onChange={(e) => setConfig({ ...config, mimo_tts_model: e.target.value || null })}
+                  placeholder="mimo-v2.5-tts"
+                />
+              </div>
+              <div className={styles.field}>
+                <label>Voice</label>
+                <input
+                  type="text"
+                  value={config.mimo_tts_voice ?? "mimo_default"}
+                  onChange={(e) => setConfig({ ...config, mimo_tts_voice: e.target.value || null })}
+                  placeholder="mimo_default / 冰糖 / 茉莉 / 苏打 / 白桦"
+                />
+              </div>
+              <div className={styles.field}>
+                <label>默认风格</label>
+                <input
+                  type="text"
+                  value={config.mimo_tts_style ?? "(河南话)"}
+                  onChange={(e) => setConfig({ ...config, mimo_tts_style: e.target.value || null })}
+                  placeholder="(河南话)"
+                />
+              </div>
             </div>
           </div>
 

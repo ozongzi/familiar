@@ -365,6 +365,20 @@ export interface AdminConfig {
   tavily_api_key?: string | null;
   siliconflow_api_key?: string | null;
   fal_api_key?: string | null;
+  mimo_tts_api_key?: string | null;
+  mimo_tts_api_base?: string | null;
+  mimo_tts_model?: string | null;
+  mimo_tts_voice?: string | null;
+  mimo_tts_style?: string | null;
+}
+
+export interface MessageTtsResponse {
+  url: string;
+  path: string;
+  cached: boolean;
+  model: string;
+  voice: string;
+  style: string;
 }
 
 // ─── API error shape ─────────────────────────────────────────────────────

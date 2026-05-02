@@ -8,6 +8,7 @@ import React, {
   useLayoutEffect,
 } from "react";
 import { MarkdownRenderer } from "./MarkdownRenderer";
+import { api } from "../api/client";
 import type { ChatBubble, ToolBubble, UploadBubble } from "../api/types";
 import { buildToolArgsView } from "./messageBubble.toolParsing";
 import { FilePreviewContent } from "./FilePreviewContent";
@@ -64,6 +65,7 @@ export const MessageBubble = memo(function MessageBubble({
       bubble={bubble}
       onBranch={onBranch}
       onSwitchSibling={onSwitchSibling}
+      conversationId={conversationId}
       fullReplyContent={fullReplyContent}
     />
   );
@@ -266,11 +268,13 @@ function TextChatBubble({
   bubble,
   onBranch,
   onSwitchSibling,
+  conversationId,
   fullReplyContent,
 }: {
   bubble: Extract<ChatBubble, { kind: "text" }>;
   onBranch?: (msgId: number, bubbleKey: string, newText: string) => void;
   onSwitchSibling?: (targetMsgId: number) => void;
+  conversationId?: string | null;
   fullReplyContent?: string;
 }) {
   const isUser = bubble.role === "user";
@@ -291,10 +295,21 @@ function TextChatBubble({
   //     Mid-reply fragments and mid-stream bubbles receive no content, so
   //     no copy button surfaces there.
   const [copied, setCopied] = useState(false);
+  const [ttsLoading, setTtsLoading] = useState(false);
+  const [ttsError, setTtsError] = useState("");
+  const [ttsUrl, setTtsUrl] = useState<string | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
   const copyText = isUser
     ? (!bubble.streaming && bubble.content.length > 0 ? stripTimestamp(bubble.content) : null)
     : (fullReplyContent ?? null);
   const canCopy = !editing && copyText != null && copyText.length > 0;
+  const canSpeak =
+    !isUser &&
+    !editing &&
+    !bubble.streaming &&
+    bubble.msgId != null &&
+    conversationId != null &&
+    bubble.content.trim().length > 0;
   const copyMessage = useCallback(() => {
     if (copyText == null) return;
     navigator.clipboard.writeText(copyText).then(() => {
@@ -302,6 +317,27 @@ function TextChatBubble({
       setTimeout(() => setCopied(false), 2000);
     });
   }, [copyText]);
+
+  const speakMessage = useCallback(async () => {
+    if (!canSpeak || !conversationId || bubble.msgId == null) return;
+    setTtsError("");
+    setTtsLoading(true);
+    try {
+      const token = localStorage.getItem("familiar_token") ?? "";
+      const res = await api.synthesizeMessageTts(token, conversationId, bubble.msgId, {
+        style: "(河南话)",
+      });
+      const sep = res.url.includes("?") ? "&" : "?";
+      setTtsUrl(`${BASE()}${res.url}${sep}token=${encodeURIComponent(token)}`);
+      window.setTimeout(() => {
+        audioRef.current?.play().catch(() => setTtsError("播放失败"));
+      }, 0);
+    } catch (e) {
+      setTtsError(e instanceof Error ? e.message : "语音生成失败");
+    } finally {
+      setTtsLoading(false);
+    }
+  }, [bubble.msgId, canSpeak, conversationId]);
 
   // Branch switcher: show `‹ idx/N ›` when this message has siblings.
   const siblings = bubble.siblings ?? [];
@@ -454,17 +490,39 @@ function TextChatBubble({
             )}
           </>
         )}
-        {canCopy && (
+        {(canCopy || canSpeak) && (
           <div className={styles.bubbleFooter}>
-            <button
-              type="button"
-              className={styles.footerAction}
-              onClick={copyMessage}
-              title={copied ? "已复制" : "复制"}
-              aria-label={copied ? "已复制" : "复制"}
-            >
-              {copied ? <CopiedIcon /> : <CopyIcon />}
-            </button>
+            {canCopy && (
+              <button
+                type="button"
+                className={styles.footerAction}
+                onClick={copyMessage}
+                title={copied ? "已复制" : "复制"}
+                aria-label={copied ? "已复制" : "复制"}
+              >
+                {copied ? <CopiedIcon /> : <CopyIcon />}
+              </button>
+            )}
+            {canSpeak && (
+              <button
+                type="button"
+                className={styles.footerAction}
+                onClick={speakMessage}
+                disabled={ttsLoading}
+                aria-label="播放语音"
+              >
+                <SpeakerIcon />
+              </button>
+            )}
+            {ttsError && <span className={styles.footerError}>{ttsError}</span>}
+            {ttsUrl && (
+              <audio
+                ref={audioRef}
+                src={ttsUrl}
+                preload="none"
+                className={styles.hiddenAudio}
+              />
+            )}
           </div>
         )}
       </div>
@@ -1413,6 +1471,19 @@ function CopiedIcon() {
   return (
     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <polyline points="20 6 9 17 4 12" />
+    </svg>
+  );
+}
+
+function SpeakerIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M2 12h2" />
+      <path d="M6 8v8" />
+      <path d="M10 4v16" />
+      <path d="M14 7v10" />
+      <path d="M18 10v4" />
+      <path d="M22 12h-2" />
     </svg>
   );
 }
