@@ -67,6 +67,21 @@ function buildTree(
   return roots;
 }
 
+function flattenVisibleConversationIds(
+  nodes: TreeNode[],
+  expanded: Set<string>,
+  acc: string[] = [],
+): string[] {
+  for (const node of nodes) {
+    if (node.type === "conversation") {
+      acc.push(node.id);
+    } else if (expanded.has(node.id)) {
+      flattenVisibleConversationIds(node.children, expanded, acc);
+    }
+  }
+  return acc;
+}
+
 /* ─── Context menu state ──────────────────────────────────────────────────── */
 
 interface ContextMenuState {
@@ -154,6 +169,10 @@ export function Sidebar({
   // Drag state
   const [dragOverTarget, setDragOverTarget] = useState<string | null>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  const [lastSelectedId, setLastSelectedId] = useState<string | null>(null);
+  const [touchDrag, setTouchDrag] = useState<{ ids: string[]; x: number; y: number } | null>(null);
+  const touchDragIdsRef = useRef<string[]>([]);
 
   // Close context menu on click outside
   useEffect(() => {
@@ -184,6 +203,45 @@ export function Sidebar({
 
   // Build the tree
   const tree = buildTree(folders, conversations);
+  const visibleConversationIds = flattenVisibleConversationIds(tree, expanded);
+
+  useEffect(() => {
+    if (!activeId) return;
+    const active = conversations.find((c) => c.id === activeId);
+    if (!active?.folder_id) return;
+
+    const byId = new Map(folders.map((f) => [f.id, f]));
+    const parents: string[] = [];
+    let current: string | null = active.folder_id;
+    while (current) {
+      parents.push(current);
+      current = byId.get(current)?.parent_id ?? null;
+    }
+    if (parents.length === 0) return;
+
+    setExpanded((prev) => {
+      let changed = false;
+      const next = new Set(prev);
+      for (const id of parents) {
+        if (!next.has(id)) {
+          next.add(id);
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [activeId, conversations, folders]);
+
+  useEffect(() => {
+    const valid = new Set(conversations.map((c) => c.id));
+    setSelectedIds((prev) => {
+      const next = new Set([...prev].filter((id) => valid.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+    if (lastSelectedId && !valid.has(lastSelectedId)) {
+      setLastSelectedId(null);
+    }
+  }, [conversations, lastSelectedId]);
 
   /* ── Rename helpers ─────────────────────────────────────────────────── */
 
@@ -242,6 +300,15 @@ export function Sidebar({
     }
   }
 
+  function handleBatchDelete(ids: string[]) {
+    if (ids.length === 0) return;
+    const ok = window.confirm(`Delete ${ids.length} selected conversation${ids.length === 1 ? "" : "s"}?`);
+    if (!ok) return;
+    for (const id of ids) onDelete(id);
+    setSelectedIds(new Set());
+    setLastSelectedId(null);
+  }
+
   /* ── Folder toggle ──────────────────────────────────────────────────── */
 
   function toggleFolder(id: string) {
@@ -274,7 +341,48 @@ export function Sidebar({
 
   /* ── Drag & Drop handlers ───────────────────────────────────────────── */
 
+  function dragIdsFor(convId: string): string[] {
+    return selectedIds.has(convId) ? [...selectedIds] : [convId];
+  }
+
+  function moveConversations(ids: string[], folderId: string | null) {
+    const unique = [...new Set(ids)];
+    for (const id of unique) onMoveConversation(id, folderId);
+  }
+
+  function handleConversationClick(e: React.MouseEvent, convId: string) {
+    if (e.shiftKey && lastSelectedId) {
+      const a = visibleConversationIds.indexOf(lastSelectedId);
+      const b = visibleConversationIds.indexOf(convId);
+      if (a >= 0 && b >= 0) {
+        const [start, end] = a < b ? [a, b] : [b, a];
+        setSelectedIds(new Set(visibleConversationIds.slice(start, end + 1)));
+        return;
+      }
+    }
+    if (e.metaKey || e.ctrlKey) {
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        if (next.has(convId)) next.delete(convId);
+        else next.add(convId);
+        return next;
+      });
+      setLastSelectedId(convId);
+      return;
+    }
+    setSelectedIds(new Set());
+    setLastSelectedId(convId);
+    onSelect(convId);
+    onClose?.();
+  }
+
   function handleDragStart(e: React.DragEvent, convId: string) {
+    const ids = dragIdsFor(convId);
+    if (!selectedIds.has(convId)) {
+      setSelectedIds(new Set([convId]));
+      setLastSelectedId(convId);
+    }
+    e.dataTransfer.setData("application/familiar-convs", JSON.stringify(ids));
     e.dataTransfer.setData("application/familiar-conv", convId);
     e.dataTransfer.effectAllowed = "move";
     setDraggingId(convId);
@@ -297,10 +405,8 @@ export function Sidebar({
 
   function handleDrop(e: React.DragEvent, folderId: string) {
     e.preventDefault();
-    const convId = e.dataTransfer.getData("application/familiar-conv");
-    if (convId) {
-      onMoveConversation(convId, folderId);
-    }
+    const ids = readDraggedIds(e.dataTransfer);
+    moveConversations(ids, folderId);
     setDragOverTarget(null);
     setDraggingId(null);
   }
@@ -308,16 +414,70 @@ export function Sidebar({
   function handleRootDragOver(e: React.DragEvent) {
     e.preventDefault();
     e.dataTransfer.dropEffect = "move";
+    setDragOverTarget("root");
   }
 
   function handleRootDrop(e: React.DragEvent) {
     e.preventDefault();
-    const convId = e.dataTransfer.getData("application/familiar-conv");
-    if (convId) {
-      onMoveConversation(convId, null);
-    }
+    const ids = readDraggedIds(e.dataTransfer);
+    moveConversations(ids, null);
     setDragOverTarget(null);
     setDraggingId(null);
+  }
+
+  function readDraggedIds(dataTransfer: DataTransfer): string[] {
+    const rawMany = dataTransfer.getData("application/familiar-convs");
+    if (rawMany) {
+      try {
+        const parsed = JSON.parse(rawMany);
+        if (Array.isArray(parsed)) {
+          return parsed.filter((id): id is string => typeof id === "string");
+        }
+      } catch {
+        // fall back to single id
+      }
+    }
+    const single = dataTransfer.getData("application/familiar-conv");
+    return single ? [single] : [];
+  }
+
+  function handleTouchDragStart(e: React.PointerEvent, convId: string) {
+    if (e.pointerType === "mouse") return;
+    e.preventDefault();
+    e.stopPropagation();
+    const ids = dragIdsFor(convId);
+    if (!selectedIds.has(convId)) {
+      setSelectedIds(new Set([convId]));
+      setLastSelectedId(convId);
+    }
+    touchDragIdsRef.current = ids;
+    setDraggingId(convId);
+    setTouchDrag({ ids, x: e.clientX, y: e.clientY });
+    e.currentTarget.setPointerCapture(e.pointerId);
+  }
+
+  function handleTouchDragMove(e: React.PointerEvent) {
+    if (touchDragIdsRef.current.length === 0) return;
+    e.preventDefault();
+    const el = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
+    const target = el?.closest<HTMLElement>("[data-folder-id], [data-root-drop]");
+    setDragOverTarget(target?.dataset.folderId ?? (target?.dataset.rootDrop ? "root" : null));
+    setTouchDrag({ ids: touchDragIdsRef.current, x: e.clientX, y: e.clientY });
+  }
+
+  function handleTouchDragEnd(e: React.PointerEvent) {
+    if (touchDragIdsRef.current.length === 0) return;
+    e.preventDefault();
+    const el = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
+    const target = el?.closest<HTMLElement>("[data-folder-id], [data-root-drop]");
+    const folderId = target?.dataset.folderId ?? null;
+    if (target?.dataset.rootDrop || folderId) {
+      moveConversations(touchDragIdsRef.current, folderId);
+    }
+    touchDragIdsRef.current = [];
+    setTouchDrag(null);
+    setDraggingId(null);
+    setDragOverTarget(null);
   }
 
   /* ── Recursive tree renderer ────────────────────────────────────────── */
@@ -337,8 +497,13 @@ export function Sidebar({
         <div>
           <div
             className={`${styles.folderItem} ${isDropTarget ? styles.dropTarget : ""}`}
+            data-folder-id={node.id}
             style={{ paddingLeft: 12 + depth * 16 }}
-            onClick={() => toggleFolder(node.id)}
+            onClick={(e) => {
+              if (editingId === node.id) return;
+              e.stopPropagation();
+              toggleFolder(node.id);
+            }}
             onContextMenu={(e) =>
               handleContextMenu(e, { type: "folder", id: node.id })
             }
@@ -348,13 +513,19 @@ export function Sidebar({
             role="button"
             tabIndex={0}
             onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") toggleFolder(node.id);
+              if (e.key === "Enter" || e.key === " " || e.key === "ArrowRight") {
+                if (!isExpanded) toggleFolder(node.id);
+              }
+              if (e.key === "ArrowLeft" && isExpanded) toggleFolder(node.id);
             }}
+            aria-expanded={isExpanded}
           >
-            <span className={styles.chevron}>
+            <span className={styles.chevron} aria-hidden="true">
               {isExpanded ? <ChevronDownIcon /> : <ChevronRightIcon />}
             </span>
-            <FolderIcon />
+            <span className={styles.nodeIcon}>
+              <FolderIcon />
+            </span>
             {editingId === node.id ? (
               <input
                 ref={editInputRef}
@@ -370,9 +541,27 @@ export function Sidebar({
             ) : (
               <span className={styles.folderName}>{node.name}</span>
             )}
+            {editingId !== node.id && (
+              <div className={styles.folderActions} onClick={(e) => e.stopPropagation()}>
+                <button
+                  className={styles.actionBtn}
+                  onClick={() => startRenameFolder(node)}
+                  aria-label="Rename folder"
+                >
+                  <PencilIcon />
+                </button>
+                <button
+                  className={styles.actionBtn}
+                  onClick={() => onDeleteFolder(node.id)}
+                  aria-label="Delete folder"
+                >
+                  <TrashIcon />
+                </button>
+              </div>
+            )}
           </div>
           {isExpanded && (
-            <div>
+            <div className={styles.folderChildren}>
               {node.children.map((child) => (
                 <TreeNodeRenderer
                   key={child.id}
@@ -392,13 +581,16 @@ export function Sidebar({
     const isEditing = editingId === conv.id;
     const isConfirming = confirmDeleteId === conv.id;
     const isDragging = draggingId === conv.id;
+    const isSelected = selectedIds.has(conv.id);
+    const dragCount = isSelected ? selectedIds.size : 1;
 
     return (
       <div
-        className={`${styles.item} ${isActive ? styles.itemActive : ""} ${isDragging ? styles.dragging : ""}`}
+        className={`${styles.item} ${isActive ? styles.itemActive : ""} ${isSelected ? styles.itemSelected : ""} ${isDragging ? styles.dragging : ""}`}
         style={{ paddingLeft: 12 + depth * 16 }}
-        onClick={() => {
-          if (!isEditing) onSelect(conv.id);
+        data-conversation-id={conv.id}
+        onClick={(e) => {
+          if (!isEditing) handleConversationClick(e, conv.id);
         }}
         onContextMenu={(e) =>
           handleContextMenu(e, { type: "conversation", id: conv.id })
@@ -410,11 +602,30 @@ export function Sidebar({
         tabIndex={0}
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") {
-            if (!isEditing) onSelect(conv.id);
+            if (!isEditing) {
+              onSelect(conv.id);
+              onClose?.();
+            }
           }
         }}
         aria-current={isActive ? "page" : undefined}
+        aria-selected={isSelected}
       >
+        <button
+          type="button"
+          className={styles.dragHandle}
+          onPointerDown={(e) => handleTouchDragStart(e, conv.id)}
+          onPointerMove={handleTouchDragMove}
+          onPointerUp={handleTouchDragEnd}
+          onPointerCancel={handleTouchDragEnd}
+          onClick={(e) => e.stopPropagation()}
+          aria-label={`Drag ${dragCount} conversation${dragCount === 1 ? "" : "s"}`}
+        >
+          <GripIcon />
+        </button>
+        <span className={styles.nodeIcon}>
+          <ConversationIcon />
+        </span>
         <div className={styles.itemInner}>
           {isEditing ? (
             <input
@@ -540,7 +751,7 @@ export function Sidebar({
               <button
                 className={styles.contextMenuItem}
                 onClick={() => {
-                  onMoveConversation(target.id, null);
+                  moveConversations(selectedIds.has(target.id) ? [...selectedIds] : [target.id], null);
                   setContextMenu(null);
                   setMoveToOpen(false);
                 }}
@@ -552,7 +763,7 @@ export function Sidebar({
                   key={f.id}
                   className={styles.contextMenuItem}
                   onClick={() => {
-                    onMoveConversation(target.id, f.id);
+                    moveConversations(selectedIds.has(target.id) ? [...selectedIds] : [target.id], f.id);
                     setContextMenu(null);
                     setMoveToOpen(false);
                   }}
@@ -568,7 +779,9 @@ export function Sidebar({
         <button
           className={`${styles.contextMenuItem} ${styles.contextMenuDanger}`}
           onClick={() => {
-            onDelete(target.id);
+            const ids = selectedIds.has(target.id) ? [...selectedIds] : [target.id];
+            if (ids.length > 1) handleBatchDelete(ids);
+            else onDelete(target.id);
             setContextMenu(null);
           }}
         >
@@ -624,11 +837,39 @@ export function Sidebar({
 
       {/* Conversation list */}
       <nav
-        className={styles.list}
+        className={`${styles.list} ${dragOverTarget === "root" ? styles.rootDropTarget : ""}`}
         aria-label="Conversation list"
+        data-root-drop="true"
         onDragOver={handleRootDragOver}
         onDrop={handleRootDrop}
       >
+        <div className={styles.sectionHeader}>
+          <span>Conversations</span>
+          {selectedIds.size > 0 && (
+            <div className={styles.selectionActions}>
+              <span className={styles.selectionCount}>{selectedIds.size}</span>
+              <button
+                type="button"
+                className={styles.selectionBtn}
+                onClick={() => {
+                  setSelectedIds(new Set());
+                  setLastSelectedId(null);
+                }}
+                aria-label="Clear selection"
+              >
+                <CloseIcon />
+              </button>
+              <button
+                type="button"
+                className={`${styles.selectionBtn} ${styles.selectionDanger}`}
+                onClick={() => handleBatchDelete([...selectedIds])}
+                aria-label="Delete selected conversations"
+              >
+                <TrashIcon />
+              </button>
+            </div>
+          )}
+        </div>
         {loading && conversations.length === 0 && folders.length === 0 && (
           <p className={styles.empty}>Loading...</p>
         )}
@@ -683,6 +924,14 @@ export function Sidebar({
           </button>
         </div>
       </div>
+      {touchDrag && (
+        <div
+          className={styles.touchDragPreview}
+          style={{ left: touchDrag.x + 10, top: touchDrag.y + 10 }}
+        >
+          {touchDrag.ids.length}
+        </div>
+      )}
     </aside>
   );
 }
@@ -876,6 +1125,43 @@ function FolderIcon() {
       aria-hidden="true"
     >
       <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+    </svg>
+  );
+}
+
+function ConversationIcon() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z" />
+    </svg>
+  );
+}
+
+function GripIcon() {
+  return (
+    <svg
+      width="12"
+      height="12"
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      aria-hidden="true"
+    >
+      <circle cx="9" cy="5" r="1.5" />
+      <circle cx="15" cy="5" r="1.5" />
+      <circle cx="9" cy="12" r="1.5" />
+      <circle cx="15" cy="12" r="1.5" />
+      <circle cx="9" cy="19" r="1.5" />
+      <circle cx="15" cy="19" r="1.5" />
     </svg>
   );
 }
