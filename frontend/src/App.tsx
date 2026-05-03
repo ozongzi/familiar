@@ -13,6 +13,7 @@ import {
 import { Toaster } from "./components/Toaster";
 import { Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { api } from "./api/client";
+import { checkForAppUpdate } from "./utils/autoUpdate";
 
 export function App() {
   const { token, loading, user, logout, login } = useAuth();
@@ -29,6 +30,11 @@ export function App() {
       setShowPrivacy(true);
     }
   }, [token, setShowPrivacy]);
+
+  // One-shot updater check on boot (Tauri only — silent on web).
+  useEffect(() => {
+    void checkForAppUpdate();
+  }, []);
 
   // After login, if a share-import was deferred, resolve it now.
   useEffect(() => {

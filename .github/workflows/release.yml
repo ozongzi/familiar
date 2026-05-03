@@ -1,0 +1,260 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  # ─── Desktop bundles ────────────────────────────────────────────────────
+  desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            target: aarch64-apple-darwin
+            sidecar: darwin-arm64
+            sidecar_suffix: ""
+            # already in repo, but re-fetch for reproducibility
+          - os: macos-13
+            target: x86_64-apple-darwin
+            sidecar: darwin-x64
+            sidecar_suffix: ""
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            sidecar: linux-x64
+            sidecar_suffix: ""
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            sidecar: win-x64
+            sidecar_suffix: ".exe"
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Drive version from the tag (v0.1.5 → 0.1.5) so source files don't
+      # need version bumps. Skipped on workflow_dispatch from a branch.
+      - name: Sync version from tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          VER="${GITHUB_REF_NAME#v}"
+          echo "Setting Cargo version to $VER"
+          # Match the FIRST `version = "..."` line under [package] only.
+          awk -v ver="$VER" '
+            /^\[package\]/ {in_pkg=1}
+            /^\[/ && !/^\[package\]/ {in_pkg=0}
+            in_pkg && /^version = / {print "version = \"" ver "\""; next}
+            {print}
+          ' frontend/src-tauri/Cargo.toml > frontend/src-tauri/Cargo.toml.tmp
+          mv frontend/src-tauri/Cargo.toml.tmp frontend/src-tauri/Cargo.toml
+          grep '^version = ' frontend/src-tauri/Cargo.toml
+
+      - uses: oven-sh/setup-bun@v2
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            frontend/src-tauri/target
+          key: tauri-${{ matrix.target }}-${{ hashFiles('frontend/src-tauri/Cargo.lock') }}
+          restore-keys: tauri-${{ matrix.target }}-
+
+      - name: Install Linux deps
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libssl-dev \
+            libayatana-appindicator3-dev librsvg2-dev libxdo-dev
+
+      - name: Install frontend deps
+        run: bun install
+        working-directory: frontend
+
+      # node sidecar (tunnel-bridge) — fetch the right arch and stash with
+      # the target-triple suffix Tauri expects.
+      - name: Prepare node sidecar
+        shell: bash
+        working-directory: frontend/src-tauri/binaries
+        env:
+          NODE_VER: v20.18.0
+          TARGET: ${{ matrix.target }}
+          ARCH: ${{ matrix.sidecar }}
+          EXT: ${{ matrix.sidecar_suffix }}
+        run: |
+          set -e
+          DEST="node-${TARGET}${EXT}"
+          if [ -f "$DEST" ]; then
+            echo "Sidecar $DEST already in repo, keeping."
+            exit 0
+          fi
+          case "$ARCH" in
+            darwin-arm64|darwin-x64)
+              curl -fsSL "https://nodejs.org/dist/${NODE_VER}/node-${NODE_VER}-${ARCH}.tar.gz" \
+                | tar xz --strip-components=2 -C . "node-${NODE_VER}-${ARCH}/bin/node"
+              mv node "$DEST"
+              ;;
+            linux-x64)
+              curl -fsSL "https://nodejs.org/dist/${NODE_VER}/node-${NODE_VER}-${ARCH}.tar.xz" \
+                | tar xJ --strip-components=2 -C . "node-${NODE_VER}-${ARCH}/bin/node"
+              mv node "$DEST"
+              ;;
+            win-x64)
+              curl -fsSL -o node.zip "https://nodejs.org/dist/${NODE_VER}/node-${NODE_VER}-${ARCH}.zip"
+              unzip -j node.zip "node-${NODE_VER}-${ARCH}/node.exe"
+              mv node.exe "$DEST"
+              rm node.zip
+              ;;
+          esac
+          chmod +x "$DEST" || true
+          ls -lah "$DEST"
+
+      - name: Build + bundle + publish
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: frontend
+          tagName: ${{ github.ref_name }}
+          releaseName: ${{ github.ref_name }}
+          releaseDraft: true
+          prerelease: false
+          args: --target ${{ matrix.target }}
+
+  # ─── Android APK ────────────────────────────────────────────────────────
+  android:
+    needs: desktop
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sync version from tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          VER="${GITHUB_REF_NAME#v}"
+          awk -v ver="$VER" '
+            /^\[package\]/ {in_pkg=1}
+            /^\[/ && !/^\[package\]/ {in_pkg=0}
+            in_pkg && /^version = / {print "version = \"" ver "\""; next}
+            {print}
+          ' frontend/src-tauri/Cargo.toml > frontend/src-tauri/Cargo.toml.tmp
+          mv frontend/src-tauri/Cargo.toml.tmp frontend/src-tauri/Cargo.toml
+          grep '^version = ' frontend/src-tauri/Cargo.toml
+
+      - uses: oven-sh/setup-bun@v2
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android targets + NDK
+        run: |
+          sdkmanager --install "ndk;27.0.12077973"
+          rustup target add aarch64-linux-android armv7-linux-androideabi i686-linux-android x86_64-linux-android
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            frontend/src-tauri/target
+          key: tauri-android-${{ hashFiles('frontend/src-tauri/Cargo.lock') }}
+          restore-keys: tauri-android-
+
+      - name: Install frontend deps
+        run: bun install
+        working-directory: frontend
+
+      # Decode keystore from secret + write keystore.properties expected by
+      # the gen/android Gradle build (matches the existing local layout).
+      - name: Restore Android signing config
+        env:
+          KS_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KS_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          echo "$KS_B64" | base64 -d > frontend/src-tauri/gen/android/upload-keystore.jks
+          cat > frontend/src-tauri/gen/android/keystore.properties <<EOF
+          password=$KS_PASS
+          keyAlias=$KS_ALIAS
+          storeFile=$(pwd)/frontend/src-tauri/gen/android/upload-keystore.jks
+          EOF
+
+      - name: Build Android APK
+        env:
+          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
+          ANDROID_NDK_ROOT: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        working-directory: frontend
+        run: bunx tauri android build --apk
+
+      - name: Collect APKs
+        run: |
+          mkdir -p android-out
+          find frontend/src-tauri/gen/android/app/build/outputs/apk -name "*.apk" -exec cp {} android-out/ \;
+          ls -lah android-out
+
+      - name: Sign APKs + patch latest.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -e
+          # Download desktop's latest.json from the draft release.
+          gh release download "$TAG" --repo "$REPO" -p latest.json -D dl
+          cat dl/latest.json
+
+          # Pick the arm64 APK (aarch64 = modern Android default).
+          ARM64_APK=$(ls android-out/*arm64*.apk | head -1)
+          if [ -z "$ARM64_APK" ]; then
+            echo "No arm64-v8a APK produced — check tauri android build output"
+            exit 1
+          fi
+
+          # Sign with Tauri's ed25519 key (same key as desktop).
+          # `tauri signer sign` writes <APK>.sig containing a single line.
+          cd frontend
+          bunx tauri signer sign \
+            -k "$TAURI_SIGNING_PRIVATE_KEY" \
+            -p "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" \
+            "../$ARM64_APK"
+          cd ..
+          SIG=$(cat "${ARM64_APK}.sig")
+          APK_NAME=$(basename "$ARM64_APK")
+          APK_URL="https://github.com/$REPO/releases/download/$TAG/$APK_NAME"
+
+          # jq-patch the platforms map. Android updater plugin checks
+          # "android-aarch64" / "android-armv7" / etc.
+          jq --arg url "$APK_URL" --arg sig "$SIG" \
+            '.platforms["android-aarch64"] = {signature: $sig, url: $url}' \
+            dl/latest.json > latest.json
+          cat latest.json
+
+          # Upload everything: APKs + .sig + updated latest.json.
+          gh release upload "$TAG" android-out/*.apk android-out/*.sig latest.json \
+            --repo "$REPO" --clobber

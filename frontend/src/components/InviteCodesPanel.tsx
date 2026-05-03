@@ -3,6 +3,7 @@ import styles from "./InviteCodesPanel.module.css";
 import { useAuth } from "../store/auth.shared";
 import { listInviteCodes, createInviteCode, deleteInviteCode } from "../api/admin";
 import type { InviteCode } from "../api/admin";
+import { isTauri, getServerBase } from "../utils/tauri";
 
 export function InviteCodesPanel() {
   const { token } = useAuth();
@@ -56,7 +57,10 @@ export function InviteCodesPanel() {
   };
 
   const handleCopy = (code: string) => {
-    const url = `${window.location.origin}/#invite=${code}`;
+    // In Tauri, window.location.origin is the internal app scheme; use the
+    // configured server base instead so the invite link is shareable.
+    const base = isTauri() ? getServerBase() : window.location.origin;
+    const url = `${base}/#invite=${code}`;
     navigator.clipboard.writeText(url).then(() => {
       setCopied(code);
       setTimeout(() => setCopied(null), 2000);

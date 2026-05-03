@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api/client";
+import { isTauri, getServerBase } from "../utils/tauri";
 import styles from "./ShareModal.module.css";
 
 interface Props {
@@ -47,9 +48,11 @@ export function ShareModal({ token, conversationId, onClose }: Props) {
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  const fullLink = shareToken
-    ? `${window.location.origin}/share/${shareToken}`
-    : "";
+  // In Tauri, window.location.origin is the internal scheme (tauri://localhost
+  // / http://tauri.localhost) — useless as a public link. Fall back to the
+  // configured server base so Android/desktop produce real https:// URLs.
+  const linkBase = isTauri() ? getServerBase() : window.location.origin;
+  const fullLink = shareToken ? `${linkBase}/share/${shareToken}` : "";
 
   const handleCreate = async () => {
     setError(null);
