@@ -395,16 +395,19 @@ export function Sidebar({
 
   function handleDragOver(e: React.DragEvent, folderId: string) {
     e.preventDefault();
+    e.stopPropagation();
     e.dataTransfer.dropEffect = "move";
     setDragOverTarget(folderId);
   }
 
-  function handleDragLeave() {
+  function handleDragLeave(e: React.DragEvent) {
+    e.stopPropagation();
     setDragOverTarget(null);
   }
 
   function handleDrop(e: React.DragEvent, folderId: string) {
     e.preventDefault();
+    e.stopPropagation();
     const ids = readDraggedIds(e.dataTransfer);
     moveConversations(ids, folderId);
     setDragOverTarget(null);
@@ -460,8 +463,9 @@ export function Sidebar({
     if (touchDragIdsRef.current.length === 0) return;
     e.preventDefault();
     const el = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
-    const target = el?.closest<HTMLElement>("[data-folder-id], [data-root-drop]");
-    setDragOverTarget(target?.dataset.folderId ?? (target?.dataset.rootDrop ? "root" : null));
+    const folderTarget = el?.closest<HTMLElement>("[data-folder-id]");
+    const rootTarget = el?.closest<HTMLElement>("[data-root-drop]");
+    setDragOverTarget(folderTarget?.dataset.folderId ?? (rootTarget ? "root" : null));
     setTouchDrag({ ids: touchDragIdsRef.current, x: e.clientX, y: e.clientY });
   }
 
@@ -469,9 +473,10 @@ export function Sidebar({
     if (touchDragIdsRef.current.length === 0) return;
     e.preventDefault();
     const el = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
-    const target = el?.closest<HTMLElement>("[data-folder-id], [data-root-drop]");
-    const folderId = target?.dataset.folderId ?? null;
-    if (target?.dataset.rootDrop || folderId) {
+    const folderTarget = el?.closest<HTMLElement>("[data-folder-id]");
+    const rootTarget = el?.closest<HTMLElement>("[data-root-drop]");
+    const folderId = folderTarget?.dataset.folderId ?? null;
+    if (folderId || rootTarget) {
       moveConversations(touchDragIdsRef.current, folderId);
     }
     touchDragIdsRef.current = [];
