@@ -165,6 +165,12 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      # Tauri's Android Gradle plugin invokes `cargo tauri ...` from within
+      # gradle's exec env, where it can't reach the JS-side `bunx tauri`.
+      # Install the Cargo subcommand so `cargo tauri` resolves on the runner.
+      - name: Install cargo-tauri CLI
+        run: cargo install tauri-cli --version '^2' --locked
+
       - name: Cache cargo
         uses: actions/cache@v4
         with:
