@@ -207,7 +207,9 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         working-directory: frontend
-        run: bunx tauri android build --apk
+        # --split-per-abi gives one APK per ABI so the updater can target a
+        # specific arch (android-aarch64) instead of shipping a fat universal.
+        run: bunx tauri android build --apk --split-per-abi
 
       - name: Collect APKs
         run: |
