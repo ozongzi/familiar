@@ -85,6 +85,8 @@ import type {
   CreateFolderRequest,
   UpdateFolderRequest,
   MoveConversationRequest,
+  ShareInfo,
+  SharedConversation,
 } from "./types";
 
 export const api = {
@@ -281,6 +283,38 @@ export const api = {
     return post<{ stream_id: string }>(
       `/api/conversations/${conversationId}/messages`,
       { content },
+      token,
+    );
+  },
+
+  // ── Share links ───────────────────────────────────────────────────────
+  getShare(token: string, conversationId: string) {
+    return get<ShareInfo>(`/api/conversations/${conversationId}/share`, token);
+  },
+
+  createShare(token: string, conversationId: string) {
+    return post<ShareInfo>(
+      `/api/conversations/${conversationId}/share`,
+      {},
+      token,
+    );
+  },
+
+  deleteShare(token: string, conversationId: string) {
+    return del<{ ok: boolean }>(
+      `/api/conversations/${conversationId}/share`,
+      token,
+    );
+  },
+
+  getSharedConversation(shareToken: string) {
+    return get<SharedConversation>(`/api/share/${shareToken}`);
+  },
+
+  importSharedConversation(token: string, shareToken: string) {
+    return post<{ conversation_id: string }>(
+      `/api/share/${shareToken}/import`,
+      {},
       token,
     );
   },

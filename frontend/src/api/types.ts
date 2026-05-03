@@ -159,6 +159,18 @@ export interface RenameConversationRequest {
   name: string;
 }
 
+// ─── Share ────────────────────────────────────────────────────────────────
+
+export interface ShareInfo {
+  token: string | null;
+}
+
+export interface SharedConversation {
+  name: string;
+  created_at: string;
+  messages: Message[];
+}
+
 // ─── Search ──────────────────────────────────────────────────────────────
 
 export interface SearchResult {

@@ -9,6 +9,7 @@ pub mod mcps;
 pub mod models;
 pub mod sessions;
 pub mod settings;
+pub mod share;
 pub mod sse;
 pub mod tts;
 pub mod tunnel;
@@ -171,6 +172,15 @@ pub fn create_router(state: AppState, allowed_origin: Option<&str>) -> Router {
         .route("/api/conversations/{id}", delete(delete_conversation))
         .route("/api/conversations/{id}", patch(rename_conversation))
         .route("/api/conversations/{id}/title", post(auto_title))
+        // ── Conversation share links ─────────────────────────────────────────
+        .route("/api/conversations/{id}/share", get(share::get_share))
+        .route("/api/conversations/{id}/share", post(share::create_share))
+        .route(
+            "/api/conversations/{id}/share",
+            delete(share::delete_share),
+        )
+        .route("/api/share/{token}", get(share::get_shared_conversation))
+        .route("/api/share/{token}/import", post(share::import_share))
         // ── Folders ──────────────────────────────────────────────────────────────
         .route("/api/folders", get(list_folders))
         .route("/api/folders", post(create_folder))

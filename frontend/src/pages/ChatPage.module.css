@@ -133,6 +133,33 @@
     min-width: 0;
 }
 
+/* Share button — desktop and mobile, only on real conversations */
+.shareBtn {
+    width: 36px;
+    height: 36px;
+    border-radius: var(--radius-md);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-secondary);
+    transition:
+        background var(--transition),
+        color var(--transition);
+    flex-shrink: 0;
+    background: none;
+    border: none;
+    cursor: pointer;
+}
+
+.shareBtn:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+.shareBtn:active {
+    transform: scale(0.95);
+}
+
 /* New conversation button — mobile only (mirrors menuBtn on the right) */
 .newConvBtn {
     display: none;
