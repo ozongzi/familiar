@@ -82,11 +82,11 @@ jobs:
         run: bun install
         working-directory: frontend
 
-      # node sidecar (tunnel-bridge) — fetch the right arch and stash with
-      # the target-triple suffix Tauri expects.
+      # node sidecar (tunnel-bridge) — the binaries/ dir is gitignored, so
+      # always fetch the right arch and stash with the target-triple suffix
+      # Tauri expects.
       - name: Prepare node sidecar
         shell: bash
-        working-directory: frontend/src-tauri/binaries
         env:
           NODE_VER: v20.18.0
           TARGET: ${{ matrix.target }}
@@ -94,26 +94,24 @@ jobs:
           EXT: ${{ matrix.sidecar_suffix }}
         run: |
           set -e
-          DEST="node-${TARGET}${EXT}"
-          if [ -f "$DEST" ]; then
-            echo "Sidecar $DEST already in repo, keeping."
-            exit 0
-          fi
+          BIN_DIR="frontend/src-tauri/binaries"
+          mkdir -p "$BIN_DIR"
+          DEST="$BIN_DIR/node-${TARGET}${EXT}"
           case "$ARCH" in
             darwin-arm64|darwin-x64)
               curl -fsSL "https://nodejs.org/dist/${NODE_VER}/node-${NODE_VER}-${ARCH}.tar.gz" \
-                | tar xz --strip-components=2 -C . "node-${NODE_VER}-${ARCH}/bin/node"
-              mv node "$DEST"
+                | tar xz --strip-components=2 -C "$BIN_DIR" "node-${NODE_VER}-${ARCH}/bin/node"
+              mv "$BIN_DIR/node" "$DEST"
               ;;
             linux-x64)
               curl -fsSL "https://nodejs.org/dist/${NODE_VER}/node-${NODE_VER}-${ARCH}.tar.xz" \
-                | tar xJ --strip-components=2 -C . "node-${NODE_VER}-${ARCH}/bin/node"
-              mv node "$DEST"
+                | tar xJ --strip-components=2 -C "$BIN_DIR" "node-${NODE_VER}-${ARCH}/bin/node"
+              mv "$BIN_DIR/node" "$DEST"
               ;;
             win-x64)
               curl -fsSL -o node.zip "https://nodejs.org/dist/${NODE_VER}/node-${NODE_VER}-${ARCH}.zip"
-              unzip -j node.zip "node-${NODE_VER}-${ARCH}/node.exe"
-              mv node.exe "$DEST"
+              unzip -j node.zip "node-${NODE_VER}-${ARCH}/node.exe" -d "$BIN_DIR"
+              mv "$BIN_DIR/node.exe" "$DEST"
               rm node.zip
               ;;
           esac
