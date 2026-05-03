@@ -19,11 +19,6 @@ jobs:
             target: aarch64-apple-darwin
             sidecar: darwin-arm64
             sidecar_suffix: ""
-            # already in repo, but re-fetch for reproducibility
-          - os: macos-13
-            target: x86_64-apple-darwin
-            sidecar: darwin-x64
-            sidecar_suffix: ""
           - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             sidecar: linux-x64
