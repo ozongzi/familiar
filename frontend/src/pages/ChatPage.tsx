@@ -6,7 +6,6 @@ import { LocalMcpSettings } from "../components/LocalMcpSettings";
 import { UserSettingsModal } from "../components/UserSettingsModal";
 import { MessageBubble } from "../components/MessageBubble";
 import { useParams, useNavigate } from "react-router-dom";
-import html2canvas from "html2canvas";
 
 import { ChatInput } from "../components/ChatInput";
 import { ModelPicker } from "../components/ModelPicker";
@@ -353,56 +352,6 @@ export function ChatPage() {
     return await createDraftConversation();
   }, [activeId, createDraftConversation]);
 
-  // ── Export screenshot ─────────────────────────────────────────────────
-  const [exporting, setExporting] = useState(false);
-
-  const handleExportScreenshot = useCallback(async () => {
-    const el = messagesRef.current;
-    if (!el || exporting) return;
-
-    // Temporarily scroll to top so html2canvas can measure the full scrollHeight
-    const prevScrollTop = el.scrollTop;
-    el.scrollTop = 0;
-
-    setExporting(true);
-    try {
-      // Force a reflow before capturing
-      await new Promise((r) => requestAnimationFrame(r));
-
-      const canvas = await html2canvas(el, {
-        backgroundColor: "#faf9f5",
-        scale: 2, // 2x for retina sharpness
-        scrollY: -el.scrollTop,
-        windowHeight: el.scrollHeight,
-        useCORS: true,
-        logging: false,
-      });
-
-      // Restore scroll position
-      el.scrollTop = prevScrollTop;
-
-      // Download
-      const conv = conversations.find((c) => c.id === activeId);
-      const filename =
-        (conv?.name ?? "conversation").replace(/[\\/:*?"<>|]/g, "_") + ".png";
-      canvas.toBlob((blob) => {
-        if (!blob) return;
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = filename;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-      }, "image/png");
-    } catch (err) {
-      console.error("Screenshot export failed:", err);
-    } finally {
-      setExporting(false);
-    }
-  }, [exporting, conversations, activeId]);
-
   // ── Derive UI state ────────────────────────────────────────────────────
 
   const isStreaming = status === "connecting" || status === "streaming";
@@ -497,19 +446,6 @@ export function ChatPage() {
           <h2 className={styles.convTitle}>
             {isDraft ? "新对话" : (activeConv?.name ?? "Familiar")}
           </h2>
-
-          {/* Export screenshot button */}
-          {!isDraft && bubbles.length > 0 && (
-            <button
-              className={styles.exportBtn}
-              onClick={handleExportScreenshot}
-              disabled={exporting || isStreaming}
-              aria-label="导出长截图"
-              title={exporting ? "正在导出…" : "导出长截图"}
-            >
-              {exporting ? <SpinnerIcon /> : <ExportIcon />}
-            </button>
-          )}
 
           {/* Mobile: new conversation button */}
           <button
@@ -715,44 +651,6 @@ function ScrollDownIcon() {
       aria-hidden="true"
     >
       <path d="M12 5v14M5 12l7 7 7-7" />
-    </svg>
-  );
-}
-
-function ExportIcon() {
-  return (
-    <svg
-      width="18"
-      height="18"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-      <polyline points="7 10 12 15 17 10" />
-      <line x1="12" y1="15" x2="12" y2="3" />
-    </svg>
-  );
-}
-
-function SpinnerIcon() {
-  return (
-    <svg
-      width="18"
-      height="18"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      aria-hidden="true"
-      style={{ animation: "spin 0.8s linear infinite" }}
-    >
-      <path d="M21 12a9 9 0 1 1-6.219-8.56" />
     </svg>
   );
 }

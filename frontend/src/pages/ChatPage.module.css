@@ -133,39 +133,6 @@
     min-width: 0;
 }
 
-/* Export screenshot button */
-.exportBtn {
-    display: flex;
-    width: 36px;
-    height: 36px;
-    border-radius: var(--radius-md);
-    align-items: center;
-    justify-content: center;
-    color: var(--text-secondary);
-    transition:
-        background var(--transition),
-        color var(--transition),
-        opacity var(--transition);
-    flex-shrink: 0;
-    background: none;
-    border: none;
-    cursor: pointer;
-}
-
-.exportBtn:hover:not(:disabled) {
-    background: var(--bg-hover);
-    color: var(--text-primary);
-}
-
-.exportBtn:active:not(:disabled) {
-    transform: scale(0.95);
-}
-
-.exportBtn:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
-}
-
 /* New conversation button — mobile only (mirrors menuBtn on the right) */
 .newConvBtn {
     display: none;
@@ -369,15 +336,5 @@
 
     .header {
         padding: 0 24px;
-    }
-}
-
-/* ─── Spinner animation ─────────────────────────────────────────────────── */
-@keyframes spin {
-    from {
-        transform: rotate(0deg);
-    }
-    to {
-        transform: rotate(360deg);
     }
 }
