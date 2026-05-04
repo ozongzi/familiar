@@ -227,7 +227,15 @@ export type WsServerEvent =
   | { type: "ask"; question: string; description?: string; options?: string[] }
   | { type: "aborted" }
   | { type: "done" }
-  | { type: "error"; message: string };
+  | { type: "error"; message: string }
+  | {
+      type: "usage";
+      prompt_tokens: number;
+      completion_tokens: number;
+      total_tokens: number;
+      context_tokens: number;
+      compact_trigger_tokens: number;
+    };
 
 export type BubbleRole = "user" | "assistant" | "tool";
 

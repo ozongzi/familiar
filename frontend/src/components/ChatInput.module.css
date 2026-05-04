@@ -249,3 +249,15 @@
         padding: 12px 32px 16px;
     }
 }
+
+.tokenHint {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    background: var(--bg-muted, #f5f3ef);
+    padding: 2px 10px;
+    border-radius: 10px;
+    white-space: nowrap;
+    font-weight: 430;
+    cursor: default;
+    user-select: none;
+}

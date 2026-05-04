@@ -52,7 +52,17 @@ function extractStreamingWidgetCode(raw: string): string | null {
     if (ch === "\\") {
       if (i + 1 < rest.length) {
         const next = rest[i + 1];
-        const escapes: Record<string, string> = { '"': '"', "\\": "\\", "/": "/", "'": "'", b: "\b", f: "\f", n: "\n", r: "\r", t: "\t" };
+        const escapes: Record<string, string> = {
+          '"': '"',
+          "\\": "\\",
+          "/": "/",
+          "'": "'",
+          b: "\b",
+          f: "\f",
+          n: "\n",
+          r: "\r",
+          t: "\t",
+        };
         if (next === "u" && i + 5 < rest.length) {
           const hex = rest.slice(i + 2, i + 6);
           if (/^[0-9a-fA-F]{4}$/.test(hex)) {
@@ -80,18 +90,26 @@ function extractLoadingMessages(raw: string): string[] | null {
   try {
     const parsed = JSON.parse(raw) as Record<string, unknown>;
     if (Array.isArray(parsed.loading_messages)) {
-      return (parsed.loading_messages as unknown[]).filter((m): m is string => typeof m === "string");
+      return (parsed.loading_messages as unknown[]).filter(
+        (m): m is string => typeof m === "string",
+      );
     }
   } catch {
     // Partial JSON — try a simple regex scan for the first few completed strings
-    const m = raw.match(/"loading_messages"\s*:\s*\[((?:[^\]]*?"[^"]*"[^\]]*?)+)/);
+    const m = raw.match(
+      /"loading_messages"\s*:\s*\[((?:[^\]]*?"[^"]*"[^\]]*?)+)/,
+    );
     if (!m) return null;
     const inner = m[1];
     const items: string[] = [];
     const re = /"((?:[^"\\]|\\.)*)"/g;
     let hit: RegExpExecArray | null;
     while ((hit = re.exec(inner)) !== null) {
-      try { items.push(JSON.parse(`"${hit[1]}"`)); } catch { items.push(hit[1]); }
+      try {
+        items.push(JSON.parse(`"${hit[1]}"`));
+      } catch {
+        items.push(hit[1]);
+      }
     }
     return items.length > 0 ? items : null;
   }
@@ -99,7 +117,11 @@ function extractLoadingMessages(raw: string): string[] | null {
 }
 
 function tryParseWidgetArgs(raw: string): unknown {
-  try { return JSON.parse(raw); } catch { return null; }
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
 }
 
 function extractWidgetCode(result: unknown): string | null {
@@ -194,6 +216,11 @@ export function useChat(
   const [bubbles, setBubbles] = useState<ChatBubble[]>([]);
   const [status, setStatus] = useState<ChatStatus>("idle");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [tokenUsage, setTokenUsage] = useState<{
+    contextTokens: number;
+    compactTriggerTokens: number;
+  } | null>(null);
+
 
   // SSE refs (replace WebSocket refs)
   const streamIdRef = useRef<string | null>(null);
@@ -318,265 +345,305 @@ export function useChat(
 
   // ─── Public helpers ───────────────────────────────────────────────────────
 
-  const setHistory = useCallback((msgs: Message[]) => {
-    const toolResultMap = new Map<string, unknown>();
-    const toolImagesMap = new Map<string, string[]>();
-    for (const m of msgs) {
-      if (m.role === "tool" && m.tool_call_id && m.content) {
-        let parsed: unknown = m.content;
-        try {
-          const outer = JSON.parse(m.content);
-          // The backend stores tool results as Vec<agentix::Content>, serialized as
-          // [{type:"text",text:"<json>"}]. Unwrap to get the actual result value.
-          if (Array.isArray(outer)) {
-            const textBlock = (outer as unknown[]).find(
-              (b): b is { type: string; text: string } =>
-                b !== null &&
-                typeof b === "object" &&
-                (b as Record<string, unknown>).type === "text" &&
-                typeof (b as Record<string, unknown>).text === "string",
-            );
-            if (textBlock) {
-              try {
-                parsed = JSON.parse(textBlock.text);
-              } catch {
-                parsed = textBlock.text;
+  const setHistory = useCallback(
+    (msgs: Message[]) => {
+      const toolResultMap = new Map<string, unknown>();
+      const toolImagesMap = new Map<string, string[]>();
+      for (const m of msgs) {
+        if (m.role === "tool" && m.tool_call_id && m.content) {
+          let parsed: unknown = m.content;
+          try {
+            const outer = JSON.parse(m.content);
+            // The backend stores tool results as Vec<agentix::Content>, serialized as
+            // [{type:"text",text:"<json>"}]. Unwrap to get the actual result value.
+            if (Array.isArray(outer)) {
+              const textBlock = (outer as unknown[]).find(
+                (b): b is { type: string; text: string } =>
+                  b !== null &&
+                  typeof b === "object" &&
+                  (b as Record<string, unknown>).type === "text" &&
+                  typeof (b as Record<string, unknown>).text === "string",
+              );
+              if (textBlock) {
+                try {
+                  parsed = JSON.parse(textBlock.text);
+                } catch {
+                  parsed = textBlock.text;
+                }
+              } else {
+                parsed = outer;
+              }
+
+              // Extract image parts — sandbox refs become /api/files URLs
+              type ImageBlock = {
+                type: "image";
+                data: { url?: string; base64?: string };
+                mime_type: string;
+              };
+              const imageUrls = (outer as unknown[])
+                .filter(
+                  (b): b is ImageBlock =>
+                    b !== null &&
+                    typeof b === "object" &&
+                    (b as Record<string, unknown>).type === "image",
+                )
+                .map((b) => {
+                  const raw = b.data?.url ?? "";
+                  if (raw.startsWith("__sandbox__:")) {
+                    const filename = raw.slice("__sandbox__:".length);
+                    const params = new URLSearchParams({
+                      path: `/workspace/${filename}`,
+                    });
+                    if (conversationId)
+                      params.set("conversation_id", conversationId);
+                    if (token) params.set("token", token);
+                    return `/api/files?${params.toString()}`;
+                  }
+                  if (b.data?.base64) {
+                    return `data:${b.mime_type};base64,${b.data.base64}`;
+                  }
+                  return raw;
+                })
+                .filter(Boolean);
+              if (imageUrls.length > 0) {
+                toolImagesMap.set(m.tool_call_id, imageUrls);
               }
             } else {
               parsed = outer;
             }
-
-            // Extract image parts — sandbox refs become /api/files URLs
-            type ImageBlock = { type: "image"; data: { url?: string; base64?: string }; mime_type: string };
-            const imageUrls = (outer as unknown[])
-              .filter((b): b is ImageBlock =>
-                b !== null &&
-                typeof b === "object" &&
-                (b as Record<string, unknown>).type === "image",
-              )
-              .map((b) => {
-                const raw = b.data?.url ?? "";
-                if (raw.startsWith("__sandbox__:")) {
-                  const filename = raw.slice("__sandbox__:".length);
-                  const params = new URLSearchParams({ path: `/workspace/${filename}` });
-                  if (conversationId) params.set("conversation_id", conversationId);
-                  if (token) params.set("token", token);
-                  return `/api/files?${params.toString()}`;
-                }
-                if (b.data?.base64) {
-                  return `data:${b.mime_type};base64,${b.data.base64}`;
-                }
-                return raw;
-              })
-              .filter(Boolean);
-            if (imageUrls.length > 0) {
-              toolImagesMap.set(m.tool_call_id, imageUrls);
-            }
-          } else {
-            parsed = outer;
-          }
-        } catch {
-          /* leave as string */
-        }
-        toolResultMap.set(m.tool_call_id, parsed);
-      }
-    }
-
-    const history: ChatBubble[] = [];
-    const consumedMsgIds = new Set<number>();
-
-    for (let mi = 0; mi < msgs.length; mi++) {
-      const m = msgs[mi];
-      if (m.role === "system" || m.role === "tool") continue;
-      if (consumedMsgIds.has(m.id)) continue;
-
-      if (m.role === "assistant" && m.tool_calls) {
-        type RawToolCall = {
-          id: string;
-          name: string;
-          arguments: string;
-        };
-        let calls: RawToolCall[] = [];
-        try {
-          calls = JSON.parse(m.tool_calls) as RawToolCall[];
-        } catch {
-          /* skip */
-        }
-        const hasAssistantText = !!(m.content && m.content.trim().length > 0);
-        const hasAssistantReasoning = !!(m.reasoning && m.reasoning.trim().length > 0);
-        if (hasAssistantText || hasAssistantReasoning) {
-          const key = uid();
-          history.push({
-            kind: "text",
-            key,
-            role: "assistant",
-            content: m.content ?? "",
-            reasoning: m.reasoning ?? "",
-            streaming: m.streaming,
-            msgId: m.id,
-            siblings: m.siblings,
-          });
-          if (m.streaming) activeTextKeyRef.current = key;
-        }
-        for (const tc of calls) {
-          const { id, name, arguments: argsRaw = "" } = tc;
-          if (!id || !name) continue;
-          let result = toolResultMap.get(id) ?? null;
-
-          // `ask` 工具将 { __ask__: true, ... } 作为 tool result 存入 DB。
-          // 用户的真实回答是作为下一条 user 消息存的。
-          // 检测到 __ask__ 标记（或 result 为 null）时，找到那条回答，嵌入为 { answer: ... }，
-          // 并标记该 user 消息已消费（不再渲染成独立气泡）。
-          const isAskMarker =
-            result !== null &&
-            typeof result === "object" &&
-            (result as Record<string, unknown>).__ask__ === true;
-          if (name === "ask" && (result === null || isAskMarker)) {
-            result = null; // reset — will be set to { answer } if found
-            for (let j = mi + 1; j < msgs.length; j++) {
-              const next = msgs[j];
-              if (next.role !== "user") continue;
-              const c = next.content;
-              if (!c || !c.trim()) continue;
-              // 跳过文件上传和多模态消息——它们不是文字回答。
-              let isFileUpload = false;
-              try {
-                const p = JSON.parse(c) as Record<string, unknown>;
-                if (p.__type === "file_upload") isFileUpload = true;
-              } catch { /* not JSON */ }
-              if (isFileUpload || c.startsWith("__multimodal__:")) break;
-              result = { answer: c };
-              consumedMsgIds.add(next.id);
-              break;
-            }
-          }
-
-          // visualize → 恢复 widgetCode 到 ToolBubble
-          const widgetCode = name === "visualize" && result !== null
-            ? (extractWidgetCode(result) ?? extractWidgetCode(tryParseWidgetArgs(argsRaw)))
-            : null;
-
-          // diagram → 从 args 里取回 mermaid 代码
-          let diagramCode: string | undefined;
-          if (name === "diagram") {
-            try {
-              const parsed = JSON.parse(argsRaw) as Record<string, unknown>;
-              if (typeof parsed.code === "string") diagramCode = parsed.code;
-            } catch { /* ignore */ }
-          }
-
-          const historyImages = toolImagesMap.get(id);
-          const toolBubble: ToolBubble = {
-            kind: "tool",
-            key: `tool-${id}`,
-            role: "tool",
-            name,
-            description: extractDescription(argsRaw) ?? "",
-            argsRaw,
-            result,
-            pending: result === null,
-            ...(widgetCode ? { widgetCode } : {}),
-            ...(diagramCode ? { diagramCode } : {}),
-            ...(historyImages && historyImages.length > 0 ? { images: historyImages } : {}),
-          };
-          history.push(toolBubble);
-        }
-        continue;
-      }
-
-      const hasContent = !!(m.content && m.content.trim().length > 0);
-      const hasAssistantReasoningOnly =
-        m.role === "assistant" && !!(m.reasoning && m.reasoning.trim().length > 0);
-      if ((m.role === "user" || m.role === "assistant") && (hasContent || hasAssistantReasoningOnly)) {
-        const content = m.content ?? "";
-        if (m.role === "user") {
-          try {
-            const parsed = JSON.parse(content) as Record<string, unknown>;
-            if (
-              parsed.__type === "file_upload" &&
-              typeof parsed.filename === "string" &&
-              typeof parsed.path === "string" &&
-              typeof parsed.size === "number"
-            ) {
-              const uploadBubble: UploadBubble = {
-                kind: "upload",
-                key: uid(),
-                role: "user",
-                filename: parsed.filename,
-                path: parsed.path,
-                size: parsed.size,
-                conversationId: conversationId ?? undefined,
-              };
-              history.push(uploadBubble);
-              continue;
-            }
           } catch {
-            /* not JSON — fall through */
+            /* leave as string */
           }
+          toolResultMap.set(m.tool_call_id, parsed);
+        }
+      }
 
-          // Multimodal message: "__multimodal__:[{type,text/image_url,...}]"
-          if (content.startsWith("__multimodal__:")) {
-            const json = content.slice("__multimodal__:".length);
-            try {
-              // agentix 0.10.1 internal tag format:
-              //   { type: "text", text: "..." }
-              //   { type: "image", data: { base64: "..." }, mime_type: "..." }
-              type Part =
-                | { type: "text"; text: string }
-                | { type: "image"; data: { base64?: string; url?: string }; mime_type: string };
-              const parts = JSON.parse(json) as Part[];
+      const history: ChatBubble[] = [];
+      const consumedMsgIds = new Set<number>();
 
-              // File upload: text part is the file_upload JSON marker
-              const textContent = parts
-                .filter((p): p is Extract<Part, { type: "text" }> => p.type === "text")
-                .map(p => p.text)
-                .join("");
-              try {
-                const parsed = JSON.parse(textContent) as Record<string, unknown>;
-                if (
-                  parsed.__type === "file_upload" &&
-                  typeof parsed.filename === "string" &&
-                  typeof parsed.path === "string" &&
-                  typeof parsed.size === "number"
-                ) {
-                  history.push({
-                    kind: "upload",
-                    key: uid(),
-                    role: "user",
-                    filename: parsed.filename,
-                    path: parsed.path,
-                    size: parsed.size,
-                    conversationId: conversationId ?? undefined,
-                  });
-                  continue;
+      for (let mi = 0; mi < msgs.length; mi++) {
+        const m = msgs[mi];
+        if (m.role === "system" || m.role === "tool") continue;
+        if (consumedMsgIds.has(m.id)) continue;
+
+        if (m.role === "assistant" && m.tool_calls) {
+          type RawToolCall = {
+            id: string;
+            name: string;
+            arguments: string;
+          };
+          let calls: RawToolCall[] = [];
+          try {
+            calls = JSON.parse(m.tool_calls) as RawToolCall[];
+          } catch {
+            /* skip */
+          }
+          const hasAssistantText = !!(m.content && m.content.trim().length > 0);
+          const hasAssistantReasoning = !!(
+            m.reasoning && m.reasoning.trim().length > 0
+          );
+          if (hasAssistantText || hasAssistantReasoning) {
+            const key = uid();
+            history.push({
+              kind: "text",
+              key,
+              role: "assistant",
+              content: m.content ?? "",
+              reasoning: m.reasoning ?? "",
+              streaming: m.streaming,
+              msgId: m.id,
+              siblings: m.siblings,
+            });
+            if (m.streaming) activeTextKeyRef.current = key;
+          }
+          for (const tc of calls) {
+            const { id, name, arguments: argsRaw = "" } = tc;
+            if (!id || !name) continue;
+            let result = toolResultMap.get(id) ?? null;
+
+            // `ask` 工具将 { __ask__: true, ... } 作为 tool result 存入 DB。
+            // 用户的真实回答是作为下一条 user 消息存的。
+            // 检测到 __ask__ 标记（或 result 为 null）时，找到那条回答，嵌入为 { answer: ... }，
+            // 并标记该 user 消息已消费（不再渲染成独立气泡）。
+            const isAskMarker =
+              result !== null &&
+              typeof result === "object" &&
+              (result as Record<string, unknown>).__ask__ === true;
+            if (name === "ask" && (result === null || isAskMarker)) {
+              result = null; // reset — will be set to { answer } if found
+              for (let j = mi + 1; j < msgs.length; j++) {
+                const next = msgs[j];
+                if (next.role !== "user") continue;
+                const c = next.content;
+                if (!c || !c.trim()) continue;
+                // 跳过文件上传和多模态消息——它们不是文字回答。
+                let isFileUpload = false;
+                try {
+                  const p = JSON.parse(c) as Record<string, unknown>;
+                  if (p.__type === "file_upload") isFileUpload = true;
+                } catch {
+                  /* not JSON */
                 }
-              } catch { /* text is not file_upload JSON */ }
-
-              const images = parts
-                .filter((p): p is Extract<Part, { type: "image" }> => p.type === "image")
-                .map(p => p.data.base64
-                  ? `data:${p.mime_type};base64,${p.data.base64}`
-                  : p.data.url ?? "")
-                .filter(Boolean);
-              history.push({
-                kind: "text",
-                key: uid(),
-                role: "user",
-                content: textContent,
-                reasoning: "",
-                streaming: false,
-                images: images.length > 0 ? images : undefined,
-                msgId: m.id,
-                siblings: m.siblings,
-              });
-              continue;
-            } catch {
-              /* fall through to plain text */
+                if (isFileUpload || c.startsWith("__multimodal__:")) break;
+                result = { answer: c };
+                consumedMsgIds.add(next.id);
+                break;
+              }
             }
+
+            // visualize → 恢复 widgetCode 到 ToolBubble
+            const widgetCode =
+              name === "visualize" && result !== null
+                ? (extractWidgetCode(result) ??
+                  extractWidgetCode(tryParseWidgetArgs(argsRaw)))
+                : null;
+
+            // diagram → 从 args 里取回 mermaid 代码
+            let diagramCode: string | undefined;
+            if (name === "diagram") {
+              try {
+                const parsed = JSON.parse(argsRaw) as Record<string, unknown>;
+                if (typeof parsed.code === "string") diagramCode = parsed.code;
+              } catch {
+                /* ignore */
+              }
+            }
+
+            const historyImages = toolImagesMap.get(id);
+            const toolBubble: ToolBubble = {
+              kind: "tool",
+              key: `tool-${id}`,
+              role: "tool",
+              name,
+              description: extractDescription(argsRaw) ?? "",
+              argsRaw,
+              result,
+              pending: result === null,
+              ...(widgetCode ? { widgetCode } : {}),
+              ...(diagramCode ? { diagramCode } : {}),
+              ...(historyImages && historyImages.length > 0
+                ? { images: historyImages }
+                : {}),
+            };
+            history.push(toolBubble);
           }
+          continue;
         }
 
-        const key = uid();
+        const hasContent = !!(m.content && m.content.trim().length > 0);
+        const hasAssistantReasoningOnly =
+          m.role === "assistant" &&
+          !!(m.reasoning && m.reasoning.trim().length > 0);
+        if (
+          (m.role === "user" || m.role === "assistant") &&
+          (hasContent || hasAssistantReasoningOnly)
+        ) {
+          const content = m.content ?? "";
+          if (m.role === "user") {
+            try {
+              const parsed = JSON.parse(content) as Record<string, unknown>;
+              if (
+                parsed.__type === "file_upload" &&
+                typeof parsed.filename === "string" &&
+                typeof parsed.path === "string" &&
+                typeof parsed.size === "number"
+              ) {
+                const uploadBubble: UploadBubble = {
+                  kind: "upload",
+                  key: uid(),
+                  role: "user",
+                  filename: parsed.filename,
+                  path: parsed.path,
+                  size: parsed.size,
+                  conversationId: conversationId ?? undefined,
+                };
+                history.push(uploadBubble);
+                continue;
+              }
+            } catch {
+              /* not JSON — fall through */
+            }
+
+            // Multimodal message: "__multimodal__:[{type,text/image_url,...}]"
+            if (content.startsWith("__multimodal__:")) {
+              const json = content.slice("__multimodal__:".length);
+              try {
+                // agentix 0.10.1 internal tag format:
+                //   { type: "text", text: "..." }
+                //   { type: "image", data: { base64: "..." }, mime_type: "..." }
+                type Part =
+                  | { type: "text"; text: string }
+                  | {
+                      type: "image";
+                      data: { base64?: string; url?: string };
+                      mime_type: string;
+                    };
+                const parts = JSON.parse(json) as Part[];
+
+                // File upload: text part is the file_upload JSON marker
+                const textContent = parts
+                  .filter(
+                    (p): p is Extract<Part, { type: "text" }> =>
+                      p.type === "text",
+                  )
+                  .map((p) => p.text)
+                  .join("");
+                try {
+                  const parsed = JSON.parse(textContent) as Record<
+                    string,
+                    unknown
+                  >;
+                  if (
+                    parsed.__type === "file_upload" &&
+                    typeof parsed.filename === "string" &&
+                    typeof parsed.path === "string" &&
+                    typeof parsed.size === "number"
+                  ) {
+                    history.push({
+                      kind: "upload",
+                      key: uid(),
+                      role: "user",
+                      filename: parsed.filename,
+                      path: parsed.path,
+                      size: parsed.size,
+                      conversationId: conversationId ?? undefined,
+                    });
+                    continue;
+                  }
+                } catch {
+                  /* text is not file_upload JSON */
+                }
+
+                const images = parts
+                  .filter(
+                    (p): p is Extract<Part, { type: "image" }> =>
+                      p.type === "image",
+                  )
+                  .map((p) =>
+                    p.data.base64
+                      ? `data:${p.mime_type};base64,${p.data.base64}`
+                      : (p.data.url ?? ""),
+                  )
+                  .filter(Boolean);
+                history.push({
+                  kind: "text",
+                  key: uid(),
+                  role: "user",
+                  content: textContent,
+                  reasoning: "",
+                  streaming: false,
+                  images: images.length > 0 ? images : undefined,
+                  msgId: m.id,
+                  siblings: m.siblings,
+                });
+                continue;
+              } catch {
+                /* fall through to plain text */
+              }
+            }
+          }
+
+          const key = uid();
           history.push({
             kind: "text",
             key,
@@ -585,15 +652,18 @@ export function useChat(
             reasoning: m.reasoning ?? "",
             streaming: m.streaming,
             msgId: m.id,
-          siblings: m.siblings,
-        });
-        if (m.role === "assistant" && m.streaming) activeTextKeyRef.current = key;
+            siblings: m.siblings,
+          });
+          if (m.role === "assistant" && m.streaming)
+            activeTextKeyRef.current = key;
+        }
       }
-    }
 
-    setBubbles(history);
-    historyReadyRef.current = true;
-  }, [conversationId, token]);
+      setBubbles(history);
+      historyReadyRef.current = true;
+    },
+    [conversationId, token],
+  );
 
   const clearBubbles = useCallback(() => {
     abortControllerRef.current?.abort();
@@ -648,7 +718,11 @@ export function useChat(
         setBubbles((prev) =>
           prev.map((b) =>
             b.key === key && b.kind === "text"
-              ? { ...b, content: event.content, reasoning: event.reasoning ?? "" }
+              ? {
+                  ...b,
+                  content: event.content,
+                  reasoning: event.reasoning ?? "",
+                }
               : b,
           ),
         );
@@ -676,7 +750,10 @@ export function useChat(
         );
       } else if (event.type === "tool_call") {
         if (event.source === "spawn") {
-          const acc = spawnToolArgsRef.current.get(event.id) ?? { name: event.name, argsRaw: "" };
+          const acc = spawnToolArgsRef.current.get(event.id) ?? {
+            name: event.name,
+            argsRaw: "",
+          };
           acc.argsRaw += event.delta;
           spawnToolArgsRef.current.set(event.id, acc);
           upsertSpawnChild({
@@ -700,12 +777,24 @@ export function useChat(
                 const rawArgs = (b._rawArgs ?? "") + event.delta;
                 const parsed = extractWidgetCode(tryParseWidgetArgs(rawArgs));
                 const streamed = parsed ?? extractStreamingWidgetCode(rawArgs);
-                const loadingMsgs = b.widgetLoadingMessages ?? extractLoadingMessages(rawArgs) ?? undefined;
-                return { ...b, _rawArgs: rawArgs, widgetCode: streamed ?? b.widgetCode, widgetLoadingMessages: loadingMsgs };
+                const loadingMsgs =
+                  b.widgetLoadingMessages ??
+                  extractLoadingMessages(rawArgs) ??
+                  undefined;
+                return {
+                  ...b,
+                  _rawArgs: rawArgs,
+                  widgetCode: streamed ?? b.widgetCode,
+                  widgetLoadingMessages: loadingMsgs,
+                };
               }
               const newArgsRaw = b.argsRaw + event.delta;
               const desc = extractDescription(newArgsRaw);
-              return { ...b, argsRaw: newArgsRaw, description: desc ?? b.description };
+              return {
+                ...b,
+                argsRaw: newArgsRaw,
+                description: desc ?? b.description,
+              };
             }),
           );
         } else {
@@ -721,14 +810,19 @@ export function useChat(
               argsRaw: event.delta,
               result: null,
               pending: true,
-              ...(event.name === "visualize" ? {
-                widgetCode: extractStreamingWidgetCode(event.delta) ?? "",
-                widgetLoadingMessages: extractLoadingMessages(event.delta) ?? undefined,
-                _rawArgs: event.delta,
-              } : event.name === "diagram" ? {
-                diagramCode: "",
-                _rawArgs: event.delta,
-              } : {}),
+              ...(event.name === "visualize"
+                ? {
+                    widgetCode: extractStreamingWidgetCode(event.delta) ?? "",
+                    widgetLoadingMessages:
+                      extractLoadingMessages(event.delta) ?? undefined,
+                    _rawArgs: event.delta,
+                  }
+                : event.name === "diagram"
+                  ? {
+                      diagramCode: "",
+                      _rawArgs: event.delta,
+                    }
+                  : {}),
             };
             return [...prev, toolBubble];
           });
@@ -737,7 +831,10 @@ export function useChat(
         setBubbles((prev) =>
           prev.map((b) =>
             b.key === `tool-${event.id}` && b.kind === "tool"
-              ? { ...b, progressLines: [...(b.progressLines ?? []), event.progress] }
+              ? {
+                  ...b,
+                  progressLines: [...(b.progressLines ?? []), event.progress],
+                }
               : b,
           ),
         );
@@ -768,7 +865,12 @@ export function useChat(
                 extractWidgetCode(event.result) ??
                 extractWidgetCode(tryParseWidgetArgs(rawArgs)) ??
                 b.widgetCode;
-              return { ...b, result: event.result, pending: false, ...(widgetCode ? { widgetCode } : {}) };
+              return {
+                ...b,
+                result: event.result,
+                pending: false,
+                ...(widgetCode ? { widgetCode } : {}),
+              };
             }),
           );
           return false;
@@ -784,8 +886,15 @@ export function useChat(
               try {
                 const parsed = JSON.parse(rawArgs) as Record<string, unknown>;
                 if (typeof parsed.code === "string") diagramCode = parsed.code;
-              } catch { /* ignore */ }
-              return { ...b, result: event.result, pending: false, ...(diagramCode ? { diagramCode } : {}) };
+              } catch {
+                /* ignore */
+              }
+              return {
+                ...b,
+                result: event.result,
+                pending: false,
+                ...(diagramCode ? { diagramCode } : {}),
+              };
             }),
           );
           return false;
@@ -811,6 +920,12 @@ export function useChat(
       } else if (event.type === "ask") {
         // Save stream_id now — "done" will arrive next and clear streamIdRef.
         askStreamIdRef.current = streamIdRef.current;
+      } else if (event.type === "usage") {
+        setTokenUsage({
+          contextTokens: event.context_tokens,
+          compactTriggerTokens: event.compact_trigger_tokens,
+        });
+
       } else if (event.type === "done") {
         sealActiveText();
         updateStatus("idle");
@@ -924,7 +1039,10 @@ export function useChat(
     })
       .then((r) => r.json())
       .then((data: { stream_id?: string }) => {
-        if (!data.stream_id) { reattachingRef.current = false; return; }
+        if (!data.stream_id) {
+          reattachingRef.current = false;
+          return;
+        }
         startStream(data.stream_id);
       })
       .catch((e) => {
@@ -981,8 +1099,15 @@ export function useChat(
               }
             },
             (err) => {
-              if (statusRef.current !== "streaming" && statusRef.current !== "connecting") return;
-              console.warn("[SSE] answer stream disconnected, trying reattach:", err);
+              if (
+                statusRef.current !== "streaming" &&
+                statusRef.current !== "connecting"
+              )
+                return;
+              console.warn(
+                "[SSE] answer stream disconnected, trying reattach:",
+                err,
+              );
               updateStatus("connecting");
               abortControllerRef.current = null;
               setTimeout(() => {
@@ -1022,14 +1147,17 @@ export function useChat(
 
         let newStreamId: string;
         try {
-          const res = await fetch(`${BASE()}/api/stream/${oldStreamId}/interrupt`, {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${token}`,
-              "Content-Type": "application/json",
+          const res = await fetch(
+            `${BASE()}/api/stream/${oldStreamId}/interrupt`,
+            {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${token}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({ content: text }),
             },
-            body: JSON.stringify({ content: text }),
-          });
+          );
           if (!res.ok) return;
           const data = (await res.json()) as { stream_id: string };
           newStreamId = data.stream_id;
@@ -1068,8 +1196,15 @@ export function useChat(
             }
           },
           (err) => {
-            if (statusRef.current !== "streaming" && statusRef.current !== "connecting") return;
-            console.warn("[SSE] interrupt stream disconnected, trying reattach:", err);
+            if (
+              statusRef.current !== "streaming" &&
+              statusRef.current !== "connecting"
+            )
+              return;
+            console.warn(
+              "[SSE] interrupt stream disconnected, trying reattach:",
+              err,
+            );
             updateStatus("connecting");
             abortControllerRef.current = null;
             setTimeout(() => {
@@ -1119,14 +1254,17 @@ export function useChat(
       let streamId: string;
       try {
         const body: Record<string, unknown> = { content: text };
-        const res = await fetch(`${BASE()}/api/conversations/${convId}/messages`, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type": "application/json",
+        const res = await fetch(
+          `${BASE()}/api/conversations/${convId}/messages`,
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${token}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(body),
           },
-          body: JSON.stringify(body),
-        });
+        );
         if (!res.ok) {
           const err = await res
             .json()
@@ -1148,8 +1286,8 @@ export function useChat(
             prev.map((b) =>
               b.key === userBubble.key
                 ? { ...b, msgId: mid, ...(sibs ? { siblings: sibs } : {}) }
-                : b
-            )
+                : b,
+            ),
           );
         }
       } catch (e) {
@@ -1211,11 +1349,17 @@ export function useChat(
   const branch = useCallback(
     async (msgId: number, bubbleKey: string, newText: string) => {
       if (!token || !conversationId) return;
-      const res = await fetch(`${BASE()}/api/conversations/${conversationId}/branch`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ message_id: msgId }),
-      });
+      const res = await fetch(
+        `${BASE()}/api/conversations/${conversationId}/branch`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ message_id: msgId }),
+        },
+      );
       if (!res.ok) return;
 
       // Keep everything before the edited user bubble; drop it and everything after.
@@ -1269,5 +1413,6 @@ export function useChat(
     addUploadBubble,
     branch,
     switchSibling,
+    tokenUsage,
   };
 }

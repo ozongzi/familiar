@@ -104,6 +104,7 @@ export function ChatPage() {
     addUploadBubble,
     branch,
     switchSibling,
+    tokenUsage,
   } = useChat(
     activeId === DRAFT_ID ? null : activeId,
     token,
@@ -574,6 +575,7 @@ export function ChatPage() {
           onUpload={handleUpload}
           onOpenMcp={() => setMcpOpen(true)}
           onOpenLocalMcp={() => setLocalMcpOpen(true)}
+          tokenUsage={tokenUsage}
           placeholder="请说……"
         />
       </main>

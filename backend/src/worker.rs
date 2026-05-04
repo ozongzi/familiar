@@ -640,6 +640,9 @@ async fn generation_loop(
 
         // ── Emit usage summary ────────────────────────────────────────────
         if usage.total_tokens > 0 {
+            let context_tokens = usage.prompt_tokens as i64
+                + usage.cache_read_tokens as i64
+                + usage.cache_creation_tokens as i64;
             emit(
                 ctx,
                 json!({
@@ -647,6 +650,8 @@ async fn generation_loop(
                     "prompt_tokens": usage.prompt_tokens,
                     "completion_tokens": usage.completion_tokens,
                     "total_tokens": usage.total_tokens,
+                    "context_tokens": context_tokens,
+                    "compact_trigger_tokens": compact_model.compact_trigger_tokens,
                 }),
             )
             .await;

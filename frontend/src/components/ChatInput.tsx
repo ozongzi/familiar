@@ -25,6 +25,7 @@ interface Props {
   requestConversationId?: () => Promise<string | null>;
   onUpload?: (result: UploadResult) => void;
   onOpenMcp?: () => void;
+  tokenUsage?: { contextTokens: number; compactTriggerTokens: number } | null;
   onOpenLocalMcp?: () => void;
 }
 
@@ -38,6 +39,7 @@ export function ChatInput({
   token,
   conversationId,
   requestConversationId,
+  tokenUsage,
   onUpload,
   onOpenMcp,
   onOpenLocalMcp,
@@ -61,56 +63,69 @@ export function ChatInput({
     resize();
   }, [resize]);
 
-  const uploadFiles = useCallback(async (files: File[]) => {
-    if (files.length === 0 || !onUpload) return;
-    let convId = conversationId ?? null;
-    if (!convId && requestConversationId) {
-      convId = await requestConversationId();
-    }
-    const authToken = token ?? localStorage.getItem("familiar_token");
-    setIsUploading(true);
-    setUploadError(null);
-    try {
-      await Promise.all(
-        files.map(async (file) => {
-          const formData = new FormData();
-          formData.append("file", file, file.name);
-          if (convId) formData.append("conversation_id", convId);
-          const res = await fetch("/api/files", {
-            method: "POST",
-            headers: { Authorization: `Bearer ${authToken}` },
-            body: formData,
-          });
-          if (!res.ok) {
-            const err = await res.json().catch(() => ({ error: "上传失败" }));
-            throw new Error(err?.error ?? `上传失败 (${res.status})`);
-          }
-          const json = (await res.json()) as { filename: string; path: string; size: number };
-          onUpload({ filename: json.filename, path: json.path, size: json.size });
-        }),
-      );
-    } catch (err) {
-      setUploadError(err instanceof Error ? err.message : "上传失败，请重试");
-    } finally {
-      setIsUploading(false);
-    }
-  }, [token, conversationId, requestConversationId, onUpload]);
+  const uploadFiles = useCallback(
+    async (files: File[]) => {
+      if (files.length === 0 || !onUpload) return;
+      let convId = conversationId ?? null;
+      if (!convId && requestConversationId) {
+        convId = await requestConversationId();
+      }
+      const authToken = token ?? localStorage.getItem("familiar_token");
+      setIsUploading(true);
+      setUploadError(null);
+      try {
+        await Promise.all(
+          files.map(async (file) => {
+            const formData = new FormData();
+            formData.append("file", file, file.name);
+            if (convId) formData.append("conversation_id", convId);
+            const res = await fetch("/api/files", {
+              method: "POST",
+              headers: { Authorization: `Bearer ${authToken}` },
+              body: formData,
+            });
+            if (!res.ok) {
+              const err = await res.json().catch(() => ({ error: "上传失败" }));
+              throw new Error(err?.error ?? `上传失败 (${res.status})`);
+            }
+            const json = (await res.json()) as {
+              filename: string;
+              path: string;
+              size: number;
+            };
+            onUpload({
+              filename: json.filename,
+              path: json.path,
+              size: json.size,
+            });
+          }),
+        );
+      } catch (err) {
+        setUploadError(err instanceof Error ? err.message : "上传失败，请重试");
+      } finally {
+        setIsUploading(false);
+      }
+    },
+    [token, conversationId, requestConversationId, onUpload],
+  );
 
-  const handlePaste = useCallback((e: React.ClipboardEvent<HTMLTextAreaElement>) => {
-    const items = Array.from(e.clipboardData.items);
-    const imageItems = items.filter((item) => item.type.startsWith("image/"));
-    if (imageItems.length === 0) return;
-    e.preventDefault();
-    const files: File[] = [];
-    imageItems.forEach((item) => {
-      const file = item.getAsFile();
-      if (file) files.push(file);
-    });
-    // Upload via /api/files — the backend now includes multimodal image data
-    // in the persisted message, so no need to also add to pendingImages.
-    if (files.length > 0) uploadFiles(files).catch(console.error);
-  }, [uploadFiles]);
-
+  const handlePaste = useCallback(
+    (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+      const items = Array.from(e.clipboardData.items);
+      const imageItems = items.filter((item) => item.type.startsWith("image/"));
+      if (imageItems.length === 0) return;
+      e.preventDefault();
+      const files: File[] = [];
+      imageItems.forEach((item) => {
+        const file = item.getAsFile();
+        if (file) files.push(file);
+      });
+      // Upload via /api/files — the backend now includes multimodal image data
+      // in the persisted message, so no need to also add to pendingImages.
+      if (files.length > 0) uploadFiles(files).catch(console.error);
+    },
+    [uploadFiles],
+  );
 
   const submit = useCallback(() => {
     const el = textareaRef.current;
@@ -266,6 +281,17 @@ export function ChatInput({
           </div>
 
           <div className={styles.toolbarRight}>
+            {tokenUsage && (
+              <span
+                className={styles.tokenHint}
+                title={`上下文 ${tokenUsage.contextTokens.toLocaleString()} / ${tokenUsage.compactTriggerTokens.toLocaleString()} tokens`}
+              >
+                {tokenUsage.contextTokens >= tokenUsage.compactTriggerTokens
+                  ? `⚠ ${Math.round((tokenUsage.contextTokens / tokenUsage.compactTriggerTokens) * 100)}%`
+                  : `${Math.round((tokenUsage.contextTokens / tokenUsage.compactTriggerTokens) * 100)}%`}
+              </span>
+            )}
+
             {streaming && <span className={styles.hint}>正在生成…</span>}
 
             {isAbortMode && (
