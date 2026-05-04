@@ -15,9 +15,21 @@ import { FilePreviewContent } from "./FilePreviewContent";
 import { BashTool, WriteTool, MultiWriteTool } from "./BashWriteTools";
 import { PlanTool } from "./PlanTool";
 import styles from "./MessageBubble.module.css";
-import { getServerBase } from "../utils/tauri";
+import { getServerBase, isTauri } from "../utils/tauri";
 
 const BASE = () => getServerBase();
+
+async function triggerDownload(url: string, filename: string) {
+  if (isTauri()) {
+    const { open } = await import("@tauri-apps/plugin-shell");
+    await open(url);
+    return;
+  }
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -574,10 +586,7 @@ function UploadChatBubble({ bubble }: { bubble: UploadBubble }) {
   const handleDownload = useCallback(() => {
     const params = new URLSearchParams({ path: bubble.path, token });
     if (bubble.conversationId) params.append("conversation_id", bubble.conversationId);
-    const a = document.createElement("a");
-    a.href = `/api/files?${params}`;
-    a.download = bubble.filename;
-    a.click();
+    void triggerDownload(`${BASE()}/api/files?${params}`, bubble.filename);
   }, [bubble.path, bubble.filename, bubble.conversationId, token]);
 
   return (
@@ -1284,7 +1293,7 @@ function FileCard({
   const fileUrl = useMemo(() => {
     const params = new URLSearchParams({ path: file.path, token });
     if (conversationId) params.append("conversation_id", conversationId);
-    return `/api/files?${params.toString()}`;
+    return `${BASE()}/api/files?${params.toString()}`;
   }, [file.path, token, conversationId]);
 
   const isImageFile = useMemo(() => {
@@ -1330,10 +1339,7 @@ function FileCard({
   }
 
   const handleDownload = useCallback(() => {
-    const a = document.createElement("a");
-    a.href = fileUrl;
-    a.download = file.filename;
-    a.click();
+    void triggerDownload(fileUrl, file.filename);
   }, [fileUrl, file.filename]);
 
   return (

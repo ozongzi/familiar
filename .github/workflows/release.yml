@@ -259,3 +259,13 @@ jobs:
           # Upload everything: APKs + .sig + updated latest.json.
           gh release upload "$TAG" android-out/*.apk android-out/*.sig latest.json \
             --repo "$REPO" --clobber
+
+      # Flip the release out of draft only after android-aarch64 has been
+      # patched into latest.json — otherwise installed Android clients would
+      # see a latest.json without their platform entry and fail to update.
+      - name: Publish release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: gh release edit "$TAG" --repo "$REPO" --draft=false
