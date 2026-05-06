@@ -1,6 +1,6 @@
 [package]
 name = "familiar"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 
 [[bin]]
@@ -76,4 +76,3 @@ tiktoken-rs = "0.5"
 # Integration tests against a live Postgres. Set DATABASE_URL_TEST to the
 # admin connection string (e.g. postgres://postgres:postgres@localhost/postgres)
 # — tests provision and drop a per-run database and run all migrations.
-
