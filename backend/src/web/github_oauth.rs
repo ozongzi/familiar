@@ -157,7 +157,7 @@ pub async fn github_callback(
     let is_tauri = params.state.as_deref() == Some("tauri");
     let redirect_url = if is_tauri {
         format!(
-            "familiar://auth?token={}&is_new={}",
+            "familiar://auth/callback?token={}&is_new={}",
             token,
             if is_new { "1" } else { "0" }
         )
