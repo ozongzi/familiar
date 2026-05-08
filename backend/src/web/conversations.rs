@@ -140,6 +140,33 @@ pub async fn create_conversation(
         }
     }
 
+    // Snapshot the user's effective default model so the conversation always
+    // has a permanent model_id. Without this, conversations created without an
+    // explicit model_id used to fall back to "current default at generation
+    // time" — which made cost attribution and audit useless once the default
+    // changed. NULL is still possible when the user has no default available;
+    // that's preserved for compatibility with the cheap-model fallback path.
+    let model_id: Option<Uuid> = match req.model_id {
+        Some(id) => Some(id),
+        None => sqlx::query_scalar(
+            "SELECT id FROM models
+             WHERE scope = 'global'
+               AND is_default = true
+               AND COALESCE(
+                    (
+                        SELECT allowed
+                        FROM user_model_permissions ump
+                        WHERE ump.user_id = $1 AND ump.model_id = models.id
+                    ),
+                    initial_available
+               )
+             LIMIT 1",
+        )
+        .bind(auth.user_id)
+        .fetch_optional(&state.pool)
+        .await?,
+    };
+
     let row = sqlx::query(
         r#"
         INSERT INTO conversations (user_id, name, model_id, folder_id)
@@ -149,7 +176,7 @@ pub async fn create_conversation(
     )
     .bind(auth.user_id)
     .bind(&name)
-    .bind(req.model_id)
+    .bind(model_id)
     .bind(req.folder_id)
     .fetch_one(&state.pool)
     .await?;

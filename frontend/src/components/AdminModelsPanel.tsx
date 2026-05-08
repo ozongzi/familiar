@@ -19,6 +19,10 @@ const EMPTY_FORM: UpsertModelRequest = {
   compact_trigger_tokens: 50000,
   compact_tail_tokens: 16000,
   reasoning_effort: null,
+  price_input_per_mtoken: null,
+  price_output_per_mtoken: null,
+  price_cache_read_per_mtoken: null,
+  price_cache_creation_per_mtoken: null,
 };
 
 const REASONING_EFFORT_OPTIONS: { value: "" | ReasoningEffort; label: string }[] = [
@@ -84,6 +88,10 @@ export function AdminModelsPanel({ token }: Props) {
       compact_trigger_tokens: m.compact_trigger_tokens,
       compact_tail_tokens: m.compact_tail_tokens,
       reasoning_effort: m.reasoning_effort,
+      price_input_per_mtoken: m.price_input_per_mtoken,
+      price_output_per_mtoken: m.price_output_per_mtoken,
+      price_cache_read_per_mtoken: m.price_cache_read_per_mtoken,
+      price_cache_creation_per_mtoken: m.price_cache_creation_per_mtoken,
     });
     setEditing(m.id);
     setError("");
@@ -268,6 +276,30 @@ export function AdminModelsPanel({ token }: Props) {
           </div>
 
           <div className={styles.section}>
+            <div className={styles.sectionTitle}>定价（USD 每百万 token，可空）</div>
+            <PriceRow
+              label="Input"
+              value={form.price_input_per_mtoken}
+              onChange={(v) => setForm({ ...form, price_input_per_mtoken: v })}
+            />
+            <PriceRow
+              label="Output"
+              value={form.price_output_per_mtoken}
+              onChange={(v) => setForm({ ...form, price_output_per_mtoken: v })}
+            />
+            <PriceRow
+              label="Cache read"
+              value={form.price_cache_read_per_mtoken}
+              onChange={(v) => setForm({ ...form, price_cache_read_per_mtoken: v })}
+            />
+            <PriceRow
+              label="Cache write"
+              value={form.price_cache_creation_per_mtoken}
+              onChange={(v) => setForm({ ...form, price_cache_creation_per_mtoken: v })}
+            />
+          </div>
+
+          <div className={styles.section}>
             <div className={styles.sectionTitle}>访问</div>
             <label className={styles.checkRow}>
               <input
@@ -349,6 +381,38 @@ export function AdminModelsPanel({ token }: Props) {
           </div>,
           document.body,
         )}
+    </div>
+  );
+}
+
+function PriceRow({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: number | null | undefined;
+  onChange: (v: number | null) => void;
+}) {
+  return (
+    <div className={styles.row}>
+      <label>{label}</label>
+      <input
+        type="number"
+        step="0.01"
+        min={0}
+        value={value ?? ""}
+        onChange={(e) => {
+          const raw = e.target.value;
+          if (raw === "") {
+            onChange(null);
+          } else {
+            const n = Number(raw);
+            onChange(Number.isFinite(n) ? n : null);
+          }
+        }}
+        placeholder="留空表示未知"
+      />
     </div>
   );
 }

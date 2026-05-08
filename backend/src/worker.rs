@@ -118,7 +118,10 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
     let prompt_engine = crate::prompt::PromptEngine::new();
 
     // ── Resolve frontier model: conversation model_id > global default ────
-    let frontier_cfg: ModelConfig = {
+    // Also tracks the resolved model's UUID (None when we fell back to
+    // cheap_cfg, which has no models row), used to tag token_usage_events
+    // so cost queries can JOIN per-model prices.
+    let (frontier_cfg, frontier_model_id): (ModelConfig, Option<Uuid>) = {
         #[allow(clippy::too_many_arguments)]
         fn model_from_row(
             provider: String,
@@ -160,6 +163,7 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
         // catch this upstream; here we fall through to the default-model branch
         // so the job still completes rather than 500-ing.
         let conv_model: Option<(
+            Uuid,
             String,
             String,
             String,
@@ -170,7 +174,7 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
             i64,
             Option<String>,
         )> = sqlx::query_as(
-            "SELECT m.provider, m.model_name, m.api_base, m.api_key, m.extra_body, m.kind,
+            "SELECT m.id, m.provider, m.model_name, m.api_base, m.api_key, m.extra_body, m.kind,
                     m.compact_trigger_tokens, m.compact_tail_tokens, m.reasoning_effort
              FROM conversations c
              JOIN models m ON m.id = c.model_id
@@ -195,15 +199,19 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
         .await
         .unwrap_or(None);
 
-        if let Some((provider, name, api_base, api_key, extra_body, kind, trig, tail, effort)) =
+        if let Some((id, provider, name, api_base, api_key, extra_body, kind, trig, tail, effort)) =
             conv_model
         {
-            model_from_row(
-                provider, name, api_base, api_key, extra_body, kind, trig, tail, effort,
+            (
+                model_from_row(
+                    provider, name, api_base, api_key, extra_body, kind, trig, tail, effort,
+                ),
+                Some(id),
             )
         } else {
             // 2. global default model
             let default_model: Option<(
+                Uuid,
                 String,
                 String,
                 String,
@@ -214,7 +222,7 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
                 i64,
                 Option<String>,
             )> = sqlx::query_as(
-                "SELECT provider, model_name, api_base, api_key, extra_body, kind,
+                "SELECT id, provider, model_name, api_base, api_key, extra_body, kind,
                         compact_trigger_tokens, compact_tail_tokens, reasoning_effort
                  FROM models
                  WHERE scope = 'global'
@@ -234,15 +242,28 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
             .await
             .unwrap_or(None);
 
-            if let Some((provider, name, api_base, api_key, extra_body, kind, trig, tail, effort)) =
-                default_model
+            if let Some((
+                id,
+                provider,
+                name,
+                api_base,
+                api_key,
+                extra_body,
+                kind,
+                trig,
+                tail,
+                effort,
+            )) = default_model
             {
-                model_from_row(
-                    provider, name, api_base, api_key, extra_body, kind, trig, tail, effort,
+                (
+                    model_from_row(
+                        provider, name, api_base, api_key, extra_body, kind, trig, tail, effort,
+                    ),
+                    Some(id),
                 )
             } else {
-                // 3. fallback: cheap_model
-                cheap_cfg.clone()
+                // 3. fallback: cheap_model — no models row, so no price.
+                (cheap_cfg.clone(), None)
             }
         }
     };
@@ -430,7 +451,16 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
     // so every provider can share the same streaming/tool/persistence loop.
     let request = frontier_cfg.to_request().system_prompt(system_prompt);
     let http = reqwest::Client::new();
-    generation_loop(ctx, &http, &request, messages, &bundle, frontier_cfg).await
+    generation_loop(
+        ctx,
+        &http,
+        &request,
+        messages,
+        &bundle,
+        frontier_cfg,
+        frontier_model_id,
+    )
+    .await
 }
 
 // ── Generation loop ───────────────────────────────────────────────────────────
@@ -442,6 +472,7 @@ async fn generation_loop(
     mut messages: Vec<Message>,
     tools: &ToolBundle,
     compact_model: ModelConfig,
+    model_id: Option<Uuid>,
 ) -> anyhow::Result<()> {
     let tool_defs: Vec<ToolDefinition> = tools.raw_tools();
     let mut ttft_written = false; // only record TTFT for the first LLM call
@@ -612,7 +643,7 @@ async fn generation_loop(
 
                 Some(LlmEvent::Usage(u)) => {
                     usage += u.clone();
-                    persist_usage_event(ctx, streaming_msg_id, &u).await;
+                    persist_usage_event(ctx, streaming_msg_id, model_id, &u).await;
                 }
 
                 Some(LlmEvent::AssistantState(v)) => {
@@ -871,7 +902,12 @@ async fn generation_loop(
     Ok(())
 }
 
-async fn persist_usage_event(ctx: &WorkerContext, message_id: i64, usage: &UsageStats) {
+async fn persist_usage_event(
+    ctx: &WorkerContext,
+    message_id: i64,
+    model_id: Option<Uuid>,
+    usage: &UsageStats,
+) {
     // Compact only needs the model's input-context size on this turn:
     // non-cached prompt + cache read + cache creation.
     let context_tokens = usage.prompt_tokens as i64
@@ -883,7 +919,7 @@ async fn persist_usage_event(ctx: &WorkerContext, message_id: i64, usage: &Usage
         r#"INSERT INTO token_usage_events
                (job_id, conversation_id, user_id, message_id, conversation_name,
                 prompt_tokens, completion_tokens, cache_read_tokens,
-                cache_creation_tokens, total_tokens, created_at)
+                cache_creation_tokens, model_id, created_at)
            SELECT $1, c.id, c.user_id, $2, c.name,
                   $3, $4, $5, $6, $7, $8
            FROM conversations c
@@ -895,7 +931,7 @@ async fn persist_usage_event(ctx: &WorkerContext, message_id: i64, usage: &Usage
     .bind(usage.completion_tokens as i64)
     .bind(usage.cache_read_tokens as i64)
     .bind(usage.cache_creation_tokens as i64)
-    .bind(usage.total_tokens as i64)
+    .bind(model_id)
     .bind(now)
     .bind(ctx.conversation_id)
     .execute(&ctx.pool)

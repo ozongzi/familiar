@@ -103,6 +103,11 @@ export interface Model {
   compact_trigger_tokens: number;
   compact_tail_tokens: number;
   reasoning_effort: ReasoningEffort | null;
+  /// USD per million tokens. null = price unknown (treated as 0 in cost views).
+  price_input_per_mtoken: number | null;
+  price_output_per_mtoken: number | null;
+  price_cache_read_per_mtoken: number | null;
+  price_cache_creation_per_mtoken: number | null;
 }
 
 export interface UpsertModelRequest {
@@ -119,6 +124,10 @@ export interface UpsertModelRequest {
   role?: "cheap" | "embedding" | null;
   initial_available?: boolean;
   is_default?: boolean;
+  price_input_per_mtoken?: number | null;
+  price_output_per_mtoken?: number | null;
+  price_cache_read_per_mtoken?: number | null;
+  price_cache_creation_per_mtoken?: number | null;
 }
 
 export interface ModelPermissionUser {

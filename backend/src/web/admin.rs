@@ -652,32 +652,58 @@ pub async fn delete_global_mcp(
     Ok(Json(serde_json::json!({"ok": true})))
 }
 
+// ── Cost SQL fragments ────────────────────────────────────────────────────────
+//
+// Cost is computed at query time by joining models on token_usage_events.model_id
+// and multiplying each token-type column by its USD-per-million-tokens price.
+// NULL prices (price unknown) become 0 so the SUM doesn't poison.
+//
+// Historical rows whose model_id couldn't be backfilled (model deleted, etc.)
+// also contribute 0 cost.
+
+/// SUM of total USD cost across all four token types.
+const COST_TOTAL_SQL: &str = "(
+       t.prompt_tokens         * COALESCE(m.price_input_per_mtoken,          0)
+     + t.completion_tokens     * COALESCE(m.price_output_per_mtoken,         0)
+     + t.cache_read_tokens     * COALESCE(m.price_cache_read_per_mtoken,     0)
+     + t.cache_creation_tokens * COALESCE(m.price_cache_creation_per_mtoken, 0)
+   ) / 1e6";
+
 /// GET /api/admin/token-usage
 pub async fn get_token_usage(
     State(state): State<AppState>,
     auth: AuthUser,
 ) -> AppResult<Json<serde_json::Value>> {
     guard_admin(&auth)?;
-    let row = sqlx::query(
-        r#"SELECT COALESCE(SUM(prompt_tokens), 0)::bigint          AS prompt_tokens,
-                  COALESCE(SUM(completion_tokens), 0)::bigint      AS completion_tokens,
-                  COALESCE(SUM(total_tokens), 0)::bigint           AS total_tokens,
-                  COALESCE(SUM(cache_read_tokens), 0)::bigint      AS cache_read_tokens,
-                  COALESCE(SUM(cache_creation_tokens), 0)::bigint  AS cache_creation_tokens,
-                  COUNT(DISTINCT conversation_id)::bigint           AS conversation_count
-           FROM token_usage_events"#,
-    )
-    .fetch_one(&state.pool)
-    .await?;
+    let sql = format!(
+        r#"SELECT COALESCE(SUM(t.prompt_tokens), 0)::bigint          AS prompt_tokens,
+                  COALESCE(SUM(t.completion_tokens), 0)::bigint      AS completion_tokens,
+                  COALESCE(SUM(t.cache_read_tokens), 0)::bigint      AS cache_read_tokens,
+                  COALESCE(SUM(t.cache_creation_tokens), 0)::bigint  AS cache_creation_tokens,
+                  COALESCE(SUM(t.prompt_tokens         * COALESCE(m.price_input_per_mtoken,          0) / 1e6), 0)::float8 AS cost_input,
+                  COALESCE(SUM(t.completion_tokens     * COALESCE(m.price_output_per_mtoken,         0) / 1e6), 0)::float8 AS cost_output,
+                  COALESCE(SUM(t.cache_read_tokens     * COALESCE(m.price_cache_read_per_mtoken,     0) / 1e6), 0)::float8 AS cost_cache_read,
+                  COALESCE(SUM(t.cache_creation_tokens * COALESCE(m.price_cache_creation_per_mtoken, 0) / 1e6), 0)::float8 AS cost_cache_creation,
+                  COALESCE(SUM({cost}), 0)::float8                    AS total_cost,
+                  COUNT(DISTINCT t.conversation_id)::bigint           AS conversation_count
+           FROM token_usage_events t
+           LEFT JOIN models m ON m.id = t.model_id"#,
+        cost = COST_TOTAL_SQL
+    );
+    let row = sqlx::query(&sql).fetch_one(&state.pool).await?;
 
     use sqlx::Row;
     Ok(Json(serde_json::json!({
-        "prompt_tokens":        row.get::<i64, _>("prompt_tokens"),
-        "completion_tokens":    row.get::<i64, _>("completion_tokens"),
-        "total_tokens":         row.get::<i64, _>("total_tokens"),
-        "cache_read_tokens":    row.get::<i64, _>("cache_read_tokens"),
-        "cache_creation_tokens":row.get::<i64, _>("cache_creation_tokens"),
-        "conversation_count":   row.get::<i64, _>("conversation_count"),
+        "prompt_tokens":         row.get::<i64, _>("prompt_tokens"),
+        "completion_tokens":     row.get::<i64, _>("completion_tokens"),
+        "cache_read_tokens":     row.get::<i64, _>("cache_read_tokens"),
+        "cache_creation_tokens": row.get::<i64, _>("cache_creation_tokens"),
+        "cost_input":            row.get::<f64, _>("cost_input"),
+        "cost_output":           row.get::<f64, _>("cost_output"),
+        "cost_cache_read":       row.get::<f64, _>("cost_cache_read"),
+        "cost_cache_creation":   row.get::<f64, _>("cost_cache_creation"),
+        "total_cost":            row.get::<f64, _>("total_cost"),
+        "conversation_count":    row.get::<i64, _>("conversation_count"),
     })))
 }
 
@@ -686,23 +712,24 @@ pub async fn get_token_usage_by_user(
     auth: AuthUser,
 ) -> AppResult<Json<serde_json::Value>> {
     guard_admin(&auth)?;
-    let rows = sqlx::query(
+    let sql = format!(
         r#"
         SELECT u.id::text AS user_id, u.name AS username,
-               COUNT(t.conversation_id)::bigint                         AS conversation_count,
+               COUNT(DISTINCT t.conversation_id)::bigint                AS conversation_count,
                COALESCE(SUM(t.prompt_tokens), 0)::bigint                AS prompt_tokens,
                COALESCE(SUM(t.completion_tokens), 0)::bigint            AS completion_tokens,
-               COALESCE(SUM(t.total_tokens), 0)::bigint                 AS total_tokens,
                COALESCE(SUM(t.cache_read_tokens), 0)::bigint            AS cache_read_tokens,
-               COALESCE(SUM(t.cache_creation_tokens), 0)::bigint        AS cache_creation_tokens
+               COALESCE(SUM(t.cache_creation_tokens), 0)::bigint        AS cache_creation_tokens,
+               COALESCE(SUM({cost}), 0)::float8                          AS total_cost
         FROM users u
         LEFT JOIN token_usage_events t ON t.user_id = u.id
+        LEFT JOIN models m              ON m.id = t.model_id
         GROUP BY u.id, u.name
-        ORDER BY total_tokens DESC
+        ORDER BY total_cost DESC
         "#,
-    )
-    .fetch_all(&state.pool)
-    .await?;
+        cost = COST_TOTAL_SQL
+    );
+    let rows = sqlx::query(&sql).fetch_all(&state.pool).await?;
 
     let users: Vec<serde_json::Value> = rows
         .iter()
@@ -714,9 +741,9 @@ pub async fn get_token_usage_by_user(
                 "conversation_count":   r.get::<i64, _>("conversation_count"),
                 "prompt_tokens":        r.get::<i64, _>("prompt_tokens"),
                 "completion_tokens":    r.get::<i64, _>("completion_tokens"),
-                "total_tokens":         r.get::<i64, _>("total_tokens"),
                 "cache_read_tokens":    r.get::<i64, _>("cache_read_tokens"),
                 "cache_creation_tokens":r.get::<i64, _>("cache_creation_tokens"),
+                "total_cost":           r.get::<f64, _>("total_cost"),
             })
         })
         .collect();
@@ -732,52 +759,38 @@ pub async fn get_token_usage_conversations(
     guard_admin(&auth)?;
     let user_id = params.get("user_id").cloned().unwrap_or_default();
 
+    let base_sql = format!(
+        r#"
+            SELECT t.conversation_id::text AS conv_id,
+                   COALESCE(MAX(t.conversation_name), '(deleted)') AS conv_name,
+                   u.name AS username,
+                   TO_TIMESTAMP(MAX(t.created_at))::text AS created_at,
+                   COALESCE(SUM(t.prompt_tokens), 0)::bigint AS prompt_tokens,
+                   COALESCE(SUM(t.completion_tokens), 0)::bigint AS completion_tokens,
+                   COALESCE(SUM(t.cache_read_tokens), 0)::bigint AS cache_read_tokens,
+                   COALESCE(SUM(t.cache_creation_tokens), 0)::bigint AS cache_creation_tokens,
+                   COALESCE(SUM({cost}), 0)::float8 AS total_cost
+            FROM token_usage_events t
+            JOIN users u        ON u.id = t.user_id
+            LEFT JOIN models m  ON m.id = t.model_id
+            {where_clause}
+            GROUP BY t.conversation_id, u.name
+            HAVING COALESCE(SUM(t.prompt_tokens + t.completion_tokens
+                              + t.cache_read_tokens + t.cache_creation_tokens), 0) > 0
+            ORDER BY MAX(t.created_at) DESC
+            LIMIT 200
+        "#,
+        cost = COST_TOTAL_SQL,
+        where_clause = if user_id.is_empty() { "" } else { "WHERE t.user_id = $1::uuid" }
+    );
+
     let rows = if user_id.is_empty() {
-        sqlx::query(
-            r#"
-            SELECT t.conversation_id::text AS conv_id,
-                   COALESCE(MAX(t.conversation_name), '(deleted)') AS conv_name,
-                   u.name AS username,
-                   TO_TIMESTAMP(MAX(t.created_at))::text AS created_at,
-                   COALESCE(SUM(t.prompt_tokens), 0)::bigint AS prompt_tokens,
-                   COALESCE(SUM(t.completion_tokens), 0)::bigint AS completion_tokens,
-                   COALESCE(SUM(t.total_tokens), 0)::bigint AS total_tokens,
-                   COALESCE(SUM(t.cache_read_tokens), 0)::bigint AS cache_read_tokens,
-                   COALESCE(SUM(t.cache_creation_tokens), 0)::bigint AS cache_creation_tokens
-            FROM token_usage_events t
-            JOIN users u ON u.id = t.user_id
-            GROUP BY t.conversation_id, u.name
-            HAVING COALESCE(SUM(t.total_tokens), 0) > 0
-            ORDER BY MAX(t.created_at) DESC
-            LIMIT 200
-            "#,
-        )
-        .fetch_all(&state.pool)
-        .await?
+        sqlx::query(&base_sql).fetch_all(&state.pool).await?
     } else {
-        sqlx::query(
-            r#"
-            SELECT t.conversation_id::text AS conv_id,
-                   COALESCE(MAX(t.conversation_name), '(deleted)') AS conv_name,
-                   u.name AS username,
-                   TO_TIMESTAMP(MAX(t.created_at))::text AS created_at,
-                   COALESCE(SUM(t.prompt_tokens), 0)::bigint AS prompt_tokens,
-                   COALESCE(SUM(t.completion_tokens), 0)::bigint AS completion_tokens,
-                   COALESCE(SUM(t.total_tokens), 0)::bigint AS total_tokens,
-                   COALESCE(SUM(t.cache_read_tokens), 0)::bigint AS cache_read_tokens,
-                   COALESCE(SUM(t.cache_creation_tokens), 0)::bigint AS cache_creation_tokens
-            FROM token_usage_events t
-            JOIN users u ON u.id = t.user_id
-            WHERE t.user_id = $1::uuid
-            GROUP BY t.conversation_id, u.name
-            HAVING COALESCE(SUM(t.total_tokens), 0) > 0
-            ORDER BY MAX(t.created_at) DESC
-            LIMIT 200
-            "#,
-        )
-        .bind(&user_id)
-        .fetch_all(&state.pool)
-        .await?
+        sqlx::query(&base_sql)
+            .bind(&user_id)
+            .fetch_all(&state.pool)
+            .await?
     };
 
     let conversations: Vec<serde_json::Value> = rows
@@ -791,9 +804,9 @@ pub async fn get_token_usage_conversations(
                 "created_at":           r.get::<String, _>("created_at"),
                 "prompt_tokens":        r.get::<i64, _>("prompt_tokens"),
                 "completion_tokens":    r.get::<i64, _>("completion_tokens"),
-                "total_tokens":         r.get::<i64, _>("total_tokens"),
                 "cache_read_tokens":    r.get::<i64, _>("cache_read_tokens"),
                 "cache_creation_tokens":r.get::<i64, _>("cache_creation_tokens"),
+                "total_cost":           r.get::<f64, _>("total_cost"),
             })
         })
         .collect();
@@ -806,24 +819,30 @@ pub async fn get_token_usage_daily(
     auth: AuthUser,
 ) -> AppResult<Json<serde_json::Value>> {
     guard_admin(&auth)?;
-    let rows = sqlx::query(
+    let sql = format!(
         r#"
-        SELECT DATE(TO_TIMESTAMP(recorded_at))::text                AS day,
-               COALESCE(SUM(total_tokens), 0)::bigint               AS total_tokens,
-               COALESCE(SUM(prompt_tokens), 0)::bigint              AS prompt_tokens,
-               COALESCE(SUM(completion_tokens), 0)::bigint          AS completion_tokens,
-               COALESCE(SUM(cache_read_tokens), 0)::bigint          AS cache_read_tokens,
-               COALESCE(SUM(cache_creation_tokens), 0)::bigint      AS cache_creation_tokens,
-               COUNT(*)::bigint                                      AS conversation_count
-        FROM token_usage_events
-        WHERE created_at >= EXTRACT(EPOCH FROM NOW() - INTERVAL '30 days')::bigint
-          AND total_tokens > 0
-        GROUP BY DATE(TO_TIMESTAMP(created_at))
+        SELECT DATE(TO_TIMESTAMP(t.created_at))::text                            AS day,
+               COALESCE(SUM(t.prompt_tokens), 0)::bigint                         AS prompt_tokens,
+               COALESCE(SUM(t.completion_tokens), 0)::bigint                     AS completion_tokens,
+               COALESCE(SUM(t.cache_read_tokens), 0)::bigint                     AS cache_read_tokens,
+               COALESCE(SUM(t.cache_creation_tokens), 0)::bigint                 AS cache_creation_tokens,
+               COALESCE(SUM(t.prompt_tokens         * COALESCE(m.price_input_per_mtoken,          0) / 1e6), 0)::float8 AS cost_input,
+               COALESCE(SUM(t.completion_tokens     * COALESCE(m.price_output_per_mtoken,         0) / 1e6), 0)::float8 AS cost_output,
+               COALESCE(SUM(t.cache_read_tokens     * COALESCE(m.price_cache_read_per_mtoken,     0) / 1e6), 0)::float8 AS cost_cache_read,
+               COALESCE(SUM(t.cache_creation_tokens * COALESCE(m.price_cache_creation_per_mtoken, 0) / 1e6), 0)::float8 AS cost_cache_creation,
+               COALESCE(SUM({cost}), 0)::float8                                  AS total_cost,
+               COUNT(DISTINCT t.conversation_id)::bigint                          AS conversation_count
+        FROM token_usage_events t
+        LEFT JOIN models m ON m.id = t.model_id
+        WHERE t.created_at >= EXTRACT(EPOCH FROM NOW() - INTERVAL '30 days')::bigint
+          AND (t.prompt_tokens + t.completion_tokens
+              + t.cache_read_tokens + t.cache_creation_tokens) > 0
+        GROUP BY DATE(TO_TIMESTAMP(t.created_at))
         ORDER BY day ASC
         "#,
-    )
-    .fetch_all(&state.pool)
-    .await?;
+        cost = COST_TOTAL_SQL
+    );
+    let rows = sqlx::query(&sql).fetch_all(&state.pool).await?;
 
     let days: Vec<serde_json::Value> = rows
         .iter()
@@ -831,11 +850,15 @@ pub async fn get_token_usage_daily(
             use sqlx::Row;
             serde_json::json!({
                 "day":                  r.get::<String, _>("day"),
-                "total_tokens":         r.get::<i64, _>("total_tokens"),
                 "prompt_tokens":        r.get::<i64, _>("prompt_tokens"),
                 "completion_tokens":    r.get::<i64, _>("completion_tokens"),
                 "cache_read_tokens":    r.get::<i64, _>("cache_read_tokens"),
                 "cache_creation_tokens":r.get::<i64, _>("cache_creation_tokens"),
+                "cost_input":           r.get::<f64, _>("cost_input"),
+                "cost_output":          r.get::<f64, _>("cost_output"),
+                "cost_cache_read":      r.get::<f64, _>("cost_cache_read"),
+                "cost_cache_creation":  r.get::<f64, _>("cost_cache_creation"),
+                "total_cost":           r.get::<f64, _>("total_cost"),
                 "conversation_count":   r.get::<i64, _>("conversation_count"),
             })
         })

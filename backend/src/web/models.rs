@@ -33,6 +33,10 @@ pub struct ModelRow {
     pub compact_trigger_tokens: i64,
     pub compact_tail_tokens: i64,
     pub reasoning_effort: Option<String>,
+    pub price_input_per_mtoken: Option<f64>,
+    pub price_output_per_mtoken: Option<f64>,
+    pub price_cache_read_per_mtoken: Option<f64>,
+    pub price_cache_creation_per_mtoken: Option<f64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -53,6 +57,11 @@ pub struct ModelResponse {
     /// Null = leave provider default; one of
     /// `'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'`.
     pub reasoning_effort: Option<String>,
+    /// USD per million tokens. Null = price unknown; cost queries treat as 0.
+    pub price_input_per_mtoken: Option<f64>,
+    pub price_output_per_mtoken: Option<f64>,
+    pub price_cache_read_per_mtoken: Option<f64>,
+    pub price_cache_creation_per_mtoken: Option<f64>,
     // api_key intentionally omitted from responses
 }
 
@@ -73,6 +82,10 @@ impl From<ModelRow> for ModelResponse {
             compact_trigger_tokens: r.compact_trigger_tokens,
             compact_tail_tokens: r.compact_tail_tokens,
             reasoning_effort: r.reasoning_effort,
+            price_input_per_mtoken: r.price_input_per_mtoken,
+            price_output_per_mtoken: r.price_output_per_mtoken,
+            price_cache_read_per_mtoken: r.price_cache_read_per_mtoken,
+            price_cache_creation_per_mtoken: r.price_cache_creation_per_mtoken,
         }
     }
 }
@@ -132,6 +145,16 @@ pub struct UpsertModelRequest {
     pub initial_available: Option<bool>,
     #[serde(default)]
     pub is_default: Option<bool>,
+
+    // USD per million tokens. None = clear / leave NULL.
+    #[serde(default)]
+    pub price_input_per_mtoken: Option<f64>,
+    #[serde(default)]
+    pub price_output_per_mtoken: Option<f64>,
+    #[serde(default)]
+    pub price_cache_read_per_mtoken: Option<f64>,
+    #[serde(default)]
+    pub price_cache_creation_per_mtoken: Option<f64>,
 }
 
 // ── User endpoints ────────────────────────────────────────────────────────────
@@ -173,8 +196,10 @@ pub async fn create_model(
     let effort = normalize_reasoning_effort(&req.reasoning_effort)?;
     let row = sqlx::query_as::<_, ModelRow>(
         "INSERT INTO models (user_id, scope, label, provider, model_name, api_base, api_key, extra_body, kind,
-                             compact_trigger_tokens, compact_tail_tokens, reasoning_effort)
-         VALUES ($1, 'user', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                             compact_trigger_tokens, compact_tail_tokens, reasoning_effort,
+                             price_input_per_mtoken, price_output_per_mtoken,
+                             price_cache_read_per_mtoken, price_cache_creation_per_mtoken)
+         VALUES ($1, 'user', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
          RETURNING *",
     )
     .bind(auth.user_id)
@@ -188,6 +213,10 @@ pub async fn create_model(
     .bind(req.compact_trigger_tokens)
     .bind(req.compact_tail_tokens)
     .bind(&effort)
+    .bind(req.price_input_per_mtoken)
+    .bind(req.price_output_per_mtoken)
+    .bind(req.price_cache_read_per_mtoken)
+    .bind(req.price_cache_creation_per_mtoken)
     .fetch_one(&state.pool)
     .await?;
 
@@ -207,8 +236,12 @@ pub async fn update_model(
          api_key = CASE WHEN $5 = '' THEN api_key ELSE $5 END,
          extra_body=$6, kind=$7,
          compact_trigger_tokens=$8, compact_tail_tokens=$9,
-         reasoning_effort=$10
-         WHERE id=$11 AND user_id=$12 AND scope='user'
+         reasoning_effort=$10,
+         price_input_per_mtoken=$11,
+         price_output_per_mtoken=$12,
+         price_cache_read_per_mtoken=$13,
+         price_cache_creation_per_mtoken=$14
+         WHERE id=$15 AND user_id=$16 AND scope='user'
          RETURNING *",
     )
     .bind(&req.label)
@@ -221,6 +254,10 @@ pub async fn update_model(
     .bind(req.compact_trigger_tokens)
     .bind(req.compact_tail_tokens)
     .bind(&effort)
+    .bind(req.price_input_per_mtoken)
+    .bind(req.price_output_per_mtoken)
+    .bind(req.price_cache_read_per_mtoken)
+    .bind(req.price_cache_creation_per_mtoken)
     .bind(id)
     .bind(auth.user_id)
     .fetch_optional(&state.pool)
@@ -304,9 +341,12 @@ pub async fn admin_create_model(
         "INSERT INTO models
            (user_id, scope, label, provider, model_name, api_base, api_key,
             extra_body, kind, role, initial_available, is_default,
-            compact_trigger_tokens, compact_tail_tokens, reasoning_effort)
+            compact_trigger_tokens, compact_tail_tokens, reasoning_effort,
+            price_input_per_mtoken, price_output_per_mtoken,
+            price_cache_read_per_mtoken, price_cache_creation_per_mtoken)
          VALUES (NULL, 'global', $1, $2, $3, $4, $5, $6, $7,
-                 $8, COALESCE($9, true), COALESCE($10, false), $11, $12, $13)
+                 $8, COALESCE($9, true), COALESCE($10, false), $11, $12, $13,
+                 $14, $15, $16, $17)
          RETURNING *",
     )
     .bind(&req.label)
@@ -322,6 +362,10 @@ pub async fn admin_create_model(
     .bind(req.compact_trigger_tokens)
     .bind(req.compact_tail_tokens)
     .bind(&effort)
+    .bind(req.price_input_per_mtoken)
+    .bind(req.price_output_per_mtoken)
+    .bind(req.price_cache_read_per_mtoken)
+    .bind(req.price_cache_creation_per_mtoken)
     .fetch_one(&mut *tx)
     .await?;
 
@@ -373,8 +417,12 @@ pub async fn admin_update_model(
          is_default = COALESCE($10, is_default),
          compact_trigger_tokens = $11,
          compact_tail_tokens    = $12,
-         reasoning_effort       = $13
-         WHERE id=$14 AND scope='global'
+         reasoning_effort       = $13,
+         price_input_per_mtoken          = $14,
+         price_output_per_mtoken         = $15,
+         price_cache_read_per_mtoken     = $16,
+         price_cache_creation_per_mtoken = $17
+         WHERE id=$18 AND scope='global'
          RETURNING *",
     )
     .bind(&req.label)
@@ -390,6 +438,10 @@ pub async fn admin_update_model(
     .bind(req.compact_trigger_tokens)
     .bind(req.compact_tail_tokens)
     .bind(&effort)
+    .bind(req.price_input_per_mtoken)
+    .bind(req.price_output_per_mtoken)
+    .bind(req.price_cache_read_per_mtoken)
+    .bind(req.price_cache_creation_per_mtoken)
     .bind(id)
     .fetch_optional(&mut *tx)
     .await?

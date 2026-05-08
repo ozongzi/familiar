@@ -10,21 +10,29 @@ interface Props {
 }
 
 type Summary = {
-  total_tokens: number;
   prompt_tokens: number;
   completion_tokens: number;
   cache_read_tokens: number;
   cache_creation_tokens: number;
+  cost_input: number;
+  cost_output: number;
+  cost_cache_read: number;
+  cost_cache_creation: number;
+  total_cost: number;
   conversation_count: number;
 };
 
 type DayRow = {
   day: string;
-  total_tokens: number;
   prompt_tokens: number;
   completion_tokens: number;
   cache_read_tokens: number;
   cache_creation_tokens: number;
+  cost_input: number;
+  cost_output: number;
+  cost_cache_read: number;
+  cost_cache_creation: number;
+  total_cost: number;
   conversation_count: number;
 };
 
@@ -36,7 +44,7 @@ type UserRow = {
   completion_tokens: number;
   cache_read_tokens: number;
   cache_creation_tokens: number;
-  total_tokens: number;
+  total_cost: number;
 };
 
 type ConvRow = {
@@ -48,13 +56,19 @@ type ConvRow = {
   completion_tokens: number;
   cache_read_tokens: number;
   cache_creation_tokens: number;
-  total_tokens: number;
+  total_cost: number;
 };
 
 function fmt(n: number): string {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
   if (n >= 1_000) return (n / 1_000).toFixed(1) + "K";
   return String(n);
+}
+
+function fmtUsd(n: number): string {
+  if (!Number.isFinite(n)) return "$0.00";
+  if (n >= 1_000) return "$" + (n / 1_000).toFixed(2) + "K";
+  return "$" + n.toFixed(2);
 }
 
 export function AdminOverview({ token, onNavigate }: Props) {
@@ -88,42 +102,51 @@ export function AdminOverview({ token, onNavigate }: Props) {
       data: {
         labels: days.map((d) => d.day.slice(5)),
         datasets: [
-          { label: "Prompt", data: days.map((d) => d.prompt_tokens), backgroundColor: "rgba(99,102,241,0.6)", stack: "t" },
-          { label: "Completion", data: days.map((d) => d.completion_tokens), backgroundColor: "rgba(34,197,94,0.6)", stack: "t" },
-          { label: "Cache Read", data: days.map((d) => d.cache_read_tokens), backgroundColor: "rgba(59,130,246,0.45)", stack: "t" },
-          { label: "Cache Creation", data: days.map((d) => d.cache_creation_tokens), backgroundColor: "rgba(251,191,36,0.45)", stack: "t" },
+          { label: "Input", data: days.map((d) => d.cost_input), backgroundColor: "rgba(99,102,241,0.6)", stack: "t" },
+          { label: "Output", data: days.map((d) => d.cost_output), backgroundColor: "rgba(34,197,94,0.6)", stack: "t" },
+          { label: "Cache Read", data: days.map((d) => d.cost_cache_read), backgroundColor: "rgba(59,130,246,0.45)", stack: "t" },
+          { label: "Cache Write", data: days.map((d) => d.cost_cache_creation), backgroundColor: "rgba(251,191,36,0.45)", stack: "t" },
         ],
       },
       options: {
         responsive: true,
         maintainAspectRatio: false,
-        plugins: { legend: { position: "top" } },
+        plugins: {
+          legend: { position: "top" },
+          tooltip: {
+            callbacks: { label: (ctx) => `${ctx.dataset.label}: ${fmtUsd(Number(ctx.parsed.y))}` },
+          },
+        },
         scales: {
           x: { stacked: true, grid: { display: false }, ticks: { font: { size: 11 } } },
-          y: { stacked: true, grid: { color: "rgba(128,128,128,0.1)" }, ticks: { font: { size: 11 }, callback: (v) => fmt(Number(v)) } },
+          y: {
+            stacked: true,
+            grid: { color: "rgba(128,128,128,0.1)" },
+            ticks: { font: { size: 11 }, callback: (v) => fmtUsd(Number(v)) },
+          },
         },
       },
     });
     return () => { chartInstance.current?.destroy(); };
   }, [days]);
 
-  const todayTokens = days[days.length - 1]?.total_tokens ?? 0;
+  const todayCost = days[days.length - 1]?.total_cost ?? 0;
 
   return (
     <div className={styles.root}>
       {/* Stat cards */}
       <div className={styles.cards}>
-        <StatCard label="总 Token 用量" value={fmt(summary?.total_tokens ?? 0)} sub="累计" />
-        <StatCard label="今日 Token" value={fmt(todayTokens)} sub="过去24h" />
+        <StatCard label="总费用" value={fmtUsd(summary?.total_cost ?? 0)} sub="累计 USD" />
+        <StatCard label="今日费用" value={fmtUsd(todayCost)} sub="过去24h USD" />
         <StatCard label="对话总数" value={fmt(summary?.conversation_count ?? 0)} sub="累计" />
-        <StatCard label="Cache Read" value={fmt(summary?.cache_read_tokens ?? 0)} sub="累计" />
-        <StatCard label="Cache Creation" value={fmt(summary?.cache_creation_tokens ?? 0)} sub="累计" />
+        <StatCard label="Cache Read" value={fmt(summary?.cache_read_tokens ?? 0)} sub="tokens" />
+        <StatCard label="Cache Creation" value={fmt(summary?.cache_creation_tokens ?? 0)} sub="tokens" />
         <StatCard label="全局模型" value={String(modelCount)} sub="已配置" onClick={() => onNavigate("models")} />
       </div>
 
       {/* Chart */}
       <div className={styles.chartCard}>
-        <div className={styles.cardHeader}>Token 趋势（近30天）</div>
+        <div className={styles.cardHeader}>费用趋势（近30天，USD）</div>
         <div className={styles.chartWrap}>
           <canvas ref={chartRef} />
         </div>
@@ -153,7 +176,7 @@ export function AdminOverview({ token, onNavigate }: Props) {
                   <td>{fmt(u.prompt_tokens)}</td>
                   <td>{fmt(u.completion_tokens)}</td>
                   <td>{fmt(u.cache_read_tokens)} / {fmt(u.cache_creation_tokens)}</td>
-                  <td><strong>{fmt(u.total_tokens)}</strong></td>
+                  <td><strong>{fmtUsd(u.total_cost)}</strong></td>
                   <td>
                     <button className={styles.filterBtn}
                       onClick={() => setSelectedUserId((p) => p === u.user_id ? "" : u.user_id)}>
@@ -197,7 +220,7 @@ export function AdminOverview({ token, onNavigate }: Props) {
                   <td>{fmt(c.prompt_tokens)}</td>
                   <td>{fmt(c.completion_tokens)}</td>
                   <td>{fmt(c.cache_read_tokens)} / {fmt(c.cache_creation_tokens)}</td>
-                  <td><strong>{fmt(c.total_tokens)}</strong></td>
+                  <td><strong>{fmtUsd(c.total_cost)}</strong></td>
                 </tr>
               ))}
               {convs.length === 0 && <tr><td colSpan={7} className={styles.empty}>暂无数据</td></tr>}

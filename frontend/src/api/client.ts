@@ -105,7 +105,11 @@ export const api = {
       completion_tokens: number;
       cache_read_tokens: number;
       cache_creation_tokens: number;
-      total_tokens: number;
+      cost_input: number;
+      cost_output: number;
+      cost_cache_read: number;
+      cost_cache_creation: number;
+      total_cost: number;
       conversation_count: number;
     }>("/api/admin/token-usage", token);
   },
@@ -120,7 +124,7 @@ export const api = {
         completion_tokens: number;
         cache_read_tokens: number;
         cache_creation_tokens: number;
-        total_tokens: number;
+        total_cost: number;
       }[];
     }>("/api/admin/token-usage/by-user", token);
   },
@@ -137,7 +141,7 @@ export const api = {
         completion_tokens: number;
         cache_read_tokens: number;
         cache_creation_tokens: number;
-        total_tokens: number;
+        total_cost: number;
       }[];
     }>(`/api/admin/token-usage/conversations${q}`, token);
   },
@@ -146,11 +150,15 @@ export const api = {
     return get<{
       days: {
         day: string;
-        total_tokens: number;
         prompt_tokens: number;
         completion_tokens: number;
         cache_read_tokens: number;
         cache_creation_tokens: number;
+        cost_input: number;
+        cost_output: number;
+        cost_cache_read: number;
+        cost_cache_creation: number;
+        total_cost: number;
         conversation_count: number;
       }[];
     }>("/api/admin/token-usage/daily", token);
