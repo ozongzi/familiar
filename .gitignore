@@ -13,6 +13,7 @@ GEMINI.md
 playwright-browsers*
 frontend/src-tauri/binaries
 **/target
+**/.claude
 CLAUDE.md
 AGENTS.md
 familiar_dream.md
