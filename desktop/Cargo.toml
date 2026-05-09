@@ -1,0 +1,49 @@
+[package]
+name = "familiar-desktop"
+version = "0.1.0"
+edition = "2024"
+description = "Familiar — local desktop client. No server, no account, files-as-database."
+
+[[bin]]
+name = "familiar-desktop"
+path = "src/main.rs"
+
+[dependencies]
+dioxus = { version = "0.6", features = ["desktop"] }
+
+# Async runtime — Dioxus desktop already uses tokio under the hood
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "io-util", "sync", "time", "fs"] }
+futures = "0.3"
+
+# HTTP / streaming
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+eventsource-stream = "0.2"
+bytes = "1"
+
+# Serde
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+serde_yaml = "0.9"
+
+# IDs & time
+ulid = { version = "1", features = ["serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+
+# Filesystem helpers
+directories = "5"
+walkdir = "2"
+
+# Errors / logging
+anyhow = "1"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Markdown render (for assistant message body)
+pulldown-cmark = { version = "0.12", default-features = false, features = ["html"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
