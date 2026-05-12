@@ -205,6 +205,7 @@ async function openSseStream(
 
 interface UseChatOptions {
   onConversationCreated?: (id: string, firstMessage: string) => void;
+  shouldAutoTitle?: (id: string) => boolean;
 }
 
 export function useChat(
@@ -237,6 +238,9 @@ export function useChat(
   const activeTextKeyRef = useRef<string | null>(null);
   const statusRef = useRef<ChatStatus>("idle");
   const onConversationCreatedRef = useRef(options.onConversationCreated);
+  const shouldAutoTitleRef = useRef(options.shouldAutoTitle);
+  const autoTitleAttemptedRef = useRef<Set<string>>(new Set());
+  const hasPriorUserMessageRef = useRef(false);
   const spawnToolArgsRef = useRef<
     Map<string, { name: string; argsRaw: string }>
   >(new Map());
@@ -244,6 +248,7 @@ export function useChat(
 
   useEffect(() => {
     onConversationCreatedRef.current = options.onConversationCreated;
+    shouldAutoTitleRef.current = options.shouldAutoTitle;
   });
 
   function updateStatus(s: ChatStatus) {
@@ -347,6 +352,9 @@ export function useChat(
 
   const setHistory = useCallback(
     (msgs: Message[]) => {
+      hasPriorUserMessageRef.current = msgs.some(
+        (m) => m.role === "user" && !!m.content?.trim(),
+      );
       const toolResultMap = new Map<string, unknown>();
       const toolImagesMap = new Map<string, string[]>();
       for (const m of msgs) {
@@ -677,6 +685,7 @@ export function useChat(
     setErrorMsg(null);
     attachedConvRef.current = null;
     historyReadyRef.current = false;
+    hasPriorUserMessageRef.current = false;
   }, []);
 
   const addUploadBubble = useCallback(
@@ -1144,6 +1153,7 @@ export function useChat(
           streaming: false,
         };
         setBubbles((prev) => [...prev, userBubble]);
+        hasPriorUserMessageRef.current = true;
 
         let newStreamId: string;
         try {
@@ -1227,12 +1237,25 @@ export function useChat(
       }
 
       let convId = conversationId;
+      let createdConversation = false;
       if (!convId) {
         convId = await createConversation();
         if (!convId) {
           setErrorMsg("创建对话失败，请重试");
           return;
         }
+        createdConversation = true;
+      }
+
+      const hadPriorUserMessage = hasPriorUserMessageRef.current;
+      const shouldTitle =
+        createdConversation || shouldAutoTitleRef.current?.(convId) === true;
+      if (
+        shouldTitle &&
+        !hadPriorUserMessage &&
+        !autoTitleAttemptedRef.current.has(convId)
+      ) {
+        autoTitleAttemptedRef.current.add(convId);
         onConversationCreatedRef.current?.(convId, text);
       }
 
@@ -1248,6 +1271,7 @@ export function useChat(
         streaming: false,
       };
       setBubbles((prev) => [...prev, userBubble]);
+      hasPriorUserMessageRef.current = true;
       updateStatus("connecting");
 
       // Step 1: POST message → get stream_id

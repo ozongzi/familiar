@@ -40,6 +40,8 @@ export function ChatPage() {
 
   // Derived from URL
   const activeId = conversationId ?? DRAFT_ID;
+  const isDraft = activeId === DRAFT_ID;
+  const activeConv = conversations.find((c) => c.id === activeId);
 
   const [historyLoading, setHistoryLoading] = useState(false);
   const [draftModelId, setDraftModelId] = useState<string | null>(null);
@@ -90,6 +92,16 @@ export function ChatPage() {
     [token, renameConversation],
   );
 
+  const shouldAutoTitle = useCallback(
+    (convId: string) => {
+      const conv = conversations.find((c) => c.id === convId);
+      if (!conv) return false;
+      const name = conv.name.trim();
+      return name === "新对话" || name === "New Conversation";
+    },
+    [conversations],
+  );
+
   const {
     bubbles,
     status,
@@ -109,7 +121,7 @@ export function ChatPage() {
     activeId === DRAFT_ID ? null : activeId,
     token,
     createDraftConversation,
-    { onConversationCreated: autoTitle },
+    { onConversationCreated: autoTitle, shouldAutoTitle },
   );
 
   const messagesRef = useRef<HTMLDivElement>(null);
@@ -358,10 +370,8 @@ export function ChatPage() {
   // ── Derive UI state ────────────────────────────────────────────────────
 
   const isStreaming = status === "connecting" || status === "streaming";
-  const isDraft = activeId === DRAFT_ID;
   // For the sidebar, treat the draft as no active selection.
   const sidebarActiveId = isDraft ? null : activeId;
-  const activeConv = conversations.find((c) => c.id === activeId);
 
   return (
     <div ref={layoutRef} className={styles.layout}>
