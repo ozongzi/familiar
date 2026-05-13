@@ -26,6 +26,7 @@ interface Props {
   onUpload?: (result: UploadResult) => void;
   onOpenMcp?: () => void;
   tokenUsage?: { contextTokens: number; compactTriggerTokens: number } | null;
+  compacting?: boolean;
   onOpenLocalMcp?: () => void;
 }
 
@@ -40,6 +41,7 @@ export function ChatInput({
   conversationId,
   requestConversationId,
   tokenUsage,
+  compacting = false,
   onUpload,
   onOpenMcp,
   onOpenLocalMcp,
@@ -292,7 +294,14 @@ export function ChatInput({
               </span>
             )}
 
-            {streaming && <span className={styles.hint}>正在生成…</span>}
+            {compacting && (
+              <span className={styles.hint} title="压缩模型正在生成对话摘要">
+                正在压缩对话…
+              </span>
+            )}
+            {streaming && !compacting && (
+              <span className={styles.hint}>正在生成…</span>
+            )}
 
             {isAbortMode && (
               <button

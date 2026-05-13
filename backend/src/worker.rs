@@ -372,25 +372,23 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
     }
 
     // ── Load history from DB (summary + recent tail, transparently) ──────
+    // load_for_generation refuses to silently truncate: if the active path
+    // exceeds the compact budget and no usable summary exists, it returns
+    // an Err here that propagates up to the worker's top-level error event.
     let t_restore = std::time::Instant::now();
-    let messages = match crate::compact::load_for_generation(
+    let messages = crate::compact::load_for_generation(
         &ctx.db,
         &frontier_cfg,
         ctx.conversation_id,
         ctx.user_id,
     )
     .await
-    {
-        Ok(h) => {
-            let h = sanitize_history(h);
-            info!(conversation = %ctx.conversation_id, messages = h.len(), ms = t_restore.elapsed().as_millis(), "⏱ restore history");
-            h
-        }
-        Err(e) => {
-            error!(conversation = %ctx.conversation_id, "failed to restore history: {e}");
-            vec![]
-        }
-    };
+    .map_err(|e| {
+        error!(conversation = %ctx.conversation_id, "failed to restore history: {e:#}");
+        e
+    })?;
+    let messages = sanitize_history(messages);
+    info!(conversation = %ctx.conversation_id, messages = messages.len(), ms = t_restore.elapsed().as_millis(), "⏱ restore history");
 
     // ── Connect MCPs from DB ──────────────────────────────────────────────
     let t_mcp = std::time::Instant::now();
@@ -489,16 +487,19 @@ async fn generation_loop(
         // Compact checks the latest persisted input-context snapshot from DB
         // and decides whether to summarise. If it ran, reload messages via
         // the unified loader so the worker sees the fresh [summary + tail].
-        if crate::compact::maybe_compact(ctx, &compact_model, http).await {
-            messages = crate::compact::load_for_generation(
-                &ctx.db,
-                &compact_model,
-                ctx.conversation_id,
-                ctx.user_id,
-            )
-            .await
-            .map(sanitize_history)
-            .unwrap_or(messages);
+        // Failures are propagated up so the user sees a clear error; the
+        // compact module has already emitted a `compact_failed` event with
+        // the underlying cause.
+        if crate::compact::maybe_compact(ctx, &compact_model, http).await? {
+            messages = sanitize_history(
+                crate::compact::load_for_generation(
+                    &ctx.db,
+                    &compact_model,
+                    ctx.conversation_id,
+                    ctx.user_id,
+                )
+                .await?,
+            );
         }
         // ── Truncate history to token budget ──────────────────────────────
         // Safety ceiling above the compact trigger — if compact didn't fire
