@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState, useEffect } from "react";
+import { useCallback, useMemo, useRef, useState, useEffect } from "react";
 import type {
   ChatBubble,
   TextBubble,
@@ -8,6 +8,7 @@ import type {
   Message,
 } from "../api/types";
 import { getServerBase } from "../utils/tauri";
+import { api } from "../api/client";
 
 const BASE = () => getServerBase();
 
@@ -1369,6 +1370,95 @@ export function useChat(
     [conversationId, token, createConversation, reattach],
   );
 
+  // A pending compact (inject in the chain without a downstream anchor)
+  // hard-locks the chat: the backend rejects new user messages with 409
+  // until retryCompact succeeds.
+  const pendingCompact = useMemo(() => {
+    let injectIdx = -1;
+    for (let i = bubbles.length - 1; i >= 0; i--) {
+      const b = bubbles[i];
+      if (
+        b.kind === "text" &&
+        b.role === "user" &&
+        b.content.startsWith("[系统检查点]")
+      ) {
+        injectIdx = i;
+        break;
+      }
+    }
+    if (injectIdx < 0) return false;
+    for (let i = injectIdx; i < bubbles.length; i++) {
+      const b = bubbles[i];
+      if (b.kind === "text" && b.summaryStartId != null) {
+        return false;
+      }
+    }
+    return true;
+  }, [bubbles]);
+
+  const retryCompact = useCallback(async () => {
+    if (!token || !conversationId) return;
+    if (statusRef.current === "streaming" || statusRef.current === "connecting")
+      return;
+
+    setErrorMsg(null);
+    updateStatus("connecting");
+
+    let streamId: string;
+    try {
+      const res = await api.retryCompact(token, conversationId);
+      streamId = res.stream_id;
+    } catch (e) {
+      updateStatus("error");
+      setErrorMsg((e as Error).message ?? "重试压缩失败");
+      return;
+    }
+
+    streamIdRef.current = streamId;
+    attachedConvRef.current = conversationId;
+    persistStreamId(conversationId, streamId);
+    updateStatus("streaming");
+
+    const ac = new AbortController();
+    abortControllerRef.current = ac;
+
+    openSseStream(
+      streamId,
+      token,
+      (data) => {
+        let event: WsServerEvent;
+        try {
+          event = JSON.parse(data) as WsServerEvent;
+        } catch {
+          return;
+        }
+        const finished = processEventRef.current(event);
+        if (finished) {
+          streamIdRef.current = null;
+          clearPersistedStreamId(conversationId);
+          abortControllerRef.current = null;
+          ac.abort();
+        }
+      },
+      (err) => {
+        if (
+          statusRef.current !== "streaming" &&
+          statusRef.current !== "connecting"
+        )
+          return;
+        console.warn("[SSE] retry-compact stream disconnected:", err);
+        updateStatus("connecting");
+        abortControllerRef.current = null;
+        setTimeout(() => {
+          if (!conversationId || !token) return;
+          attachedConvRef.current = null;
+          reattach(conversationId, token);
+        }, SSE_REATTACH_DELAY_MS);
+      },
+      ac.signal,
+    );
+  }, [conversationId, token, reattach]);
+
   const branch = useCallback(
     async (msgId: number, bubbleKey: string, newText: string) => {
       if (!token || !conversationId) return;
@@ -1437,5 +1527,7 @@ export function useChat(
     branch,
     switchSibling,
     tokenUsage,
+    pendingCompact,
+    retryCompact,
   };
 }

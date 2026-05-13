@@ -125,8 +125,51 @@ pub async fn finalize_anchor(
     Ok(())
 }
 
-// ── Public API: load history for the LLM ──────────────────────────────────────
+// ── Public API: pending-compact detection ─────────────────────────────────────
 
+/// Returns `Some(inject_id)` when the active branch contains a
+/// `[系统检查点]` user message that has no descendant anchor — i.e. a
+/// compact attempt that was started but never finalized. Used by the
+/// send-message guard (block new user input until retry succeeds) and by
+/// the worker (resume the compact directly instead of injecting a second
+/// checkpoint).
+pub async fn pending_compact_inject_id(
+    db: &Db,
+    conversation_id: Uuid,
+    user_id: Uuid,
+) -> anyhow::Result<Option<i64>> {
+    let (rows, _msgs) = db.restore_after_rows(conversation_id, user_id, None).await?;
+
+    // Walk from tip back to find the most recent inject.
+    let inject_idx = (0..rows.len()).rev().find(|&i| {
+        rows[i].role == "user"
+            && rows[i]
+                .content
+                .as_deref()
+                .is_some_and(|c| c.starts_with(CHECKPOINT_INJECT_TEXT_PREFIX))
+    });
+
+    let Some(idx) = inject_idx else {
+        return Ok(None);
+    };
+
+    // If any message at-or-after the inject is itself an anchor, the
+    // compact finalised — nothing pending. Otherwise it's pending.
+    let finalised = rows[idx..].iter().any(|r| r.summary_start_id.is_some());
+    if finalised {
+        Ok(None)
+    } else {
+        Ok(Some(rows[idx].id))
+    }
+}
+
+/// Stable prefix of `CHECKPOINT_INJECT_TEXT` used to detect inject messages
+/// regardless of any trailing prompt tuning. Kept narrow so a normal user
+/// message that happens to start with `[系统检查点]` would still match —
+/// which we accept as a deliberate signal.
+const CHECKPOINT_INJECT_TEXT_PREFIX: &str = "[系统检查点]";
+
+// ── Public API: load history for the LLM ──────────────────────────────────────
 /// Load the message history the worker should feed to the LLM. Walks the
 /// active branch from tip back; the first message with a non-NULL
 /// `summary_start_id` defines the cutoff. Returns the chain

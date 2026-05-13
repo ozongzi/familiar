@@ -49,7 +49,8 @@ use files::{download_file, get_avatar, preview_file, upload_avatar, upload_file}
 use history::*;
 use sessions::*;
 use sse::{
-    activate_handler, branch_handler, reattach_handler, send_message_handler, sse_handler,
+    activate_handler, branch_handler, reattach_handler, retry_compact_handler,
+    send_message_handler, sse_handler,
     stream_abort_handler, stream_answer_handler, stream_interrupt_handler,
 };
 use users::*;
@@ -233,6 +234,10 @@ pub fn create_router(state: AppState, allowed_origin: Option<&str>) -> Router {
             post(send_message_handler),
         )
         .route("/api/conversations/{id}/reattach", post(reattach_handler))
+        .route(
+            "/api/conversations/{id}/retry-compact",
+            post(retry_compact_handler),
+        )
         .route("/api/conversations/{id}/branch", post(branch_handler))
         .route("/api/conversations/{id}/activate", post(activate_handler))
         .route("/api/stream/{stream_id}", get(sse_handler))

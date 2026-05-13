@@ -8,6 +8,46 @@
     padding-bottom: calc(16px + var(--safe-area-bottom, 0px));
 }
 
+/* ─── Pending-compact lock ──────────────────────────────────────────────── */
+.compactPendingBox {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    border: 1px dashed var(--border, rgba(220, 38, 38, 0.4));
+    border-radius: 12px;
+    background: var(--bg-elevated, rgba(220, 38, 38, 0.05));
+}
+
+.compactPendingText {
+    flex: 1;
+    font-size: 13px;
+    line-height: 1.4;
+    color: var(--text-secondary, #888);
+}
+
+.compactRetryBtn {
+    flex-shrink: 0;
+    padding: 6px 14px;
+    border: 1px solid var(--accent, #6366f1);
+    border-radius: 8px;
+    background: var(--accent, #6366f1);
+    color: #fff;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: opacity 0.15s;
+}
+
+.compactRetryBtn:hover {
+    opacity: 0.85;
+}
+
+.compactRetryBtn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
 /* ─── Input box ──────────────────────────────────────────────────────────── */
 .box {
     display: flex;

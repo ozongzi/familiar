@@ -137,6 +137,7 @@ export function messagesToBubbles(msgs: Message[]): ChatBubble[] {
           streaming: false,
           msgId: m.id,
           siblings: m.siblings,
+          summaryStartId: m.summary_start_id,
         });
       }
 
@@ -320,6 +321,7 @@ export function messagesToBubbles(msgs: Message[]): ChatBubble[] {
         streaming: false,
         msgId: m.id,
         siblings: m.siblings,
+        summaryStartId: m.summary_start_id,
       });
     }
   }

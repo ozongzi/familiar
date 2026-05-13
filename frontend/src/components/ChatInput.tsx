@@ -26,6 +26,8 @@ interface Props {
   onUpload?: (result: UploadResult) => void;
   onOpenMcp?: () => void;
   tokenUsage?: { contextTokens: number; compactTriggerTokens: number } | null;
+  pendingCompact?: boolean;
+  onRetryCompact?: () => void;
   onOpenLocalMcp?: () => void;
 }
 
@@ -40,6 +42,8 @@ export function ChatInput({
   conversationId,
   requestConversationId,
   tokenUsage,
+  pendingCompact = false,
+  onRetryCompact,
   onUpload,
   onOpenMcp,
   onOpenLocalMcp,
@@ -197,6 +201,26 @@ export function ChatInput({
   const isInterruptMode = streaming && hasText;
   const isSendMode = !streaming;
   const btnDisabled = disabled || (isSendMode && !hasText);
+
+  if (pendingCompact) {
+    return (
+      <div className={styles.wrapper}>
+        <div className={styles.compactPendingBox}>
+          <div className={styles.compactPendingText}>
+            上次自动压缩未完成，发送新消息已被锁定。请重试压缩。
+          </div>
+          <button
+            type="button"
+            className={styles.compactRetryBtn}
+            onClick={onRetryCompact}
+            disabled={!onRetryCompact || streaming}
+          >
+            {streaming ? "压缩中…" : "重试压缩"}
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className={styles.wrapper}>

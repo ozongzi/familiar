@@ -151,6 +151,25 @@ pub async fn send_message_handler(
 
     verify_conversation_owner(&state, conversation_id, auth.user_id).await?;
 
+    // Hard-fail: if a previous auto-compaction injected a checkpoint and
+    // never finalized (crash, abort, network drop, …), reject new user
+    // input. The user must retry the compact via `/retry-compact`
+    // explicitly. We allow new messages only when the chain is in a clean
+    // state — either no pending inject, or the latest inject has been
+    // finalised with an anchor.
+    if let Some(inject_id) = crate::compact::pending_compact_inject_id(
+        &state.db,
+        conversation_id,
+        auth.user_id,
+    )
+    .await
+    .map_err(|e| AppError::internal(&e.to_string()))?
+    {
+        return Err(AppError::conflict(&format!(
+            "上次自动压缩（消息 #{inject_id}）未完成，请先重试压缩再发送新消息。"
+        )));
+    }
+
     // Build multimodal parts.
     let user_parts: Vec<agentix::UserContent> = {
         use agentix::{ImageContent, ImageData, UserContent};
@@ -444,6 +463,44 @@ pub async fn sse_handler(
     };
 
     Ok(Sse::new(s).keep_alive(KeepAlive::default()))
+}
+
+// ── POST /api/conversations/{id}/retry-compact ───────────────────────────────
+
+/// Resume a pending auto-compaction. Only valid when the active branch has
+/// an injected `[系统检查点]` user message without a finalised anchor —
+/// i.e. the previous compact attempt crashed before stamping
+/// `summary_start_id`. Creates a new generation_job; the worker detects the
+/// pending inject at entry and resumes the compact loop instead of
+/// injecting a second checkpoint.
+pub async fn retry_compact_handler(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(conversation_id): Path<Uuid>,
+) -> Result<impl IntoResponse, AppError> {
+    verify_conversation_owner(&state, conversation_id, auth.user_id).await?;
+
+    let pending = crate::compact::pending_compact_inject_id(
+        &state.db,
+        conversation_id,
+        auth.user_id,
+    )
+    .await
+    .map_err(|e| AppError::internal(&e.to_string()))?;
+
+    if pending.is_none() {
+        return Err(AppError::bad_request("当前对话没有待重试的压缩任务"));
+    }
+
+    let job_id = state
+        .start_generation(conversation_id, auth.user_id)
+        .await
+        .map_err(|e| AppError::internal(&e.to_string()))?;
+
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(json!({ "stream_id": job_id })),
+    ))
 }
 
 // ── POST /api/conversations/{id}/reattach ────────────────────────────────────

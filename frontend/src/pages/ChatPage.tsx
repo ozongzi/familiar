@@ -117,6 +117,8 @@ export function ChatPage() {
     branch,
     switchSibling,
     tokenUsage,
+    pendingCompact,
+    retryCompact,
   } = useChat(
     activeId === DRAFT_ID ? null : activeId,
     token,
@@ -586,6 +588,8 @@ export function ChatPage() {
           onOpenMcp={() => setMcpOpen(true)}
           onOpenLocalMcp={() => setLocalMcpOpen(true)}
           tokenUsage={tokenUsage}
+          pendingCompact={pendingCompact}
+          onRetryCompact={retryCompact}
           placeholder="请说……"
         />
       </main>

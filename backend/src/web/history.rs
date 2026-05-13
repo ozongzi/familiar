@@ -26,6 +26,11 @@ pub struct MessageResponse {
     /// in id order. When `siblings.len() > 1`, the UI renders branch
     /// switcher arrows on this message.
     pub siblings: Vec<i64>,
+    /// Non-null on compaction anchor messages: points back to the oldest
+    /// message that should still be visible to the LLM. The frontend uses
+    /// this to (a) detect pending/failed compactions and (b) optionally
+    /// fade messages older than the cutoff.
+    pub summary_start_id: Option<i64>,
 }
 
 #[derive(Deserialize)]
@@ -124,6 +129,7 @@ pub async fn list_messages(
                 reasoning: r.reasoning,
                 parent_id: r.parent_id,
                 siblings,
+                summary_start_id: r.summary_start_id,
             })
             .collect(),
     ))

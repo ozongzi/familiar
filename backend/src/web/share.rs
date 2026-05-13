@@ -165,6 +165,7 @@ pub async fn get_shared_conversation(
             reasoning: r.reasoning,
             parent_id: r.parent_id,
             siblings,
+            summary_start_id: r.summary_start_id,
         })
         .collect();
 

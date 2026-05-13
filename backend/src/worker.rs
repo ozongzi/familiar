@@ -480,7 +480,16 @@ async fn generation_loop(
     // The final assistant message of that extra iteration becomes the
     // anchor: we stamp `summary_start_id` on it pointing back to the
     // start of a recent-tail window.
-    let mut compact_in_progress = false;
+    //
+    // If this worker run starts with an already-pending checkpoint in the
+    // chain (i.e. the previous attempt crashed / aborted before
+    // finalize_anchor wrote the pointer), we resume that compact directly
+    // — the next natural loop break is treated as the anchor without
+    // injecting a second checkpoint.
+    let mut compact_in_progress =
+        crate::compact::pending_compact_inject_id(&ctx.db, ctx.conversation_id, ctx.user_id)
+            .await?
+            .is_some();
 
     loop {
         // ── Check abort / interrupt ───────────────────────────────────────

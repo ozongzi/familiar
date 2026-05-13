@@ -207,6 +207,10 @@ export interface Message {
   /// Ids of messages sharing this one's parent (including self), in id
   /// order. When length > 1, this message has alternative branches.
   siblings: number[];
+  /// Non-null on compaction anchor messages: id of the oldest message in
+  /// the recent-tail window that the LLM still sees alongside the anchor.
+  /// Used to detect pending/failed compactions and to fade older messages.
+  summary_start_id: number | null;
 }
 
 // ─── WebSocket events ─────────────────────────────────────────────────────
@@ -260,6 +264,10 @@ export interface TextBubble {
   /// All messages that share this message's parent, ordered by id.
   /// The UI shows a `‹ idx/N ›` switcher when `siblings.length > 1`.
   siblings?: number[];
+  /// On compaction anchor assistant messages: id of the oldest message
+  /// in the recent-tail window the LLM still sees. Null on regular
+  /// messages. The hook uses this to detect pending/failed compactions.
+  summaryStartId?: number | null;
 }
 
 export type SpawnEvent =

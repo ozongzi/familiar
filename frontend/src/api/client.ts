@@ -311,6 +311,14 @@ export const api = {
     );
   },
 
+  retryCompact(token: string, conversationId: string) {
+    return post<{ stream_id: string }>(
+      `/api/conversations/${conversationId}/retry-compact`,
+      {},
+      token,
+    );
+  },
+
   // ── Share links ───────────────────────────────────────────────────────
   getShare(token: string, conversationId: string) {
     return get<ShareInfo>(`/api/conversations/${conversationId}/share`, token);
