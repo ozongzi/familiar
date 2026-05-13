@@ -413,6 +413,20 @@ function TextChatBubble({
     };
   }, [bubble.content, bubble.streaming]);
 
+  // Auto-injected compaction checkpoints look like user messages in DB but
+  // were written by the worker, not the human. Render them as a slim banner
+  // so they don't look like real user turns.
+  if (isUser && bubble.content?.startsWith("[系统检查点]")) {
+    return (
+      <div className={styles.checkpointBanner} title="自动压缩检查点">
+        <span className={styles.checkpointIcon}>⚡</span>
+        <span className={styles.checkpointText}>
+          {bubble.content.replace(/^\[系统检查点\]\s*/, "")}
+        </span>
+      </div>
+    );
+  }
+
   return (
     <div
       className={`${styles.row} ${isUser ? styles.rowUser : styles.rowAssistant}`}

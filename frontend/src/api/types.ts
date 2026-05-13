@@ -244,14 +244,7 @@ export type WsServerEvent =
       total_tokens: number;
       context_tokens: number;
       compact_trigger_tokens: number;
-    }
-  | {
-      type: "compact_started";
-      ctx_tokens: number;
-      trigger_tokens: number;
-    }
-  | { type: "compact"; summary: string }
-  | { type: "compact_failed"; error: string };
+    };
 
 export type BubbleRole = "user" | "assistant" | "tool";
 

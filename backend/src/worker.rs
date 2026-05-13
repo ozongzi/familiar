@@ -474,6 +474,13 @@ async fn generation_loop(
 ) -> anyhow::Result<()> {
     let tool_defs: Vec<ToolDefinition> = tools.raw_tools();
     let mut ttft_written = false; // only record TTFT for the first LLM call
+    // When the user's turn pushes context past the compaction trigger, we
+    // append a visible "[系统检查点]" user message at the loop boundary and
+    // run one more iteration so the model can wrap up + produce a summary.
+    // The final assistant message of that extra iteration becomes the
+    // anchor: we stamp `summary_start_id` on it pointing back to the
+    // start of a recent-tail window.
+    let mut compact_in_progress = false;
 
     loop {
         // ── Check abort / interrupt ───────────────────────────────────────
@@ -483,24 +490,6 @@ async fn generation_loop(
             return Ok(());
         }
 
-        // ── Auto-compact at turn boundary ─────────────────────────────────
-        // Compact checks the latest persisted input-context snapshot from DB
-        // and decides whether to summarise. If it ran, reload messages via
-        // the unified loader so the worker sees the fresh [summary + tail].
-        // Failures are propagated up so the user sees a clear error; the
-        // compact module has already emitted a `compact_failed` event with
-        // the underlying cause.
-        if crate::compact::maybe_compact(ctx, &compact_model, http).await? {
-            messages = sanitize_history(
-                crate::compact::load_for_generation(
-                    &ctx.db,
-                    &compact_model,
-                    ctx.conversation_id,
-                    ctx.user_id,
-                )
-                .await?,
-            );
-        }
         // ── Truncate history to token budget ──────────────────────────────
         // Safety ceiling above the compact trigger — if compact didn't fire
         // (e.g. missing usage counts), still cap context to prevent runaway.
@@ -764,8 +753,33 @@ async fn generation_loop(
             messages.push(assistant_msg);
         }
 
-        // ── No tool calls → done ─────────────────────────────────────────
+        // ── No tool calls → either compact or done ───────────────────────
         if tool_calls_buf.is_empty() {
+            if !compact_in_progress {
+                // First time we hit a natural turn end this run: maybe
+                // inject a checkpoint and run one more pass so the model
+                // produces a visible summary as its final reply.
+                if crate::compact::inject_checkpoint_if_needed(ctx, &compact_model)
+                    .await?
+                    .is_some()
+                {
+                    compact_in_progress = true;
+                    messages = sanitize_history(
+                        crate::compact::load_for_generation(
+                            &ctx.db,
+                            &compact_model,
+                            ctx.conversation_id,
+                            ctx.user_id,
+                        )
+                        .await?,
+                    );
+                    continue;
+                }
+            } else {
+                // The current `streaming_msg_id` is the model's final
+                // reply to the checkpoint — that's our anchor.
+                crate::compact::finalize_anchor(ctx, &compact_model, streaming_msg_id).await?;
+            }
             break;
         }
 

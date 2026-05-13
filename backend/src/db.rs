@@ -45,12 +45,13 @@ pub struct MessageRow {
     pub parent_id: Option<i64>,
     pub streaming: bool,
     pub job_id: Option<Uuid>,
-    /// Non-null when this message is a compact summary anchor: it means
-    /// "the path root..this message has been condensed into `summary_text`".
-    /// Any branch whose ancestor chain includes this message can reuse the
-    /// summary; branches that don't traverse it fall back to raw history.
-    pub summary_text: Option<String>,
-    pub summary_tokens: Option<i32>,
+    /// When non-NULL, this message is a compaction anchor: the value points
+    /// at an earlier message on the same branch — the "summary start". When
+    /// loading history for the LLM, the first ancestor with a non-NULL
+    /// `summary_start_id` (walking back from active tip) defines the cutoff:
+    /// only messages with id >= `summary_start_id` are sent to the model.
+    /// Older messages stay in the DB and remain visible in the UI.
+    pub summary_start_id: Option<i64>,
     /// Opaque per-turn provider state (e.g. Anthropic thinking blocks +
     /// signatures). NULL for all rows except assistant turns produced by a
     /// provider that emitted `LlmEvent::AssistantState`.
@@ -417,20 +418,66 @@ impl Db {
         Ok(leaf)
     }
 
-    /// Persist a compact summary anchored on a specific message.
-    pub async fn set_summary(
+    /// Mark a message as a compaction anchor by writing the pointer to the
+    /// "summary start" — the oldest message that should remain visible to
+    /// the model alongside the anchor.
+    pub async fn set_summary_start(
         &self,
-        message_id: i64,
-        summary: &str,
-        tokens: i32,
+        anchor_message_id: i64,
+        summary_start_id: i64,
     ) -> anyhow::Result<()> {
-        sqlx::query("UPDATE messages SET summary_text = $1, summary_tokens = $2 WHERE id = $3")
-            .bind(summary)
-            .bind(tokens)
-            .bind(message_id)
+        sqlx::query("UPDATE messages SET summary_start_id = $1 WHERE id = $2")
+            .bind(summary_start_id)
+            .bind(anchor_message_id)
             .execute(&self.pool)
             .await?;
         Ok(())
+    }
+
+    /// Append a user-role "system checkpoint" message at the active tip
+    /// of the conversation, advancing `active_message_id` to it. Used by
+    /// the compaction trigger to inject a visible prompt that asks the
+    /// model to summarise the conversation so far.
+    pub async fn append_checkpoint_inject(
+        &self,
+        conversation_id: Uuid,
+        job_id: Uuid,
+        text: &str,
+    ) -> anyhow::Result<i64> {
+        let now = unix_now();
+        let mut tx = self.pool.begin().await?;
+
+        let parent_id: Option<i64> =
+            sqlx::query_scalar("SELECT active_message_id FROM conversations WHERE id = $1")
+                .bind(conversation_id)
+                .fetch_optional(&mut *tx)
+                .await?
+                .flatten();
+
+        let row_id: i64 = sqlx::query_scalar(
+            r#"
+            INSERT INTO messages
+                (conversation_id, role, content, created_at, parent_id, streaming, job_id)
+            VALUES ($1, 'user', $2, $3, $4, false, $5)
+            RETURNING id
+            "#,
+        )
+        .bind(conversation_id)
+        .bind(text)
+        .bind(now)
+        .bind(parent_id)
+        .bind(job_id)
+        .fetch_one(&mut *tx)
+        .await?;
+
+        sqlx::query("UPDATE conversations SET active_message_id = $1 WHERE id = $2")
+            .bind(row_id)
+            .bind(conversation_id)
+            .execute(&mut *tx)
+            .await?;
+
+        tx.commit().await?;
+        Ok(row_id)
     }
 
     /// For each message on the active branch, return its sibling ids
@@ -448,7 +495,7 @@ impl Db {
                 SELECT m.id, m.conversation_id, m.role, m.name, m.content,
                        m.spell_casts, m.spell_cast_id, m.reasoning,
                        m.created_at, m.parent_id, m.streaming, m.job_id,
-                       m.summary_text, m.summary_tokens, m.provider_data
+                       m.summary_start_id, m.provider_data
                 FROM messages m
                 JOIN conversations c ON c.id = $1
                 WHERE m.id = c.active_message_id
@@ -456,14 +503,14 @@ impl Db {
                 SELECT m.id, m.conversation_id, m.role, m.name, m.content,
                        m.spell_casts, m.spell_cast_id, m.reasoning,
                        m.created_at, m.parent_id, m.streaming, m.job_id,
-                       m.summary_text, m.summary_tokens, m.provider_data
+                       m.summary_start_id, m.provider_data
                 FROM messages m
                 JOIN branch b ON m.id = b.parent_id
             )
             SELECT b.id, b.conversation_id, b.role, b.name, b.content,
                    b.spell_casts, b.spell_cast_id, b.reasoning, b.created_at,
                    b.parent_id, b.streaming, b.job_id,
-                   b.summary_text, b.summary_tokens, b.provider_data,
+                   b.summary_start_id, b.provider_data,
                    COALESCE(
                        (SELECT array_agg(s.id ORDER BY s.id ASC)
                         FROM messages s
@@ -494,8 +541,7 @@ impl Db {
                     parent_id: r.parent_id,
                     streaming: r.streaming,
                     job_id: r.job_id,
-                    summary_text: r.summary_text,
-                    summary_tokens: r.summary_tokens,
+                    summary_start_id: r.summary_start_id,
                     provider_data: r.provider_data,
                 },
                 r.siblings,
@@ -517,7 +563,7 @@ impl Db {
 
     /// Active-branch history rows paired with their converted `Message`s,
     /// so callers (e.g. `compact.rs`) can inspect per-message `id`,
-    /// `summary_text`, etc. alongside the LLM-facing history.
+    /// `summary_start_id`, etc. alongside the LLM-facing history.
     ///
     /// Filters: streaming rows are excluded; assistant rows whose content,
     /// reasoning, and tool calls are all empty are excluded. Pass
@@ -549,7 +595,7 @@ impl Db {
                 SELECT m.id, m.conversation_id, m.role, m.name, m.content,
                        m.spell_casts, m.spell_cast_id, m.reasoning,
                        m.created_at, m.parent_id, m.streaming, m.job_id,
-                       m.summary_text, m.summary_tokens, m.provider_data
+                       m.summary_start_id, m.provider_data
                 FROM messages m
                 JOIN conversations c ON c.id = $1
                 WHERE m.id = c.active_message_id AND m.id > $2
@@ -557,14 +603,14 @@ impl Db {
                 SELECT m.id, m.conversation_id, m.role, m.name, m.content,
                        m.spell_casts, m.spell_cast_id, m.reasoning,
                        m.created_at, m.parent_id, m.streaming, m.job_id,
-                       m.summary_text, m.summary_tokens, m.provider_data
+                       m.summary_start_id, m.provider_data
                 FROM messages m
                 JOIN branch b ON m.id = b.parent_id
                 WHERE m.id > $2
             )
             SELECT id, conversation_id, role, name, content,
                    spell_casts, spell_cast_id, reasoning, created_at, parent_id,
-                   streaming, job_id, summary_text, summary_tokens, provider_data
+                   streaming, job_id, summary_start_id, provider_data
             FROM branch
             WHERE streaming = false
               AND NOT (role = 'assistant'
@@ -591,7 +637,7 @@ impl Db {
             r#"
             SELECT id, conversation_id, role, name, content,
                    spell_casts, spell_cast_id, reasoning, created_at,
-                   parent_id, streaming, job_id, summary_text, summary_tokens,
+                   parent_id, streaming, job_id, summary_start_id,
                    provider_data
             FROM messages
             WHERE conversation_id = $1
@@ -619,7 +665,7 @@ impl Db {
             r#"
             SELECT id, conversation_id, role, name, content,
                    spell_casts, spell_cast_id, reasoning, created_at,
-                   parent_id, streaming, job_id, summary_text, summary_tokens,
+                   parent_id, streaming, job_id, summary_start_id,
                    provider_data,
                    (1 - (embedding <=> $2))::float4 AS similarity
             FROM messages
@@ -650,8 +696,7 @@ impl Db {
                     parent_id: r.parent_id,
                     streaming: r.streaming,
                     job_id: r.job_id,
-                    summary_text: r.summary_text,
-                    summary_tokens: r.summary_tokens,
+                    summary_start_id: r.summary_start_id,
                     provider_data: r.provider_data,
                 },
                 r.similarity,
@@ -679,8 +724,7 @@ struct SiblingRow {
     parent_id: Option<i64>,
     streaming: bool,
     job_id: Option<Uuid>,
-    summary_text: Option<String>,
-    summary_tokens: Option<i32>,
+    summary_start_id: Option<i64>,
     provider_data: Option<serde_json::Value>,
     siblings: Vec<i64>,
 }
@@ -699,8 +743,7 @@ struct SemanticRow {
     parent_id: Option<i64>,
     streaming: bool,
     job_id: Option<Uuid>,
-    summary_text: Option<String>,
-    summary_tokens: Option<i32>,
+    summary_start_id: Option<i64>,
     provider_data: Option<serde_json::Value>,
     similarity: f32,
 }
