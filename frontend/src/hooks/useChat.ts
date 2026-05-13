@@ -221,6 +221,7 @@ export function useChat(
     contextTokens: number;
     compactTriggerTokens: number;
   } | null>(null);
+  const [compacting, setCompacting] = useState(false);
 
 
   // SSE refs (replace WebSocket refs)
@@ -935,8 +936,19 @@ export function useChat(
           compactTriggerTokens: event.compact_trigger_tokens,
         });
 
+      } else if (event.type === "compact_started") {
+        setCompacting(true);
+      } else if (event.type === "compact") {
+        setCompacting(false);
+      } else if (event.type === "compact_failed") {
+        setCompacting(false);
+        // The worker will follow up with a top-level "error" event that ends
+        // the stream; surface the compact-specific reason early so the user
+        // sees what actually went wrong instead of a generic message.
+        setErrorMsg(`压缩对话失败：${event.error}`);
       } else if (event.type === "done") {
         sealActiveText();
+        setCompacting(false);
         updateStatus("idle");
         clearPersistedStreamId(attachedConvRef.current);
         return true;
@@ -947,6 +959,7 @@ export function useChat(
           setBubbles((prev) => prev.filter((b) => b.key !== key));
           activeTextKeyRef.current = null;
         }
+        setCompacting(false);
         updateStatus("error");
         setErrorMsg(event.message);
         return true;
@@ -1438,5 +1451,6 @@ export function useChat(
     branch,
     switchSibling,
     tokenUsage,
+    compacting,
   };
 }

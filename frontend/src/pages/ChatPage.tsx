@@ -117,6 +117,7 @@ export function ChatPage() {
     branch,
     switchSibling,
     tokenUsage,
+    compacting,
   } = useChat(
     activeId === DRAFT_ID ? null : activeId,
     token,
@@ -586,6 +587,7 @@ export function ChatPage() {
           onOpenMcp={() => setMcpOpen(true)}
           onOpenLocalMcp={() => setLocalMcpOpen(true)}
           tokenUsage={tokenUsage}
+          compacting={compacting}
           placeholder="请说……"
         />
       </main>

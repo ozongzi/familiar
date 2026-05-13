@@ -372,25 +372,23 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
     }
 
     // ── Load history from DB (summary + recent tail, transparently) ──────
+    // load_for_generation refuses to silently truncate: if the active path
+    // exceeds the compact budget and no usable summary exists, it returns
+    // an Err here that propagates up to the worker's top-level error event.
     let t_restore = std::time::Instant::now();
-    let messages = match crate::compact::load_for_generation(
+    let messages = crate::compact::load_for_generation(
         &ctx.db,
         &frontier_cfg,
         ctx.conversation_id,
         ctx.user_id,
     )
     .await
-    {
-        Ok(h) => {
-            let h = sanitize_history(h);
-            info!(conversation = %ctx.conversation_id, messages = h.len(), ms = t_restore.elapsed().as_millis(), "⏱ restore history");
-            h
-        }
-        Err(e) => {
-            error!(conversation = %ctx.conversation_id, "failed to restore history: {e}");
-            vec![]
-        }
-    };
+    .map_err(|e| {
+        error!(conversation = %ctx.conversation_id, "failed to restore history: {e:#}");
+        e
+    })?;
+    let messages = sanitize_history(messages);
+    info!(conversation = %ctx.conversation_id, messages = messages.len(), ms = t_restore.elapsed().as_millis(), "⏱ restore history");
 
     // ── Connect MCPs from DB ──────────────────────────────────────────────
     let t_mcp = std::time::Instant::now();
@@ -489,16 +487,19 @@ async fn generation_loop(
         // Compact checks the latest persisted input-context snapshot from DB
         // and decides whether to summarise. If it ran, reload messages via
         // the unified loader so the worker sees the fresh [summary + tail].
-        if crate::compact::maybe_compact(ctx, &compact_model, http).await {
-            messages = crate::compact::load_for_generation(
-                &ctx.db,
-                &compact_model,
-                ctx.conversation_id,
-                ctx.user_id,
-            )
-            .await
-            .map(sanitize_history)
-            .unwrap_or(messages);
+        // Failures are propagated up so the user sees a clear error; the
+        // compact module has already emitted a `compact_failed` event with
+        // the underlying cause.
+        if crate::compact::maybe_compact(ctx, &compact_model, http).await? {
+            messages = sanitize_history(
+                crate::compact::load_for_generation(
+                    &ctx.db,
+                    &compact_model,
+                    ctx.conversation_id,
+                    ctx.user_id,
+                )
+                .await?,
+            );
         }
         // ── Truncate history to token budget ──────────────────────────────
         // Safety ceiling above the compact trigger — if compact didn't fire
@@ -545,6 +546,9 @@ async fn generation_loop(
         let mut token_count: u32 = 0;
         let mut ttft_logged = false;
         let mut ttfa_logged = false; // first event of any kind (content, reasoning, tool call)
+        // Per-request latency captured here so each token_usage_events row
+        // can be joined back to TTFT / total wall-time without scraping logs.
+        let mut ttft_ms: Option<i64> = None;
 
         // ── Consume stream ────────────────────────────────────────────────
         loop {
@@ -600,6 +604,7 @@ async fn generation_loop(
                     if !ttft_logged {
                         ttft_logged = true;
                         let ttft = t_llm.elapsed().as_millis() as i64;
+                        ttft_ms = Some(ttft);
                         info!(ms = ttft, "⏱ TTFT (first token)");
                         if !ttft_written {
                             ttft_written = true;
@@ -643,7 +648,20 @@ async fn generation_loop(
 
                 Some(LlmEvent::Usage(u)) => {
                     usage += u.clone();
-                    persist_usage_event(ctx, streaming_msg_id, model_id, &u).await;
+                    // Usage events typically arrive at the tail of the stream
+                    // (Anthropic: in message_delta; OpenAI: after the last
+                    // content chunk). `t_llm.elapsed()` here is a faithful
+                    // proxy for total request wall-time.
+                    let total_ms = t_llm.elapsed().as_millis() as i64;
+                    persist_usage_event(
+                        ctx,
+                        streaming_msg_id,
+                        model_id,
+                        &u,
+                        ttft_ms,
+                        Some(total_ms),
+                    )
+                    .await;
                 }
 
                 Some(LlmEvent::AssistantState(v)) => {
@@ -907,6 +925,8 @@ async fn persist_usage_event(
     message_id: i64,
     model_id: Option<Uuid>,
     usage: &UsageStats,
+    ttft_ms: Option<i64>,
+    total_ms: Option<i64>,
 ) {
     // Compact only needs the model's input-context size on this turn:
     // non-cached prompt + cache read + cache creation.
@@ -919,11 +939,11 @@ async fn persist_usage_event(
         r#"INSERT INTO token_usage_events
                (job_id, conversation_id, user_id, message_id, conversation_name,
                 prompt_tokens, completion_tokens, cache_read_tokens,
-                cache_creation_tokens, model_id, created_at)
+                cache_creation_tokens, model_id, ttft_ms, total_ms, created_at)
            SELECT $1, c.id, c.user_id, $2, c.name,
-                  $3, $4, $5, $6, $7, $8
+                  $3, $4, $5, $6, $7, $8, $9, $10
            FROM conversations c
-           WHERE c.id = $9"#,
+           WHERE c.id = $11"#,
     )
     .bind(ctx.job_id)
     .bind(message_id)
@@ -932,6 +952,8 @@ async fn persist_usage_event(
     .bind(usage.cache_read_tokens as i64)
     .bind(usage.cache_creation_tokens as i64)
     .bind(model_id)
+    .bind(ttft_ms)
+    .bind(total_ms)
     .bind(now)
     .bind(ctx.conversation_id)
     .execute(&ctx.pool)

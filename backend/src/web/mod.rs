@@ -20,7 +20,8 @@ use std::{path::Path, sync::Arc};
 use admin::{
     create_app_skill, create_catalog_entry, create_global_mcp, create_user, delete_app_skill,
     delete_catalog_entry, delete_global_mcp, delete_user, get_admin_config, get_token_usage,
-    get_token_usage_by_user, get_token_usage_conversations, get_token_usage_daily, list_app_skills,
+    get_token_usage_by_user, get_token_usage_conversations, get_token_usage_daily,
+    get_token_usage_latency, list_app_skills,
     list_audit_logs, list_catalog, list_global_mcps, list_users, reset_user_password, run_sql,
     update_admin_config, update_app_skill, update_catalog_entry, update_global_mcp, update_user,
 };
@@ -160,6 +161,10 @@ pub fn create_router(state: AppState, allowed_origin: Option<&str>) -> Router {
             get(get_token_usage_conversations),
         )
         .route("/api/admin/token-usage/daily", get(get_token_usage_daily))
+        .route(
+            "/api/admin/token-usage/latency",
+            get(get_token_usage_latency),
+        )
         .route("/api/admin/sql", post(run_sql))
         // ── User Skills (per-user) ─────────────────────────────────────────────
         .route("/api/skills", get(list_skills))

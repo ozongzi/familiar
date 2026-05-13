@@ -867,6 +867,61 @@ pub async fn get_token_usage_daily(
     Ok(Json(serde_json::json!({ "days": days })))
 }
 
+/// GET /api/admin/token-usage/latency
+///
+/// Per-model TTFT and total-wall-time percentiles. One row per model_id
+/// (deleted models get a placeholder label) over the last 7 days. Excludes
+/// rows where the latency columns are NULL — those came from before the
+/// instrumentation landed, or were aborted before usage was reported.
+pub async fn get_token_usage_latency(
+    State(state): State<AppState>,
+    auth: AuthUser,
+) -> AppResult<Json<serde_json::Value>> {
+    guard_admin(&auth)?;
+    let rows = sqlx::query(
+        r#"
+        SELECT COALESCE(m.model_name, '(unknown / deleted)') AS model_name,
+               COALESCE(m.provider,   '')                    AS provider,
+               COUNT(*)::bigint                              AS sample_count,
+               COALESCE(percentile_cont(0.5)  WITHIN GROUP (ORDER BY t.ttft_ms),  0)::float8 AS ttft_p50,
+               COALESCE(percentile_cont(0.99) WITHIN GROUP (ORDER BY t.ttft_ms),  0)::float8 AS ttft_p99,
+               COALESCE(percentile_cont(0.5)  WITHIN GROUP (ORDER BY t.total_ms), 0)::float8 AS total_p50,
+               COALESCE(percentile_cont(0.99) WITHIN GROUP (ORDER BY t.total_ms), 0)::float8 AS total_p99,
+               COALESCE(MAX(t.total_ms), 0)::bigint                                            AS total_max
+        FROM token_usage_events t
+        LEFT JOIN models m ON m.id = t.model_id
+        WHERE t.created_at >= EXTRACT(EPOCH FROM NOW() - INTERVAL '7 days')::bigint
+          AND t.total_ms IS NOT NULL
+        GROUP BY m.model_name, m.provider
+        ORDER BY total_p99 DESC NULLS LAST, model_name ASC
+        "#,
+    )
+    .fetch_all(&state.pool)
+    .await?;
+
+    use sqlx::Row;
+    let models: Vec<serde_json::Value> = rows
+        .iter()
+        .map(|r| {
+            serde_json::json!({
+                "model_name":   r.get::<String, _>("model_name"),
+                "provider":     r.get::<String, _>("provider"),
+                "sample_count": r.get::<i64,    _>("sample_count"),
+                "ttft_p50_ms":  r.get::<f64,    _>("ttft_p50") as i64,
+                "ttft_p99_ms":  r.get::<f64,    _>("ttft_p99") as i64,
+                "total_p50_ms": r.get::<f64,    _>("total_p50") as i64,
+                "total_p99_ms": r.get::<f64,    _>("total_p99") as i64,
+                "total_max_ms": r.get::<i64,    _>("total_max"),
+            })
+        })
+        .collect();
+
+    Ok(Json(serde_json::json!({
+        "window_days": 7,
+        "models": models,
+    })))
+}
+
 // ── SQL panel ─────────────────────────────────────────────────────────────────
 
 #[derive(Deserialize)]

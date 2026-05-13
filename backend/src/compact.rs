@@ -32,6 +32,7 @@
 //! branch that still traverses it.
 
 use agentix::{LlmEvent, Message, Request, UserContent};
+use anyhow::{Context, anyhow};
 use futures::StreamExt;
 use sqlx::PgPool;
 use tracing::{info, warn};
@@ -213,8 +214,9 @@ fn strip_images(messages: &[Message]) -> Vec<Message> {
 /// return it as-is. Otherwise walk the active path from the tip backward,
 /// find the nearest ancestor that carries a stored summary, and splice it
 /// in as a synthetic opening user message followed by every message after
-/// the anchor. Falls back to raw (trusting the worker's token-budget
-/// truncation) if no usable summary exists on the active path.
+/// the anchor. Errors if the raw history is over budget and no usable
+/// summary exists on the active path — the worker must surface this to
+/// the user rather than silently sending an oversized prompt.
 pub async fn load_for_generation(
     db: &Db,
     model: &ModelConfig,
@@ -253,8 +255,9 @@ pub async fn load_for_generation(
         }
     }
 
-    // No summary small enough; hand back raw and let the worker truncate.
-    Ok(messages)
+    Err(anyhow!(
+        "对话上下文 {raw_total} tokens 超过预算 {budget}，且没有可用的摘要锚点可以套用。请触发一次压缩或开启新对话。"
+    ))
 }
 
 // ── Public API: compaction ────────────────────────────────────────────────────
@@ -263,14 +266,21 @@ pub async fn load_for_generation(
 /// incremental summarisation + write a new anchor on the boundary message.
 /// Raw messages are never deleted: any existing anchor stays valid for
 /// branches that still traverse it.
+///
+/// Returns `Ok(true)` if a new summary was written, `Ok(false)` if the
+/// trigger was not met or there was nothing to summarise. Failures during
+/// summarisation (LLM call, DB write) are surfaced as `Err` so the worker
+/// can show the user a clear error rather than silently continuing with
+/// an oversized prompt. A `compact_failed` event is emitted with the
+/// underlying error before the `Err` is returned.
 pub async fn maybe_compact(
     ctx: &WorkerContext,
     model: &ModelConfig,
     http: &reqwest::Client,
-) -> bool {
+) -> anyhow::Result<bool> {
     let ctx_tokens = latest_context_tokens(&ctx.pool, ctx.conversation_id).await;
     if ctx_tokens < model.compact_trigger_tokens {
-        return false;
+        return Ok(false);
     }
 
     info!(
@@ -279,18 +289,33 @@ pub async fn maybe_compact(
         "⚡ compaction threshold reached"
     );
 
+    match do_compact(ctx, model, http, ctx_tokens).await {
+        Ok(written) => Ok(written),
+        Err(e) => {
+            let msg = format!("{e:#}");
+            warn!(conversation = %ctx.conversation_id, "compaction failed: {msg}");
+            crate::worker::emit(
+                ctx,
+                serde_json::json!({"type": "compact_failed", "error": &msg}),
+            )
+            .await;
+            Err(e.context("conversation compaction failed"))
+        }
+    }
+}
+
+async fn do_compact(
+    ctx: &WorkerContext,
+    model: &ModelConfig,
+    http: &reqwest::Client,
+    ctx_tokens: i64,
+) -> anyhow::Result<bool> {
     // Full active path + the latest anchor on that path (if any).
-    let (rows, messages) = match ctx
+    let (rows, messages) = ctx
         .db
         .restore_after_rows(ctx.conversation_id, ctx.user_id, None)
         .await
-    {
-        Ok(v) => v,
-        Err(e) => {
-            warn!(conversation = %ctx.conversation_id, "restore failed: {e}");
-            return false;
-        }
-    };
+        .context("restore active branch for compaction")?;
 
     let prev_anchor_idx = rows.iter().rposition(|r| r.summary_text.is_some());
     let prev_summary = prev_anchor_idx.and_then(|i| rows[i].summary_text.clone());
@@ -298,17 +323,14 @@ pub async fn maybe_compact(
     let delta_rows: &[MessageRow] = &rows[delta_start..];
     let delta_msgs: &[Message] = &messages[delta_start..];
 
-    let split_idx = match compute_new_boundary(delta_msgs, model.compact_tail_tokens) {
-        Some(v) => v,
-        None => {
-            info!(
-                conversation = %ctx.conversation_id,
-                ctx_tokens,
-                delta_len = delta_msgs.len(),
-                "nothing to summarise after boundary search"
-            );
-            return false;
-        }
+    let Some(split_idx) = compute_new_boundary(delta_msgs, model.compact_tail_tokens) else {
+        info!(
+            conversation = %ctx.conversation_id,
+            ctx_tokens,
+            delta_len = delta_msgs.len(),
+            "nothing to summarise after boundary search"
+        );
+        return Ok(false);
     };
 
     let new_until_msg_id = delta_rows[split_idx - 1].id;
@@ -320,20 +342,26 @@ pub async fn maybe_compact(
     }
     input.extend_from_slice(&delta_msgs[..split_idx]);
 
-    let Some(new_summary) = run_summariser(ctx, model, http, &input).await else {
-        return false;
-    };
+    // Tell the user a compaction is starting — the summariser call can take
+    // many seconds and otherwise looks like a stall.
+    crate::worker::emit(
+        ctx,
+        serde_json::json!({
+            "type": "compact_started",
+            "ctx_tokens": ctx_tokens,
+            "trigger_tokens": model.compact_trigger_tokens,
+        }),
+    )
+    .await;
+
+    let new_summary = run_summariser(ctx, model, http, &input).await?;
 
     let summary_tokens = summary_to_message(&new_summary).estimate_tokens() as i32;
 
-    if let Err(e) = ctx
-        .db
+    ctx.db
         .set_summary(new_until_msg_id, &new_summary, summary_tokens)
         .await
-    {
-        warn!(conversation = %ctx.conversation_id, "set_summary failed: {e}");
-        return false;
-    }
+        .context("persist new summary anchor")?;
 
     crate::spells::consolidate_conversation_memories(&ctx.pool, ctx.user_id, ctx.conversation_id)
         .await;
@@ -352,7 +380,7 @@ pub async fn maybe_compact(
         " compaction done"
     );
 
-    true
+    Ok(true)
 }
 
 // ── Internal: boundary search ─────────────────────────────────────────────────
@@ -795,7 +823,9 @@ mod tests {
             reasoning_effort: None,
         };
 
-        let compacted = maybe_compact(&ctx, &model, &reqwest::Client::new()).await;
+        let compacted = maybe_compact(&ctx, &model, &reqwest::Client::new())
+            .await
+            .expect("maybe_compact should not error when trigger is not met");
         assert!(
             !compacted,
             "inactive branch context must not trigger active branch compaction"
@@ -828,48 +858,42 @@ mod tests {
 // ── Internal: summariser ──────────────────────────────────────────────────────
 
 async fn run_summariser_http(
-    ctx: &WorkerContext,
     model: &ModelConfig,
     http: &reqwest::Client,
     messages: Vec<Message>,
-) -> Option<String> {
+) -> anyhow::Result<String> {
     let request = model
         .to_request()
         .system_prompt(build_compact_system_prompt())
         .messages(messages)
         .max_tokens(COMPACT_MAX_OUTPUT_TOKENS);
 
-    let mut stream = match request.stream(http).await {
-        Ok(s) => s,
-        Err(e) => {
-            warn!(conversation = %ctx.conversation_id, "compact stream failed: {e}");
-            return None;
-        }
-    };
+    let mut stream = request
+        .stream(http)
+        .await
+        .map_err(|e| anyhow!("compaction LLM stream failed to start: {e}"))?;
 
     let mut raw = String::new();
     while let Some(event) = stream.next().await {
         match event {
             LlmEvent::Token(t) => raw.push_str(&t),
             LlmEvent::Error(e) => {
-                warn!(conversation = %ctx.conversation_id, "compact stream error: {e}");
-                return None;
+                return Err(anyhow!("compaction LLM stream error: {e}"));
             }
             _ => {}
         }
     }
-    Some(raw)
+    Ok(raw)
 }
 
 /// Drive `claude -p` (subprocess) with no tools and collect its text output.
 /// Used when the frontier model itself is `kind=claude-code` and has no
 /// HTTP credentials of its own.
 async fn run_summariser_claude_code(
-    ctx: &WorkerContext,
     model: &ModelConfig,
     http: &reqwest::Client,
     mut messages: Vec<Message>,
-) -> Option<String> {
+) -> anyhow::Result<String> {
     // Claude Code consumes the final user turn from stdin; append an explicit
     // summary trigger so the last message is always a user turn.
     messages.push(Message::User(vec![UserContent::Text {
@@ -881,26 +905,22 @@ async fn run_summariser_claude_code(
         .system_prompt(build_compact_system_prompt())
         .messages(messages)
         .max_tokens(COMPACT_MAX_OUTPUT_TOKENS);
-    let mut stream = match request.stream(http).await {
-        Ok(s) => s,
-        Err(e) => {
-            warn!(conversation = %ctx.conversation_id, "compact (claude-code) stream failed: {e}");
-            return None;
-        }
-    };
+    let mut stream = request
+        .stream(http)
+        .await
+        .map_err(|e| anyhow!("compaction (claude-code) stream failed to start: {e}"))?;
 
     let mut raw = String::new();
     while let Some(event) = stream.next().await {
         match event {
             LlmEvent::Token(t) => raw.push_str(&t),
             LlmEvent::Error(e) => {
-                warn!(conversation = %ctx.conversation_id, "compact (claude-code) error: {e}");
-                return None;
+                return Err(anyhow!("compaction (claude-code) stream error: {e}"));
             }
             _ => {}
         }
     }
-    Some(raw)
+    Ok(raw)
 }
 
 async fn run_summariser(
@@ -908,29 +928,35 @@ async fn run_summariser(
     model: &ModelConfig,
     http: &reqwest::Client,
     input: &[Message],
-) -> Option<String> {
+) -> anyhow::Result<String> {
     let compact_messages = strip_images(input);
 
     let raw = if model.kind == "claude-code" {
-        run_summariser_claude_code(ctx, model, http, compact_messages).await?
+        run_summariser_claude_code(model, http, compact_messages).await?
     } else {
-        run_summariser_http(ctx, model, http, compact_messages).await?
+        run_summariser_http(model, http, compact_messages).await?
     };
 
     if raw.trim().is_empty() {
-        warn!(conversation = %ctx.conversation_id, "compact produced empty output");
-        return None;
+        return Err(anyhow!(
+            "compaction model returned an empty response (conversation={})",
+            ctx.conversation_id
+        ));
     }
 
     if strip_tool_call_blocks(&raw).trim().is_empty() {
-        warn!(conversation = %ctx.conversation_id, "compact output was entirely tool calls, discarding");
-        return None;
+        return Err(anyhow!(
+            "compaction model returned only tool-call blocks (conversation={})",
+            ctx.conversation_id
+        ));
     }
 
     let formatted = format_compact_summary(&raw);
     if formatted.trim().is_empty() || formatted == "Summary:" {
-        warn!(conversation = %ctx.conversation_id, "compact produced empty summary after formatting");
-        return None;
+        return Err(anyhow!(
+            "compaction model produced an empty summary after formatting (conversation={})",
+            ctx.conversation_id
+        ));
     }
-    Some(formatted)
+    Ok(formatted)
 }
