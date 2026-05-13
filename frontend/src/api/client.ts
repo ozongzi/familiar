@@ -164,6 +164,22 @@ export const api = {
     }>("/api/admin/token-usage/daily", token);
   },
 
+  getTokenUsageLatency(token: string) {
+    return get<{
+      window_days: number;
+      models: {
+        model_name: string;
+        provider: string;
+        sample_count: number;
+        ttft_p50_ms: number;
+        ttft_p99_ms: number;
+        total_p50_ms: number;
+        total_p99_ms: number;
+        total_max_ms: number;
+      }[];
+    }>("/api/admin/token-usage/latency", token);
+  },
+
   getAdminConfig(token: string) {
     return get<AdminConfig>("/api/admin/config", token);
   },

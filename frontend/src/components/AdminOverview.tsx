@@ -59,6 +59,24 @@ type ConvRow = {
   total_cost: number;
 };
 
+type LatencyRow = {
+  model_name: string;
+  provider: string;
+  sample_count: number;
+  ttft_p50_ms: number;
+  ttft_p99_ms: number;
+  total_p50_ms: number;
+  total_p99_ms: number;
+  total_max_ms: number;
+};
+
+function fmtMs(ms: number): string {
+  if (!Number.isFinite(ms) || ms <= 0) return "—";
+  if (ms < 1000) return `${Math.round(ms)} ms`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)} s`;
+  return `${(ms / 60_000).toFixed(1)} min`;
+}
+
 function fmt(n: number): string {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
   if (n >= 1_000) return (n / 1_000).toFixed(1) + "K";
@@ -78,6 +96,8 @@ export function AdminOverview({ token, onNavigate }: Props) {
   const [convs, setConvs] = useState<ConvRow[]>([]);
   const [selectedUserId, setSelectedUserId] = useState("");
   const [modelCount, setModelCount] = useState(0);
+  const [latency, setLatency] = useState<LatencyRow[]>([]);
+  const [latencyWindowDays, setLatencyWindowDays] = useState(7);
   const chartRef = useRef<HTMLCanvasElement>(null);
   const chartInstance = useRef<Chart | null>(null);
 
@@ -86,6 +106,13 @@ export function AdminOverview({ token, onNavigate }: Props) {
     api.getTokenUsageDaily(token).then((r) => setDays(r.days)).catch(() => {});
     api.getTokenUsageByUser(token).then((r) => setUsers(r.users)).catch(() => {});
     api.adminListModels(token).then((ms) => setModelCount(ms.length)).catch(() => {});
+    api
+      .getTokenUsageLatency(token)
+      .then((r) => {
+        setLatency(r.models);
+        setLatencyWindowDays(r.window_days);
+      })
+      .catch(() => {});
   }, [token]);
 
   useEffect(() => {
@@ -227,6 +254,56 @@ export function AdminOverview({ token, onNavigate }: Props) {
             </tbody>
           </table>
         </div>
+      </div>
+
+      {/* Per-model latency */}
+      <div className={styles.tableCard}>
+        <div className={styles.cardHeader}>
+          按模型延迟（近 {latencyWindowDays} 天，单位 ms）
+        </div>
+        <table className={styles.table}>
+          <thead>
+            <tr>
+              <th>模型</th>
+              <th>Provider</th>
+              <th>样本</th>
+              <th title="首 token 中位数">TTFT p50</th>
+              <th title="首 token 99 分位">TTFT p99</th>
+              <th title="单次请求总耗时中位数">总耗时 p50</th>
+              <th title="单次请求总耗时 99 分位">总耗时 p99</th>
+              <th title="近 7 天最慢一次请求">最慢</th>
+            </tr>
+          </thead>
+          <tbody>
+            {latency.map((m) => (
+              <tr key={`${m.provider}::${m.model_name}`}>
+                <td className={styles.username}>{m.model_name}</td>
+                <td>{m.provider || "—"}</td>
+                <td>{m.sample_count}</td>
+                <td>{fmtMs(m.ttft_p50_ms)}</td>
+                <td>
+                  <strong style={{ color: m.ttft_p99_ms > 10_000 ? "#dc2626" : undefined }}>
+                    {fmtMs(m.ttft_p99_ms)}
+                  </strong>
+                </td>
+                <td>{fmtMs(m.total_p50_ms)}</td>
+                <td>
+                  <strong style={{ color: m.total_p99_ms > 30_000 ? "#dc2626" : undefined }}>
+                    {fmtMs(m.total_p99_ms)}
+                  </strong>
+                </td>
+                <td>{fmtMs(m.total_max_ms)}</td>
+              </tr>
+            ))}
+            {latency.length === 0 && (
+              <tr>
+                <td colSpan={8} className={styles.empty}>
+                  暂无数据（需要新一轮请求产生 TTFT 数据）
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
       </div>
 
       {/* Quick actions */}
