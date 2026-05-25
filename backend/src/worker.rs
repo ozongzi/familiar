@@ -287,25 +287,14 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
         .unwrap_or(None)
         .unwrap_or_default();
 
-    // ── Gather dynamic prompt inputs ──────────────────────────────────────
-
-    // Memories
-    let mem_section =
-        crate::spells::load_memories_for_prompt(&ctx.pool, ctx.user_id, ctx.conversation_id).await;
-    let has_memory = mem_section.is_some();
-
     // ── Build base system prompt via PromptEngine or custom override ───────
     let mut system_prompt: String = if let Some(ref custom) = custom_system_prompt {
         // User has provided a fully custom system prompt — use it as-is.
         crate::prompt_template::render_prompt(custom, &[("USER_NAME", &user_name)])
     } else {
-        let raw = prompt_engine.build_main(has_memory);
+        let raw = prompt_engine.build_main(false);
         crate::prompt_template::render_prompt(&raw, &[("USER_NAME", &user_name)])
     };
-
-    if let Some(mem) = &mem_section {
-        system_prompt.push_str(mem.trim());
-    }
 
     // ── Append skills ─────────────────────────────────────────────────────
     // Start with bundled skills (compiled into the binary).
@@ -356,29 +345,14 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
         ));
     }
 
-    // ── Append active plan ────────────────────────────────────────────────
-    let plan_row: Option<(String, String)> = sqlx::query_as(
-        "SELECT title, steps_json FROM conversation_plans WHERE conversation_id = $1",
-    )
-    .bind(ctx.conversation_id)
-    .fetch_optional(&ctx.pool)
-    .await
-    .unwrap_or(None);
-
-    if let Some((plan_title, plan_steps)) = plan_row {
-        system_prompt.push_str(&format!(
-            "\n\n## 当前执行计划\n标题：{plan_title}\n步骤（JSON）：{plan_steps}\n\n每次更新步骤状态时，调用 todo_list 工具同步最新进度。"
-        ));
-    }
-
     // ── Load history from DB (summary + recent tail, transparently) ──────
-    // load_for_generation refuses to silently truncate: if the active path
-    // exceeds the compact budget and no usable summary exists, it returns
-    // an Err here that propagates up to the worker's top-level error event.
+    // Anchor-first: returns [nearest-anchor summary + raw tail] when the
+    // active path carries a summary, else the raw path. Only a DB restore
+    // failure errors here (propagated to the top-level error event);
+    // oversized raw history is capped by truncate_to_token_budget below.
     let t_restore = std::time::Instant::now();
     let messages = crate::compact::load_for_generation(
         &ctx.db,
-        &frontier_cfg,
         ctx.conversation_id,
         ctx.user_id,
     )
@@ -387,7 +361,7 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
         error!(conversation = %ctx.conversation_id, "failed to restore history: {e:#}");
         e
     })?;
-    let messages = sanitize_history(messages);
+    let mut messages = sanitize_history(messages);
     info!(conversation = %ctx.conversation_id, messages = messages.len(), ms = t_restore.elapsed().as_millis(), "⏱ restore history");
 
     // ── Connect MCPs from DB ──────────────────────────────────────────────
@@ -449,6 +423,31 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
     // so every provider can share the same streaming/tool/persistence loop.
     let request = frontier_cfg.to_request().system_prompt(system_prompt);
     let http = reqwest::Client::new();
+
+    // ── In-band compaction pre-phase ─────────────────────────────────────
+    // If the previous turn pushed context over the trigger, summarise first —
+    // a visible summarise turn through the *same* request and tools (cache-warm,
+    // model may still act) — then bridge back to the user's request. See
+    // compact.rs for the boundary/reminder mechanics.
+    if crate::compact::should_compact(&ctx.pool, ctx.conversation_id, &frontier_cfg).await {
+        if let Err(e) = run_compaction_phase(
+            ctx,
+            &http,
+            &request,
+            &bundle,
+            &frontier_cfg,
+            frontier_model_id,
+            &mut messages,
+        )
+        .await
+        {
+            let msg = format!("{e:#}");
+            warn!(conversation = %ctx.conversation_id, "in-band compaction failed: {msg}");
+            emit(ctx, json!({"type": "compact_failed", "error": &msg})).await;
+            return Err(e);
+        }
+    }
+
     generation_loop(
         ctx,
         &http,
@@ -459,6 +458,69 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
         frontier_model_id,
     )
     .await
+}
+
+/// In-band compaction: inject a visible summarise trigger, run one generation
+/// pass to produce the summary (cache-warm, tools available), finalise the
+/// boundary + reminder, then reload the compacted window and append the
+/// "continue" bridge so the caller's `generation_loop` resumes the request.
+#[allow(clippy::too_many_arguments)]
+async fn run_compaction_phase(
+    ctx: &WorkerContext,
+    http: &reqwest::Client,
+    request: &Request,
+    bundle: &ToolBundle,
+    model: &ModelConfig,
+    model_id: Option<Uuid>,
+    messages: &mut Vec<Message>,
+) -> anyhow::Result<()> {
+    emit(
+        ctx,
+        json!({
+            "type": "compact_started",
+            "trigger_tokens": model.compact_trigger_tokens,
+        }),
+    )
+    .await;
+
+    // Phase 1: summarise. The trigger is a normal visible user message; the
+    // model's reply (the summary) rides the normal loop and may use tools.
+    let trigger = Message::User(vec![UserContent::Text {
+        text: crate::compact::summarize_trigger_text(),
+    }]);
+    let trigger_id = ctx
+        .db
+        .append(ctx.conversation_id, ctx.user_id, &trigger, None)
+        .await
+        .map_err(|e| anyhow::anyhow!("persist summarise trigger failed: {e}"))?;
+    messages.push(trigger);
+    generation_loop(
+        ctx,
+        http,
+        request,
+        messages.clone(),
+        bundle,
+        model.clone(),
+        model_id,
+    )
+    .await?;
+
+    // Phase 1b: attach memory+plan reminder to the summary and set the boundary.
+    crate::compact::finalize_compaction(ctx, model, trigger_id).await?;
+
+    // Phase 2 prep: reload the compacted window, then bridge back to the request.
+    *messages = sanitize_history(
+        crate::compact::load_for_generation(&ctx.db, ctx.conversation_id, ctx.user_id).await?,
+    );
+    let cont = Message::User(vec![UserContent::Text {
+        text: crate::compact::continue_text(),
+    }]);
+    ctx.db
+        .append(ctx.conversation_id, ctx.user_id, &cont, None)
+        .await
+        .map_err(|e| anyhow::anyhow!("persist continue bridge failed: {e}"))?;
+    messages.push(cont);
+    Ok(())
 }
 
 // ── Generation loop ───────────────────────────────────────────────────────────
@@ -483,27 +545,10 @@ async fn generation_loop(
             return Ok(());
         }
 
-        // ── Auto-compact at turn boundary ─────────────────────────────────
-        // Compact checks the latest persisted input-context snapshot from DB
-        // and decides whether to summarise. If it ran, reload messages via
-        // the unified loader so the worker sees the fresh [summary + tail].
-        // Failures are propagated up so the user sees a clear error; the
-        // compact module has already emitted a `compact_failed` event with
-        // the underlying cause.
-        if crate::compact::maybe_compact(ctx, &compact_model, http).await? {
-            messages = sanitize_history(
-                crate::compact::load_for_generation(
-                    &ctx.db,
-                    &compact_model,
-                    ctx.conversation_id,
-                    ctx.user_id,
-                )
-                .await?,
-            );
-        }
         // ── Truncate history to token budget ──────────────────────────────
-        // Safety ceiling above the compact trigger — if compact didn't fire
-        // (e.g. missing usage counts), still cap context to prevent runaway.
+        // Safety ceiling above the compact trigger. In-band compaction (run
+        // before this loop in run_worker_inner) normally keeps context under
+        // the trigger; this still caps runaway turns where it didn't fire.
         let history_budget = (compact_model.compact_trigger_tokens * 5 / 4) as usize;
         let before = messages.len();
         agentix::truncate_to_token_budget(&mut messages, history_budget);

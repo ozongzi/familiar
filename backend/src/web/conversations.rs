@@ -148,8 +148,9 @@ pub async fn create_conversation(
     // that's preserved for compatibility with the cheap-model fallback path.
     let model_id: Option<Uuid> = match req.model_id {
         Some(id) => Some(id),
-        None => sqlx::query_scalar(
-            "SELECT id FROM models
+        None => {
+            sqlx::query_scalar(
+                "SELECT id FROM models
              WHERE scope = 'global'
                AND is_default = true
                AND COALESCE(
@@ -161,10 +162,11 @@ pub async fn create_conversation(
                     initial_available
                )
              LIMIT 1",
-        )
-        .bind(auth.user_id)
-        .fetch_optional(&state.pool)
-        .await?,
+            )
+            .bind(auth.user_id)
+            .fetch_optional(&state.pool)
+            .await?
+        }
     };
 
     let row = sqlx::query(
@@ -197,6 +199,8 @@ pub async fn create_conversation(
         .try_get("folder_id")
         .map_err(|_| AppError::internal("db error"))?;
 
+    persist_initial_memory_snapshot(&state, auth.user_id, id).await;
+
     Ok(Json(ConversationResponse {
         id,
         name,
@@ -204,6 +208,55 @@ pub async fn create_conversation(
         created_at: created_at.to_rfc3339(),
         folder_id,
     }))
+}
+
+async fn persist_initial_memory_snapshot(state: &AppState, user_id: Uuid, conversation_id: Uuid) {
+    let Some(memory) =
+        crate::spells::load_memories_for_prompt(&state.pool, user_id, conversation_id).await
+    else {
+        return;
+    };
+
+    let content = format!(
+        "（以下为持久背景记忆，自然地当作已知信息使用，不要提及此机制）\n\n{}",
+        memory.trim()
+    );
+    let now = chrono::Utc::now().timestamp();
+
+    let result = async {
+        let mut tx = state.pool.begin().await?;
+        let msg_id: i64 = sqlx::query_scalar(
+            r#"
+            INSERT INTO messages
+                (conversation_id, role, name, content, created_at, streaming)
+            VALUES ($1, 'user', NULL, $2, $3, FALSE)
+            RETURNING id
+            "#,
+        )
+        .bind(conversation_id)
+        .bind(&content)
+        .bind(now)
+        .fetch_one(&mut *tx)
+        .await?;
+
+        sqlx::query("UPDATE conversations SET active_message_id = $1 WHERE id = $2")
+            .bind(msg_id)
+            .bind(conversation_id)
+            .execute(&mut *tx)
+            .await?;
+
+        tx.commit().await
+    }
+    .await;
+
+    if let Err(err) = result {
+        tracing::warn!(
+            user_id = %user_id,
+            conversation_id = %conversation_id,
+            error = %err,
+            "failed to persist initial memory snapshot"
+        );
+    }
 }
 
 pub async fn delete_conversation(

@@ -28,6 +28,24 @@ use agentix::request::{
 
 use crate::sandbox::SandboxManager;
 
+/// True for user messages the system injected rather than the user typing.
+/// Real user turns are timestamp-stamped ("[YYYY-MM-DD HH:MM UTC] …") by the
+/// send handler, or stored as a `__multimodal__:` image blob; synthetic turns
+/// (compaction summarise trigger, the continue bridge, the initial memory
+/// snapshot) are plain text with neither. Used to keep these out of public
+/// shares while the owner still sees everything.
+pub fn is_synthetic_user_turn(content: &str) -> bool {
+    if content.starts_with("__multimodal__:") {
+        return false;
+    }
+    // Timestamp prefix: "[" then a date segment ending in "UTC" before "]".
+    let stamped = content.starts_with('[')
+        && content
+            .find(']')
+            .is_some_and(|i| content[..i].trim_end().ends_with("UTC"));
+    !stamped
+}
+
 // ── Row type ──────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -415,22 +433,6 @@ impl Db {
             .execute(&self.pool)
             .await?;
         Ok(leaf)
-    }
-
-    /// Persist a compact summary anchored on a specific message.
-    pub async fn set_summary(
-        &self,
-        message_id: i64,
-        summary: &str,
-        tokens: i32,
-    ) -> anyhow::Result<()> {
-        sqlx::query("UPDATE messages SET summary_text = $1, summary_tokens = $2 WHERE id = $3")
-            .bind(summary)
-            .bind(tokens)
-            .bind(message_id)
-            .execute(&self.pool)
-            .await?;
-        Ok(())
     }
 
     /// For each message on the active branch, return its sibling ids

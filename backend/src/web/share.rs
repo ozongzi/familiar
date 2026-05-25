@@ -42,11 +42,7 @@ fn gen_share_token() -> String {
     s
 }
 
-async fn assert_owner(
-    state: &AppState,
-    user_id: Uuid,
-    conversation_id: Uuid,
-) -> AppResult<()> {
+async fn assert_owner(state: &AppState, user_id: Uuid, conversation_id: Uuid) -> AppResult<()> {
     let owned: bool = sqlx::query_scalar::<_, Option<bool>>(
         "SELECT EXISTS(SELECT 1 FROM conversations WHERE id = $1 AND user_id = $2)",
     )
@@ -153,6 +149,15 @@ pub async fn get_shared_conversation(
 
     let messages: Vec<MessageResponse> = rows
         .into_iter()
+        .filter(|(r, _)| {
+            // Public shares omit system-injected user turns (compaction
+            // trigger, continue bridge, initial memory snapshot) — they carry
+            // no timestamp, unlike messages the user actually typed.
+            !matches!(
+                (r.role.as_str(), r.content.as_deref()),
+                ("user", Some(content)) if crate::db::is_synthetic_user_turn(content)
+            )
+        })
         .map(|(r, siblings)| MessageResponse {
             id: r.id,
             role: r.role,
@@ -190,11 +195,10 @@ pub async fn import_share(
             .await?
             .ok_or_else(|| AppError::not_found("分享链接无效或已被撤销"))?;
 
-    let source_name: String =
-        sqlx::query_scalar("SELECT name FROM conversations WHERE id = $1")
-            .bind(source_conv)
-            .fetch_one(&state.pool)
-            .await?;
+    let source_name: String = sqlx::query_scalar("SELECT name FROM conversations WHERE id = $1")
+        .bind(source_conv)
+        .fetch_one(&state.pool)
+        .await?;
 
     // Read the source's active branch up front (no transaction lock needed —
     // worst case is the source gets a new turn mid-import; the clone still
