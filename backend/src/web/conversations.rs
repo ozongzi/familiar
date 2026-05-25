@@ -329,7 +329,11 @@ pub async fn auto_title(
     let http = reqwest::Client::new();
     let resp = cm
         .to_request()
-        .max_tokens(64)
+        // Reasoning cheap models (e.g. deepseek-v4-flash) spend their token
+        // budget on a hidden reasoning chain before emitting any content; a
+        // tight cap leaves `content` empty (finish_reason=length). Give enough
+        // room for the reasoning to finish AND the short title to follow.
+        .max_tokens(1024)
         .user(prompt)
         .complete(&http)
         .await

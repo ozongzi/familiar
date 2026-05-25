@@ -762,7 +762,10 @@ pub async fn get_token_usage_conversations(
     let base_sql = format!(
         r#"
             SELECT t.conversation_id::text AS conv_id,
-                   COALESCE(MAX(t.conversation_name), '(deleted)') AS conv_name,
+                   -- Prefer the live conversation name so renames / auto-titles
+                   -- show through; the per-event snapshot is only a fallback for
+                   -- conversations that have since been deleted.
+                   COALESCE(MAX(c.name), MAX(t.conversation_name), '(deleted)') AS conv_name,
                    u.name AS username,
                    TO_TIMESTAMP(MAX(t.created_at))::text AS created_at,
                    COALESCE(SUM(t.prompt_tokens), 0)::bigint AS prompt_tokens,
@@ -771,8 +774,9 @@ pub async fn get_token_usage_conversations(
                    COALESCE(SUM(t.cache_creation_tokens), 0)::bigint AS cache_creation_tokens,
                    COALESCE(SUM({cost}), 0)::float8 AS total_cost
             FROM token_usage_events t
-            JOIN users u        ON u.id = t.user_id
-            LEFT JOIN models m  ON m.id = t.model_id
+            JOIN users u             ON u.id = t.user_id
+            LEFT JOIN conversations c ON c.id = t.conversation_id
+            LEFT JOIN models m       ON m.id = t.model_id
             {where_clause}
             GROUP BY t.conversation_id, u.name
             HAVING COALESCE(SUM(t.prompt_tokens + t.completion_tokens
