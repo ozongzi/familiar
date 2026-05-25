@@ -31,7 +31,7 @@
 //! trigger set. A NULL boundary loads the full active branch.
 
 use agentix::Message;
-use anyhow::{Context, anyhow};
+use anyhow::Context;
 use sqlx::PgPool;
 use tracing::info;
 use uuid::Uuid;
@@ -127,10 +127,18 @@ pub fn summarize_trigger_text() -> String {
     COMPACT_PROMPT.to_string()
 }
 
-/// Bridge injected after the summary so the model resumes the user's request
-/// from the freshly compacted context.
-pub fn continue_text() -> String {
-    "上下文已压缩完毕（上一条助手消息即摘要）。现在直接继续回答用户最近的请求，无需确认摘要、不要重述发生了什么。".to_string()
+/// The user turn injected after the summary: the memory + plan reminder
+/// followed by the bridge instruction that resumes the user's request. Kept as
+/// a plain user message (not appended to the assistant summary) so it rides the
+/// same role-alternation as a normal turn and, carrying no "[… UTC]" timestamp,
+/// is dropped from public shares. memory + plan lives here and on the initial
+/// snapshot only — never in the system prompt.
+pub async fn continue_message(ctx: &WorkerContext) -> String {
+    const BRIDGE: &str = "上下文已压缩完毕（上一条助手消息即摘要）。现在直接继续回答用户最近的请求，无需确认摘要、不要重述发生了什么。";
+    match build_reminder(ctx).await {
+        Some(reminder) => format!("{reminder}\n\n{BRIDGE}"),
+        None => BRIDGE.to_string(),
+    }
 }
 
 /// True when the latest provider-reported context on the active branch has
@@ -139,37 +147,17 @@ pub async fn should_compact(pool: &PgPool, conv_id: Uuid, model: &ModelConfig) -
     latest_context_tokens(pool, conv_id).await >= model.compact_trigger_tokens
 }
 
-/// Finalise an in-band compaction once the summary turn has been produced (the
-/// summary is the current active leaf). Appends the memory + plan reminder to
-/// that summary message and records the drop-through boundary so future loads
-/// serve `messages[N..]`. `trigger_msg_id` is the summarise trigger we
-/// injected; the kept raw tail is `compact_tail_tokens` of conversation just
-/// before it. Emits a `compact` event.
+/// Finalise an in-band compaction once the summary turn has been produced:
+/// record the drop-through boundary so future loads serve `messages[N..]`.
+/// `trigger_msg_id` is the summarise trigger we injected; the kept raw tail is
+/// `compact_tail_tokens` of conversation just before it. Emits a `compact`
+/// event. The memory + plan reminder is carried by the following continue user
+/// message (see [`continue_message`]), not stored here.
 pub async fn finalize_compaction(
     ctx: &WorkerContext,
     model: &ModelConfig,
     trigger_msg_id: i64,
 ) -> anyhow::Result<()> {
-    let summary_id: i64 =
-        sqlx::query_scalar::<_, Option<i64>>(
-            "SELECT active_message_id FROM conversations WHERE id = $1",
-        )
-        .bind(ctx.conversation_id)
-        .fetch_optional(&ctx.pool)
-        .await
-        .context("read summary leaf")?
-        .flatten()
-        .ok_or_else(|| anyhow!("no active leaf after summary turn"))?;
-
-    if let Some(reminder) = build_reminder(ctx).await {
-        sqlx::query("UPDATE messages SET content = COALESCE(content, '') || $2 WHERE id = $1")
-            .bind(summary_id)
-            .bind(format!("\n\n{reminder}"))
-            .execute(&ctx.pool)
-            .await
-            .context("append reminder to summary message")?;
-    }
-
     let (rows, messages) = ctx
         .db
         .restore_after_rows(ctx.conversation_id, ctx.user_id, None)
@@ -184,9 +172,9 @@ pub async fn finalize_compaction(
             .execute(&ctx.pool)
             .await
             .context("record compaction boundary")?;
-        info!(conversation = %ctx.conversation_id, summary_id, drop_through, "⚡ in-band compaction done");
+        info!(conversation = %ctx.conversation_id, drop_through, "⚡ in-band compaction done");
     } else {
-        info!(conversation = %ctx.conversation_id, summary_id, "⚡ in-band compaction done (kept full tail)");
+        info!(conversation = %ctx.conversation_id, "⚡ in-band compaction done (kept full tail)");
     }
 
     crate::spells::consolidate_conversation_memories(&ctx.pool, ctx.user_id, ctx.conversation_id)

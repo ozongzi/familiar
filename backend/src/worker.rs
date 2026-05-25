@@ -513,7 +513,7 @@ async fn run_compaction_phase(
         crate::compact::load_for_generation(&ctx.db, ctx.conversation_id, ctx.user_id).await?,
     );
     let cont = Message::User(vec![UserContent::Text {
-        text: crate::compact::continue_text(),
+        text: crate::compact::continue_message(ctx).await,
     }]);
     ctx.db
         .append(ctx.conversation_id, ctx.user_id, &cont, None)
