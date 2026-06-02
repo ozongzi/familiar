@@ -195,7 +195,10 @@ pub fn run() {
         }),
     );
 
-    #[cfg(not(target_os = "android"))]
+    // Shell plugin is registered on all platforms for its `open` API (used to
+    // launch the system browser for GitHub OAuth). On Android `open` fires an
+    // ACTION_VIEW intent so the `familiar://` callback can be routed back to the
+    // app; only process/sidecar spawning (the tunnel) stays desktop-only.
     let builder = builder.plugin(tauri_plugin_shell::init());
 
     let builder = builder
