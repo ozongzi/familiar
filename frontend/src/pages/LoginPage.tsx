@@ -74,10 +74,10 @@ export function LoginPage({ serverUrl = "", onLogin }: LoginPageProps) {
     e.preventDefault();
     const base = serverUrl || window.location.origin;
     const url = `${base}/api/auth/github?client=tauri`;
-    if (/android/i.test(navigator.userAgent)) {
-      window.open(url, "_blank");
-      return;
-    }
+    // Open in the system browser (not the app WebView). The OAuth callback
+    // redirects to `familiar://auth/callback`, which only gets routed back to
+    // the app when an external browser dispatches the custom-scheme intent — a
+    // WebView would just fail with ERR_UNKNOWN_URL_SCHEME.
     const { open } = await import("@tauri-apps/plugin-shell");
     await open(url);
   };
