@@ -6,6 +6,7 @@ import {
   useState,
 } from "react";
 import styles from "./ChatInput.module.css";
+import { getServerBase } from "../utils/tauri";
 
 interface UploadResult {
   filename: string;
@@ -81,7 +82,7 @@ export function ChatInput({
             const formData = new FormData();
             formData.append("file", file, file.name);
             if (convId) formData.append("conversation_id", convId);
-            const res = await fetch("/api/files", {
+            const res = await fetch(`${getServerBase()}/api/files`, {
               method: "POST",
               headers: { Authorization: `Bearer ${authToken}` },
               body: formData,
