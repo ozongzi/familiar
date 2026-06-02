@@ -9,7 +9,12 @@ import React, {
 } from "react";
 import { MarkdownRenderer } from "./MarkdownRenderer";
 import { api } from "../api/client";
-import type { ChatBubble, ToolBubble, UploadBubble } from "../api/types";
+import type {
+  ChatBubble,
+  NoteKind,
+  ToolBubble,
+  UploadBubble,
+} from "../api/types";
 import { buildToolArgsView } from "./messageBubble.toolParsing";
 import { FilePreviewContent } from "./FilePreviewContent";
 import { BashTool, WriteTool, MultiWriteTool } from "./BashWriteTools";
@@ -36,6 +41,78 @@ async function triggerDownload(url: string, filename: string) {
 /** Strip the server-injected timestamp prefix "[YYYY-MM-DD HH:MM UTC] " from user messages. */
 function stripTimestamp(text: string): string {
   return text.replace(/^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC\] /, "");
+}
+
+// ─── System-injected note chip ─────────────────────────────────────────────
+// Memory snapshot / compaction trigger / continue bridge. The raw injected
+// text is withheld by the server; we show only a small labelled chip with an
+// inline SVG icon.
+const NOTE_META: Record<NoteKind, { label: string; icon: React.ReactNode }> = {
+  memory: {
+    label: "记忆",
+    icon: (
+      <svg
+        viewBox="0 0 24 24"
+        width="14"
+        height="14"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+      >
+        <path d="M6 3h12a1 1 0 0 1 1 1v17l-7-4-7 4V4a1 1 0 0 1 1-1z" />
+      </svg>
+    ),
+  },
+  compaction: {
+    label: "压缩对话",
+    icon: (
+      <svg
+        viewBox="0 0 24 24"
+        width="14"
+        height="14"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+      >
+        <path d="M9 4v5H4M4 9l5-5M15 20v-5h5M20 15l-5 5" />
+      </svg>
+    ),
+  },
+  guidance: {
+    label: "指引",
+    icon: (
+      <svg
+        viewBox="0 0 24 24"
+        width="14"
+        height="14"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+      >
+        <circle cx="12" cy="12" r="9" />
+        <path d="M12 11v5M12 7.5h.01" />
+      </svg>
+    ),
+  },
+};
+
+function NoteChipBubble({ note }: { note: NoteKind }) {
+  const meta = NOTE_META[note];
+  return (
+    <div className={styles.noteChip} role="note" title={meta.label}>
+      {meta.icon}
+      <span>{meta.label}</span>
+    </div>
+  );
 }
 
 interface Props {
@@ -71,6 +148,9 @@ export const MessageBubble = memo(function MessageBubble({
   }
   if (bubble.kind === "upload") {
     return <UploadChatBubble bubble={bubble} />;
+  }
+  if (bubble.kind === "note") {
+    return <NoteChipBubble note={bubble.note} />;
   }
   return (
     <TextChatBubble

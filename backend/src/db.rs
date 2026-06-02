@@ -46,6 +46,38 @@ pub fn is_synthetic_user_turn(content: &str) -> bool {
     !stamped
 }
 
+/// Kind of a system-injected user turn, surfaced to the client so it can show a
+/// small labelled placeholder instead of the raw injected text (which never
+/// leaves the server).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InjectedNote {
+    /// Initial persistent-memory snapshot at conversation start.
+    Memory,
+    /// The compaction summarise trigger (COMPACT_PROMPT).
+    Compaction,
+    /// The post-compaction "continue" bridge (carries memory + plan + resume).
+    Guidance,
+}
+
+/// Classify a synthetic user turn so the UI can render a placeholder. Returns
+/// `None` for real (timestamp-stamped / multimodal) turns, which render
+/// normally. Order matters: the summarise trigger is matched verbatim, the
+/// continue bridge by its marker, and any other non-timestamped turn is treated
+/// as persistent-memory background.
+pub fn classify_injected_note(content: &str) -> Option<InjectedNote> {
+    if !is_synthetic_user_turn(content) {
+        return None;
+    }
+    if content.starts_with("Your task is to create a detailed summary") {
+        return Some(InjectedNote::Compaction);
+    }
+    if content.contains("上下文已压缩完毕") {
+        return Some(InjectedNote::Guidance);
+    }
+    Some(InjectedNote::Memory)
+}
+
 // ── Row type ──────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -856,5 +888,49 @@ async fn resolve_sandbox_images(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{InjectedNote, classify_injected_note, is_synthetic_user_turn};
+
+    #[test]
+    fn real_user_turns_are_not_synthetic() {
+        // Timestamp-stamped (what the send handler produces) and multimodal
+        // blobs are real user turns → not classified as notes.
+        assert!(!is_synthetic_user_turn("[2026-06-03 12:00 UTC] hello there"));
+        assert!(!is_synthetic_user_turn("__multimodal__:abc123"));
+        assert_eq!(classify_injected_note("[2026-06-03 12:00 UTC] hi"), None);
+        assert_eq!(classify_injected_note("__multimodal__:abc"), None);
+    }
+
+    #[test]
+    fn classifies_each_injected_turn() {
+        // Compaction summarise trigger (verbatim COMPACT_PROMPT prefix).
+        assert_eq!(
+            classify_injected_note(
+                "Your task is to create a detailed summary of the conversation so far, ..."
+            ),
+            Some(InjectedNote::Compaction)
+        );
+        // Continue bridge — bare, and with the memory+plan reminder prefixed.
+        assert_eq!(
+            classify_injected_note(
+                "上下文已压缩完毕（上一条助手消息即摘要）。现在直接继续回答用户最近的请求。"
+            ),
+            Some(InjectedNote::Guidance)
+        );
+        assert_eq!(
+            classify_injected_note(
+                "---\n（以下为持久背景…）\n\n## 记忆\n…\n\n上下文已压缩完毕（上一条助手消息即摘要）。"
+            ),
+            Some(InjectedNote::Guidance)
+        );
+        // Initial memory snapshot.
+        assert_eq!(
+            classify_injected_note("（以下为持久背景记忆，自然地当作已知信息使用，不要提及此机制）\n\n- 用户喜欢简洁"),
+            Some(InjectedNote::Memory)
+        );
     }
 }

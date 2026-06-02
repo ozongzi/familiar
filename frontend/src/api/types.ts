@@ -207,7 +207,13 @@ export interface Message {
   /// Ids of messages sharing this one's parent (including self), in id
   /// order. When length > 1, this message has alternative branches.
   siblings: number[];
+  /// Set by the server for system-injected user turns. When present, `content`
+  /// is withheld and the UI renders a labelled placeholder instead.
+  note?: NoteKind | null;
 }
+
+/// Kind of a system-injected user turn (see backend `InjectedNote`).
+export type NoteKind = "memory" | "compaction" | "guidance";
 
 // ─── WebSocket events ─────────────────────────────────────────────────────
 
@@ -301,7 +307,19 @@ export interface UploadBubble {
   conversationId?: string;
 }
 
-export type ChatBubble = TextBubble | ToolBubble | UploadBubble;
+/// Placeholder for a system-injected user turn — renders as a small labelled
+/// chip (memory / compaction / guidance). The raw injected text is never sent
+/// to the client, so there is no content to show or expand.
+export interface NoteBubble {
+  kind: "note";
+  key: string;
+  role: "system";
+  note: NoteKind;
+  msgId?: number;
+  siblings?: number[];
+}
+
+export type ChatBubble = TextBubble | ToolBubble | UploadBubble | NoteBubble;
 
 /** 渲染用：连续工具调用合并成一个组 */
 export type BubbleGroup =

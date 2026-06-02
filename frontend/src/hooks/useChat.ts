@@ -435,6 +435,21 @@ export function useChat(
         if (m.role === "system" || m.role === "tool") continue;
         if (consumedMsgIds.has(m.id)) continue;
 
+        // System-injected user turn (memory snapshot / compaction trigger /
+        // continue bridge): the server withholds its content and tags it with a
+        // note kind. Render a small labelled chip instead of the raw text.
+        if (m.note) {
+          history.push({
+            kind: "note",
+            key: uid(),
+            role: "system",
+            note: m.note,
+            msgId: m.id,
+            siblings: m.siblings,
+          });
+          continue;
+        }
+
         if (m.role === "assistant" && m.tool_calls) {
           type RawToolCall = {
             id: string;

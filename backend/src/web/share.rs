@@ -170,6 +170,8 @@ pub async fn get_shared_conversation(
             reasoning: r.reasoning,
             parent_id: r.parent_id,
             siblings,
+            // Synthetic turns are filtered out above, so nothing here is a note.
+            note: None,
         })
         .collect();
 

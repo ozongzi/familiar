@@ -116,6 +116,12 @@ export function messagesToBubbles(msgs: Message[]): ChatBubble[] {
     if (m.role === "system" || m.role === "tool") continue;
     if (consumedMsgIds.has(m.id)) continue;
 
+    // System-injected user turn → labelled chip (content withheld by server).
+    if (m.note) {
+      out.push({ kind: "note", key: uid(), role: "system", note: m.note, msgId: m.id });
+      continue;
+    }
+
     if (m.role === "assistant" && m.tool_calls) {
       type RawToolCall = { id: string; name: string; arguments: string };
       let calls: RawToolCall[] = [];

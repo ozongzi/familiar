@@ -1324,3 +1324,25 @@
         justify-content: center;
     }
 }
+
+/* System-injected note chip (memory / compaction / guidance) */
+.noteChip {
+    display: flex;
+    width: fit-content;
+    align-items: center;
+    gap: 6px;
+    margin: 8px auto;
+    padding: 4px 12px;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-full);
+    background: var(--bg-surface);
+    color: var(--text-muted);
+    font-size: 12px;
+    line-height: 1;
+    user-select: none;
+}
+
+.noteChip svg {
+    flex-shrink: 0;
+    opacity: 0.8;
+}

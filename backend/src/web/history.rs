@@ -26,6 +26,12 @@ pub struct MessageResponse {
     /// in id order. When `siblings.len() > 1`, the UI renders branch
     /// switcher arrows on this message.
     pub siblings: Vec<i64>,
+    /// Set when this is a system-injected user turn (memory snapshot,
+    /// compaction trigger, continue bridge). The client renders a small
+    /// labelled placeholder; `content` is withheld so the raw injected text
+    /// never reaches the client.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<crate::db::InjectedNote>,
 }
 
 #[derive(Deserialize)]
@@ -112,18 +118,28 @@ pub async fn list_messages(
 
     Ok(Json(
         rows.into_iter()
-            .map(|(r, siblings)| MessageResponse {
-                id: r.id,
-                role: r.role,
-                name: r.name,
-                content: r.content,
-                tool_calls: r.spell_casts,
-                tool_call_id: r.spell_cast_id,
-                created_at: r.created_at,
-                streaming: r.streaming,
-                reasoning: r.reasoning,
-                parent_id: r.parent_id,
-                siblings,
+            .map(|(r, siblings)| {
+                // System-injected user turns become labelled placeholders; we
+                // withhold their content so the raw injected text (memory,
+                // summarise prompt, bridge) never reaches the client.
+                let note = r
+                    .content
+                    .as_deref()
+                    .and_then(crate::db::classify_injected_note);
+                MessageResponse {
+                    id: r.id,
+                    role: r.role,
+                    name: r.name,
+                    content: if note.is_some() { None } else { r.content },
+                    tool_calls: r.spell_casts,
+                    tool_call_id: r.spell_cast_id,
+                    created_at: r.created_at,
+                    streaming: r.streaming,
+                    reasoning: r.reasoning,
+                    parent_id: r.parent_id,
+                    siblings,
+                    note,
+                }
             })
             .collect(),
     ))
