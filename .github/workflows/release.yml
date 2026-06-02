@@ -2,15 +2,50 @@ name: Release
 
 on:
   push:
-    tags: ["v*"]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: write
 
+# Serialize releases so two main pushes can't race on deleting/recreating
+# the same draft release.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
+  # ─── Create/refresh the draft release for this version ──────────────────
+  # The release tag is derived from the Cargo.toml version instead of a pushed
+  # git tag. Bump that version before pushing to main to actually ship an
+  # update to clients (the updater compares versions — same version = no-op).
+  prepare:
+    runs-on: ubuntu-22.04
+    outputs:
+      tag: ${{ steps.rel.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compute version and (re)create draft release
+        id: rel
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -e
+          VER=$(grep -m1 '^version = ' frontend/src-tauri/Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')
+          TAG="v$VER"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Release tag: $TAG"
+          # If this version was already released, delete it (and its tag) so we
+          # rebuild cleanly and move the tag onto the current commit. Bumping to
+          # a new version leaves older releases untouched.
+          gh release delete "$TAG" --repo "$REPO" --cleanup-tag --yes || true
+          gh release create "$TAG" --repo "$REPO" --target "$GITHUB_SHA" \
+            --draft --title "$TAG" --notes "Automated build from ${GITHUB_SHA::7}"
+
   # ─── Desktop bundles ────────────────────────────────────────────────────
   desktop:
+    needs: prepare
     strategy:
       fail-fast: false
       matrix:
@@ -31,24 +66,6 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-
-      # Drive version from the tag (v0.1.5 → 0.1.5) so source files don't
-      # need version bumps. Skipped on workflow_dispatch from a branch.
-      - name: Sync version from tag
-        if: startsWith(github.ref, 'refs/tags/v')
-        shell: bash
-        run: |
-          VER="${GITHUB_REF_NAME#v}"
-          echo "Setting Cargo version to $VER"
-          # Match the FIRST `version = "..."` line under [package] only.
-          awk -v ver="$VER" '
-            /^\[package\]/ {in_pkg=1}
-            /^\[/ && !/^\[package\]/ {in_pkg=0}
-            in_pkg && /^version = / {print "version = \"" ver "\""; next}
-            {print}
-          ' frontend/src-tauri/Cargo.toml > frontend/src-tauri/Cargo.toml.tmp
-          mv frontend/src-tauri/Cargo.toml.tmp frontend/src-tauri/Cargo.toml
-          grep '^version = ' frontend/src-tauri/Cargo.toml
 
       - uses: oven-sh/setup-bun@v2
 
@@ -121,32 +138,18 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: frontend
-          tagName: ${{ github.ref_name }}
-          releaseName: ${{ github.ref_name }}
+          tagName: ${{ needs.prepare.outputs.tag }}
+          releaseName: ${{ needs.prepare.outputs.tag }}
           releaseDraft: true
           prerelease: false
           args: --target ${{ matrix.target }}
 
   # ─── Android APK ────────────────────────────────────────────────────────
   android:
-    needs: desktop
+    needs: [prepare, desktop]
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
-
-      - name: Sync version from tag
-        if: startsWith(github.ref, 'refs/tags/v')
-        shell: bash
-        run: |
-          VER="${GITHUB_REF_NAME#v}"
-          awk -v ver="$VER" '
-            /^\[package\]/ {in_pkg=1}
-            /^\[/ && !/^\[package\]/ {in_pkg=0}
-            in_pkg && /^version = / {print "version = \"" ver "\""; next}
-            {print}
-          ' frontend/src-tauri/Cargo.toml > frontend/src-tauri/Cargo.toml.tmp
-          mv frontend/src-tauri/Cargo.toml.tmp frontend/src-tauri/Cargo.toml
-          grep '^version = ' frontend/src-tauri/Cargo.toml
 
       - uses: oven-sh/setup-bun@v2
 
@@ -220,7 +223,7 @@ jobs:
       - name: Sign APKs + patch latest.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ needs.prepare.outputs.tag }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           REPO: ${{ github.repository }}
@@ -266,6 +269,6 @@ jobs:
       - name: Publish release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ needs.prepare.outputs.tag }}
           REPO: ${{ github.repository }}
         run: gh release edit "$TAG" --repo "$REPO" --draft=false
