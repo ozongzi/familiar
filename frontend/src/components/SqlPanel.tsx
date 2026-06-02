@@ -3,6 +3,7 @@ import JsonView from "@uiw/react-json-view";
 import { useAuth } from "../store/auth.shared";
 import { CodeEditor } from "./CodeEditor";
 import styles from "./SqlPanel.module.css";
+import { getServerBase } from "../utils/tauri";
 
 interface SqlResult {
   columns: string[];
@@ -23,7 +24,7 @@ export function SqlPanel() {
     setError(null);
     setResult(null);
     try {
-      const res = await fetch("/api/admin/sql", {
+      const res = await fetch(`${getServerBase()}/api/admin/sql`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

@@ -3,8 +3,9 @@ import type {
   UpdateProfileRequest,
   UpdatePasswordRequest,
 } from "./types";
+import { getServerBase } from "../utils/tauri";
 
-const BASE = "";
+const BASE = () => getServerBase();
 
 async function request<T>(
   method: string,
@@ -19,7 +20,7 @@ async function request<T>(
     headers["Authorization"] = `Bearer ${token}`;
   }
 
-  const res = await fetch(`${BASE}${path}`, {
+  const res = await fetch(`${BASE()}${path}`, {
     method,
     headers,
     body: body !== undefined ? JSON.stringify(body) : undefined,
@@ -59,7 +60,7 @@ async function upload<T>(
     headers["Authorization"] = `Bearer ${token}`;
   }
 
-  const res = await fetch(`${BASE}${path}`, {
+  const res = await fetch(`${BASE()}${path}`, {
     method: "POST",
     headers,
     body: formData,
@@ -113,5 +114,5 @@ export function uploadAvatar(
 }
 
 export function getAvatarUrl(userId: string): string {
-  return `${BASE}/api/avatars/${userId}`;
+  return `${BASE()}/api/avatars/${userId}`;
 }
