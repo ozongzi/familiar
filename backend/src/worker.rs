@@ -349,7 +349,7 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
     // Anchor-first: returns [nearest-anchor summary + raw tail] when the
     // active path carries a summary, else the raw path. Only a DB restore
     // failure errors here (propagated to the top-level error event);
-    // oversized raw history is capped by truncate_to_token_budget below.
+    // oversized raw history is rejected with an error in the loop below.
     let t_restore = std::time::Instant::now();
     let messages = crate::compact::load_for_generation(
         &ctx.db,
@@ -465,7 +465,7 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
 /// boundary + reminder, then reload the compacted window and append the
 /// "continue" bridge so the caller's `generation_loop` resumes the request.
 #[allow(clippy::too_many_arguments)]
-async fn run_compaction_phase(
+pub(crate) async fn run_compaction_phase(
     ctx: &WorkerContext,
     http: &reqwest::Client,
     request: &Request,
@@ -545,15 +545,19 @@ async fn generation_loop(
             return Ok(());
         }
 
-        // ── Truncate history to token budget ──────────────────────────────
+        // ── Enforce history token budget (no truncation) ──────────────────
         // Safety ceiling above the compact trigger. In-band compaction (run
         // before this loop in run_worker_inner) normally keeps context under
-        // the trigger; this still caps runaway turns where it didn't fire.
+        // the trigger. If it didn't, we refuse the turn with a visible error
+        // rather than silently dropping messages — losing context mid-turn is
+        // worse than an actionable failure the caller can surface.
         let history_budget = (compact_model.compact_trigger_tokens * 5 / 4) as usize;
-        let before = messages.len();
-        agentix::truncate_to_token_budget(&mut messages, history_budget);
-        if messages.len() < before {
-            info!(conversation = %ctx.conversation_id, dropped = before - messages.len(), kept = messages.len(), "history truncated");
+        let est_tokens: usize = messages.iter().map(|m| m.estimate_tokens()).sum();
+        if est_tokens > history_budget {
+            return Err(anyhow::anyhow!(
+                "history exceeds token budget ({est_tokens} > {history_budget} tokens); \
+                 in-band compaction did not reduce context enough"
+            ));
         }
 
         // ── Open streaming message row in DB ──────────────────────────────

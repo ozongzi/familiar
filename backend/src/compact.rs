@@ -295,7 +295,7 @@ mod tests {
     use crate::db::Db;
     use crate::sandbox::SandboxManager;
     use crate::worker::WorkerContext;
-    use agentix::{Message, UserContent};
+    use agentix::{Message, ToolBundle, UserContent};
     use sqlx::{Executor, PgPool, postgres::PgPoolOptions};
     use std::collections::HashMap;
     use std::path::PathBuf;
@@ -660,6 +660,169 @@ mod tests {
         assert_eq!(
             active_context, 100,
             "latest context snapshot should come from the active branch"
+        );
+
+        test_db.cleanup().await;
+    }
+
+    /// Flatten a message's text parts for substring assertions.
+    fn render_text(m: &Message) -> String {
+        match m {
+            Message::User(parts) => parts
+                .iter()
+                .filter_map(|p| match p {
+                    UserContent::Text { text } => Some(text.clone()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join(" "),
+            Message::Assistant { content, .. } => content.clone().unwrap_or_default(),
+            _ => String::new(),
+        }
+    }
+
+    /// End-to-end exercise of the real in-band compaction orchestration
+    /// (`worker::run_compaction_phase`) against a live Postgres + a mock LLM:
+    /// inject the summarise trigger → run the summary pass → record the
+    /// boundary → reload the boundary-suffix window → append the continue
+    /// bridge. Asserts the old prefix is dropped, the summary survives, and the
+    /// buffer ends on the continue message.
+    #[tokio::test]
+    #[ignore = "requires DATABASE_URL_TEST pointing at a Postgres server that can CREATE DATABASE"]
+    async fn compaction_phase_end_to_end_drops_prefix_and_keeps_summary() {
+        let test_db = fresh_db().await;
+        let pool = test_db.pool.clone();
+        let sandbox = Arc::new(SandboxManager::new(PathBuf::from(
+            "/tmp/familiar-compact-e2e",
+        )));
+        let db = Db::new(pool.clone(), Arc::clone(&sandbox));
+        let (user_id, conv_id, job_id) = seed(&pool).await;
+        let (mock_base, mock_hits) = start_anthropic_mock().await;
+
+        // Tiny message bodies (low estimate_tokens, so the generation_loop
+        // budget check passes), but the latest assistant carries a large
+        // provider-reported context snapshot — forcing compaction. This is the
+        // real decoupling: trigger watches context_tokens, not message bytes.
+        let m_root = db
+            .append(conv_id, user_id, &user_msg("oldest question about topic A"), None)
+            .await
+            .expect("root");
+        let _a1 = db
+            .append(conv_id, user_id, &assistant_msg("old answer A"), None)
+            .await
+            .expect("a1");
+        let _u2 = db
+            .append(conv_id, user_id, &user_msg("follow-up about topic B"), None)
+            .await
+            .expect("u2");
+        let _a2 = db
+            .append(conv_id, user_id, &assistant_msg("recent answer B"), None)
+            .await
+            .expect("a2");
+        let _u3 = db
+            .append(conv_id, user_id, &user_msg("latest tail question"), None)
+            .await
+            .expect("u3");
+        let a_leaf = db
+            .append(conv_id, user_id, &assistant_msg("latest tail answer"), None)
+            .await
+            .expect("leaf");
+        sqlx::query("UPDATE messages SET context_tokens = 5000 WHERE id = $1")
+            .bind(a_leaf)
+            .execute(&pool)
+            .await
+            .expect("stamp context");
+
+        let model = ModelConfig {
+            api_key: "test-key".to_string(),
+            api_base: mock_base,
+            name: "claude-test".to_string(),
+            provider: Provider::Anthropic,
+            extra_body: HashMap::new(),
+            max_tokens: None,
+            kind: "api".to_string(),
+            compact_trigger_tokens: 1_000, // 5000 context >> 1000 → triggers
+            compact_tail_tokens: 5,        // tiny → keep only the final user turn, drop the rest
+            reasoning_effort: None,
+        };
+
+        assert!(
+            should_compact(&pool, conv_id, &model).await,
+            "context above trigger must request compaction"
+        );
+
+        let ctx = WorkerContext {
+            job_id,
+            conversation_id: conv_id,
+            user_id,
+            pool: pool.clone(),
+            db,
+            sandbox,
+            tunnel_registry: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+        };
+
+        let http = reqwest::Client::new();
+        let request = model.to_request().system_prompt("test system prompt");
+        let bundle = ToolBundle::new();
+        let mut messages = load_for_generation(&ctx.db, conv_id, user_id)
+            .await
+            .expect("load pre-compaction window");
+        let pre_len = messages.len();
+
+        crate::worker::run_compaction_phase(
+            &ctx, &http, &request, &bundle, &model, None, &mut messages,
+        )
+        .await
+        .expect("run_compaction_phase");
+
+        // Exactly one LLM call: the summary pass.
+        assert_eq!(
+            mock_hits.load(Ordering::SeqCst),
+            1,
+            "summary pass should make exactly one LLM call"
+        );
+
+        // Boundary recorded and folds in the oldest messages.
+        let boundary: Option<i64> = sqlx::query_scalar(
+            "SELECT compact_drop_through_msg_id FROM conversations WHERE id = $1",
+        )
+        .bind(conv_id)
+        .fetch_one(&pool)
+        .await
+        .expect("read boundary");
+        let boundary = boundary.expect("boundary must be set after compaction");
+        assert!(
+            boundary >= m_root,
+            "boundary should fold in the oldest messages"
+        );
+
+        // Reload the compacted window: boundary-suffix → old prefix gone,
+        // summary kept, fewer messages than the raw history.
+        let window = load_for_generation(&ctx.db, conv_id, user_id)
+            .await
+            .expect("reload compacted window");
+        let joined = window.iter().map(render_text).collect::<Vec<_>>().join("\n");
+
+        assert!(
+            joined.contains("mock summary"),
+            "summary assistant message must be in the compacted window, got:\n{joined}"
+        );
+        assert!(
+            !joined.contains("oldest question about topic A"),
+            "dropped prefix must NOT reappear in the window, got:\n{joined}"
+        );
+        assert!(
+            window.len() < pre_len,
+            "compacted window ({}) should be shorter than the raw history ({pre_len})",
+            window.len()
+        );
+
+        // The in-place buffer ends on the continue bridge so the caller's
+        // generation_loop resumes the user's request.
+        let last = render_text(messages.last().expect("messages not empty"));
+        assert!(
+            last.contains("上下文已压缩") || last.contains("继续"),
+            "last message must be the continue bridge, got: {last}"
         );
 
         test_db.cleanup().await;
