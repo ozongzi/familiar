@@ -201,6 +201,13 @@ pub fn run() {
     // app; only process/sidecar spawning (the tunnel) stays desktop-only.
     let builder = builder.plugin(tauri_plugin_shell::init());
 
+    // Opener plugin: opens URLs in the system browser on ALL platforms,
+    // including Android (native ACTION_VIEW intent). shell.open is desktop-only
+    // — it shells out to xdg-open/start/open, which don't exist on Android — so
+    // the GitHub OAuth flow must go through opener to launch an external
+    // browser that can dispatch the `familiar://` callback back to the app.
+    let builder = builder.plugin(tauri_plugin_opener::init());
+
     let builder = builder
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init());

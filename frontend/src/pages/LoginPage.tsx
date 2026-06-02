@@ -78,8 +78,17 @@ export function LoginPage({ serverUrl = "", onLogin }: LoginPageProps) {
     // redirects to `familiar://auth/callback`, which only gets routed back to
     // the app when an external browser dispatches the custom-scheme intent — a
     // WebView would just fail with ERR_UNKNOWN_URL_SCHEME.
-    const { open } = await import("@tauri-apps/plugin-shell");
-    await open(url);
+    //
+    // Use the opener plugin, not shell.open: shell.open delegates to the `open`
+    // crate (xdg-open/start/open) which has no Android binary and fails
+    // silently there. opener has a native Android impl (ACTION_VIEW intent).
+    try {
+      const { openUrl } = await import("@tauri-apps/plugin-opener");
+      await openUrl(url);
+    } catch (err) {
+      console.error("[github-login] failed to open browser", err);
+      setError("无法打开浏览器，请重试");
+    }
   };
 
   const handlePasswordLogin = async (e: React.FormEvent) => {
