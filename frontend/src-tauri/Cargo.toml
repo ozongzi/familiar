@@ -31,7 +31,7 @@ base64 = "0.22"
 futures = "0.3"
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
 url = "2"
-agentix = { version = "0.20.0", features = ["mcp-server"] }
+agentix = { version = "0.26", features = ["mcp-server"] }
 rmcp = { version = "1.1", features = ["server", "transport-async-rw"] }
 
 # Updater + process: desktop + Android. Android prompts for "install from
