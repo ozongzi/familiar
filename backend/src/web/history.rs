@@ -121,10 +121,14 @@ pub async fn list_messages(
             .map(|(r, siblings)| {
                 // System-injected user turns become labelled placeholders; we
                 // withhold their content so the raw injected text (memory,
-                // summarise prompt, bridge) never reaches the client.
-                let note = r
-                    .content
-                    .as_deref()
+                // summarise prompt, bridge) never reaches the client. This only
+                // applies to user turns: the classifier keys off the absence of
+                // a timestamp prefix, which every assistant message also lacks,
+                // so without the role gate all agent messages would be
+                // misclassified as memory placeholders.
+                let note = (r.role == "user")
+                    .then(|| r.content.as_deref())
+                    .flatten()
                     .and_then(crate::db::classify_injected_note);
                 MessageResponse {
                     id: r.id,
