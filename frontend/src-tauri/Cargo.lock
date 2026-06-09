@@ -10,9 +10,9 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
 name = "agentix"
-version = "0.26.1"
+version = "0.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f22a742ea651ac9ff786e45da7e24e3dcdf4bb533a7ad5df38c2564734fbb237"
+checksum = "cf4bb2ef2c6a8219bddf8c97e6a027234288133e1c1335c6273ca9d557e6c147"
 dependencies = [
  "agentix-macros",
  "async-stream",
