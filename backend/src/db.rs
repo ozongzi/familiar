@@ -38,6 +38,19 @@ pub fn is_synthetic_user_turn(content: &str) -> bool {
     if content.starts_with("__multimodal__:") {
         return false;
     }
+    // A file-upload turn is a real user action: its content is the JSON marker
+    // `{"__type":"file_upload",...}` (non-image uploads are stored as this bare
+    // JSON, not behind the `__multimodal__:` prefix). It carries neither a
+    // timestamp nor the multimodal prefix, so without this it would be
+    // misclassified as a synthetic memory placeholder and its content withheld
+    // from the client — dropping the upload from the rendered history.
+    if content.starts_with('{') {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(content) {
+            if v.get("__type").and_then(|t| t.as_str()) == Some("file_upload") {
+                return false;
+            }
+        }
+    }
     // Timestamp prefix: "[" then a date segment ending in "UTC" before "]".
     let stamped = content.starts_with('[')
         && content
@@ -903,6 +916,14 @@ mod tests {
         assert!(!is_synthetic_user_turn("__multimodal__:abc123"));
         assert_eq!(classify_injected_note("[2026-06-03 12:00 UTC] hi"), None);
         assert_eq!(classify_injected_note("__multimodal__:abc"), None);
+        // File-upload turns are real user actions (bare JSON marker, no
+        // timestamp / multimodal prefix) — must not be withheld as a note.
+        let upload = r#"{"__type":"file_upload","filename":"a.pdf","path":"/x/a.pdf","size":12,"mime":"application/pdf"}"#;
+        assert!(!is_synthetic_user_turn(upload));
+        assert_eq!(classify_injected_note(upload), None);
+        // A non-file_upload turn that merely happens to start with '{' is still
+        // treated as synthetic (the check is keyed on `__type`, not on JSON-ness).
+        assert!(is_synthetic_user_turn(r#"{"foo":1}"#));
     }
 
     #[test]
