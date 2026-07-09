@@ -128,10 +128,14 @@ pub struct MessageContext {
 
 impl MessageContext {
     /// Build from an `agentix::UsageStats`. Returns `None` when the provider
-    /// did not report any input-context size for this turn.
-    pub fn from_usage(u: &agentix::types::UsageStats) -> Option<Self> {
-        let total =
-            u.prompt_tokens as i64 + u.cache_read_tokens as i64 + u.cache_creation_tokens as i64;
+    /// did not report any input-context size for this turn. The model config
+    /// supplies the wire semantics (whether cache tokens are already included
+    /// in `prompt_tokens` — see `ModelConfig::context_tokens_from_usage`).
+    pub fn from_usage(
+        u: &agentix::types::UsageStats,
+        model: &crate::config::ModelConfig,
+    ) -> Option<Self> {
+        let total = model.context_tokens_from_usage(u);
         if total == 0 {
             return None;
         }
@@ -912,7 +916,9 @@ mod tests {
     fn real_user_turns_are_not_synthetic() {
         // Timestamp-stamped (what the send handler produces) and multimodal
         // blobs are real user turns → not classified as notes.
-        assert!(!is_synthetic_user_turn("[2026-06-03 12:00 UTC] hello there"));
+        assert!(!is_synthetic_user_turn(
+            "[2026-06-03 12:00 UTC] hello there"
+        ));
         assert!(!is_synthetic_user_turn("__multimodal__:abc123"));
         assert_eq!(classify_injected_note("[2026-06-03 12:00 UTC] hi"), None);
         assert_eq!(classify_injected_note("__multimodal__:abc"), None);
@@ -950,7 +956,9 @@ mod tests {
         );
         // Initial memory snapshot.
         assert_eq!(
-            classify_injected_note("（以下为持久背景记忆，自然地当作已知信息使用，不要提及此机制）\n\n- 用户喜欢简洁"),
+            classify_injected_note(
+                "（以下为持久背景记忆，自然地当作已知信息使用，不要提及此机制）\n\n- 用户喜欢简洁"
+            ),
             Some(InjectedNote::Memory)
         );
     }

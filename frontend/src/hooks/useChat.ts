@@ -1,9 +1,11 @@
 import { useCallback, useRef, useState, useEffect } from "react";
 import type {
   ChatBubble,
+  NoteBubble,
   TextBubble,
   ToolBubble,
   UploadBubble,
+  NoteKind,
   WsServerEvent,
   Message,
 } from "../api/types";
@@ -275,6 +277,39 @@ export function useChat(
       ),
     );
     activeTextKeyRef.current = null;
+  }
+
+  // Mirror, during live streaming, what setHistory renders for a compaction:
+  // seal the bubble being streamed and drop a labelled note chip, so the next
+  // token event opens a fresh bubble instead of appending to the previous one.
+  // Skipped when the chip is already present past the last user turn — SSE
+  // replays structural events on reconnect, and the chip may already be there
+  // (added live earlier, or loaded from history on refresh); in that case the
+  // active bubble must keep streaming, so we don't seal either.
+  function appendNoteChip(note: NoteKind) {
+    setBubbles((prev) => {
+      for (let i = prev.length - 1; i >= 0; i--) {
+        const b = prev[i];
+        if (b.role === "user") break;
+        if (b.kind === "note" && b.note === note) return prev;
+      }
+      const activeKey = activeTextKeyRef.current;
+      activeTextKeyRef.current = null;
+      const chip: NoteBubble = {
+        kind: "note",
+        key: uid(),
+        role: "system",
+        note,
+      };
+      const sealed = activeKey
+        ? prev.map((b) =>
+            b.key === activeKey && b.kind === "text"
+              ? { ...b, streaming: false }
+              : b,
+          )
+        : prev;
+      return [...sealed, chip];
+    });
   }
 
   function ensureActiveText(): string {
@@ -952,8 +987,17 @@ export function useChat(
         });
 
       } else if (event.type === "compact_started") {
+        // The backend injects the summarise trigger as a hidden user turn and
+        // streams the summary through the same token channel. Emit the
+        // "压缩对话" chip (as the history view does) so the summary starts its
+        // own bubble instead of being glued onto the previous reply.
+        appendNoteChip("compaction");
         setCompacting(true);
       } else if (event.type === "compact") {
+        // Summary done; the backend appends the hidden continue bridge and the
+        // actual reply streams next. Emit the "指引" chip and seal the summary
+        // bubble so the reply starts fresh.
+        appendNoteChip("guidance");
         setCompacting(false);
       } else if (event.type === "compact_failed") {
         setCompacting(false);

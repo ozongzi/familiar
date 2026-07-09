@@ -72,14 +72,19 @@ fn default_model_kind() -> String {
 }
 
 impl ModelConfig {
-    /// Build an [`agentix::Request`] pre-filled with provider, key, base URL, and model.
-    pub fn to_request(&self) -> agentix::Request {
-        let provider = if self.kind == "claude-code" {
+    /// The provider requests are actually dispatched to (`kind = "claude-code"`
+    /// remaps to the subprocess-backed provider).
+    pub fn effective_provider(&self) -> Provider {
+        if self.kind == "claude-code" {
             Provider::ClaudeCode
         } else {
             self.provider
-        };
-        let mut req = agentix::Request::new(provider, &self.api_key)
+        }
+    }
+
+    /// Build an [`agentix::Request`] pre-filled with provider, key, base URL, and model.
+    pub fn to_request(&self) -> agentix::Request {
+        let mut req = agentix::Request::new(self.effective_provider(), &self.api_key)
             .base_url(&self.api_base)
             .model(&self.name);
         if let Some(mt) = self.max_tokens {
@@ -89,6 +94,27 @@ impl ModelConfig {
             req = req.reasoning_effort(effort);
         }
         req
+    }
+
+    /// Provider-reported input-context size for a single model turn, in the
+    /// unit `compact_trigger_tokens` is compared against.
+    ///
+    /// Wire semantics differ per provider family. The Anthropic Messages wire
+    /// (Anthropic, MiniMax, MiMo, Claude Code) reports `input_tokens`
+    /// *exclusive* of cache reads/writes, so the true context is the sum of
+    /// all three. OpenAI-style wires (DeepSeek, OpenAI, Kimi, GLM, Grok,
+    /// OpenRouter, Gemini) report `prompt_tokens` already *inclusive* of any
+    /// cached prefix — there `cache_read_tokens` is an informational subset,
+    /// and adding it double-counts the cached portion (up to 2× on a warm
+    /// cache), which used to spuriously trigger compaction and keep the
+    /// context gauge above 100% even right after a compaction.
+    pub fn context_tokens_from_usage(&self, u: &agentix::types::UsageStats) -> i64 {
+        match self.effective_provider() {
+            Provider::Anthropic | Provider::Minimax | Provider::Mimo | Provider::ClaudeCode => {
+                u.prompt_tokens as i64 + u.cache_read_tokens as i64 + u.cache_creation_tokens as i64
+            }
+            _ => u.prompt_tokens as i64,
+        }
     }
 }
 
@@ -410,5 +436,88 @@ impl Config {
         // cheap_model and embedding are stored in the models table (role='cheap'/'embedding').
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn model(provider: Provider) -> ModelConfig {
+        ModelConfig {
+            api_key: String::new(),
+            api_base: String::new(),
+            name: "test".to_string(),
+            provider,
+            extra_body: HashMap::new(),
+            max_tokens: None,
+            kind: "api".to_string(),
+            compact_trigger_tokens: default_compact_trigger(),
+            compact_tail_tokens: default_compact_tail(),
+            reasoning_effort: None,
+        }
+    }
+
+    fn usage(
+        prompt: usize,
+        cache_read: usize,
+        cache_creation: usize,
+    ) -> agentix::types::UsageStats {
+        agentix::types::UsageStats {
+            prompt_tokens: prompt,
+            completion_tokens: 0,
+            total_tokens: 0,
+            cache_read_tokens: cache_read,
+            cache_creation_tokens: cache_creation,
+            reasoning_tokens: 0,
+        }
+    }
+
+    #[test]
+    fn openai_style_wire_does_not_double_count_cached_prompt() {
+        // OpenAI-style usage reports prompt_tokens inclusive of the cached
+        // prefix; cache_read is a subset. Adding it would report ~2× on a
+        // warm cache and spuriously trigger compaction.
+        for p in [
+            Provider::DeepSeek,
+            Provider::OpenAI,
+            Provider::Kimi,
+            Provider::Glm,
+            Provider::Grok,
+            Provider::OpenRouter,
+            Provider::Gemini,
+        ] {
+            let m = model(p);
+            assert_eq!(
+                m.context_tokens_from_usage(&usage(50_000, 45_000, 0)),
+                50_000,
+                "{p:?} must not double-count cached tokens"
+            );
+        }
+    }
+
+    #[test]
+    fn anthropic_wire_sums_exclusive_cache_fields() {
+        // The Anthropic Messages wire reports input_tokens exclusive of cache
+        // reads/writes; the true context is the sum of all three.
+        for p in [Provider::Anthropic, Provider::Minimax, Provider::Mimo] {
+            let m = model(p);
+            assert_eq!(
+                m.context_tokens_from_usage(&usage(500, 45_000, 4_500)),
+                50_000,
+                "{p:?} must sum exclusive cache fields"
+            );
+        }
+    }
+
+    #[test]
+    fn claude_code_kind_uses_anthropic_wire_semantics() {
+        let mut m = model(Provider::Anthropic);
+        m.kind = "claude-code".to_string();
+        assert_eq!(m.effective_provider(), Provider::ClaudeCode);
+        assert_eq!(
+            m.context_tokens_from_usage(&usage(500, 45_000, 4_500)),
+            50_000
+        );
     }
 }

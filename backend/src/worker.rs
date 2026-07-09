@@ -351,16 +351,12 @@ async fn run_worker_inner(ctx: &WorkerContext) -> anyhow::Result<()> {
     // failure errors here (propagated to the top-level error event);
     // oversized raw history is rejected with an error in the loop below.
     let t_restore = std::time::Instant::now();
-    let messages = crate::compact::load_for_generation(
-        &ctx.db,
-        ctx.conversation_id,
-        ctx.user_id,
-    )
-    .await
-    .map_err(|e| {
-        error!(conversation = %ctx.conversation_id, "failed to restore history: {e:#}");
-        e
-    })?;
+    let messages = crate::compact::load_for_generation(&ctx.db, ctx.conversation_id, ctx.user_id)
+        .await
+        .map_err(|e| {
+            error!(conversation = %ctx.conversation_id, "failed to restore history: {e:#}");
+            e
+        })?;
     let mut messages = sanitize_history(messages);
     info!(conversation = %ctx.conversation_id, messages = messages.len(), ms = t_restore.elapsed().as_millis(), "⏱ restore history");
 
@@ -619,7 +615,7 @@ async fn generation_loop(
                             Some(&reasoning_buf)
                         },
                         None,
-                        crate::db::MessageContext::from_usage(&usage),
+                        crate::db::MessageContext::from_usage(&usage, &compact_model),
                         provider_state.as_ref(),
                     )
                     .await;
@@ -706,6 +702,7 @@ async fn generation_loop(
                         ctx,
                         streaming_msg_id,
                         model_id,
+                        &compact_model,
                         &u,
                         ttft_ms,
                         Some(total_ms),
@@ -738,9 +735,7 @@ async fn generation_loop(
 
         // ── Emit usage summary ────────────────────────────────────────────
         if usage.total_tokens > 0 {
-            let context_tokens = usage.prompt_tokens as i64
-                + usage.cache_read_tokens as i64
-                + usage.cache_creation_tokens as i64;
+            let context_tokens = compact_model.context_tokens_from_usage(&usage);
             emit(
                 ctx,
                 json!({
@@ -785,7 +780,7 @@ async fn generation_loop(
                     Some(&reasoning_buf)
                 },
                 tc_json.as_deref(),
-                crate::db::MessageContext::from_usage(&usage),
+                crate::db::MessageContext::from_usage(&usage, &compact_model),
                 provider_state.as_ref(),
             )
             .await;
@@ -973,15 +968,14 @@ async fn persist_usage_event(
     ctx: &WorkerContext,
     message_id: i64,
     model_id: Option<Uuid>,
+    model: &ModelConfig,
     usage: &UsageStats,
     ttft_ms: Option<i64>,
     total_ms: Option<i64>,
 ) {
-    // Compact only needs the model's input-context size on this turn:
-    // non-cached prompt + cache read + cache creation.
-    let context_tokens = usage.prompt_tokens as i64
-        + usage.cache_read_tokens as i64
-        + usage.cache_creation_tokens as i64;
+    // Compact only needs the model's input-context size on this turn,
+    // normalised for the provider's wire semantics.
+    let context_tokens = model.context_tokens_from_usage(usage);
     let now = chrono::Utc::now().timestamp();
 
     let _ = sqlx::query(
