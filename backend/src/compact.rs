@@ -177,6 +177,22 @@ pub async fn finalize_compaction(
         info!(conversation = %ctx.conversation_id, "⚡ in-band compaction done (kept full tail)");
     }
 
+    // The summary pass ran against the *pre*-compaction window, so the
+    // context snapshot stamped on its assistant row(s) describes a context
+    // that no longer exists. Left in place it would be the newest snapshot on
+    // the branch and re-trigger compaction on the very next turn whenever the
+    // continuation fails to stamp a fresh value. Rows after the trigger at
+    // this point are exactly the summary pass (the continue bridge is
+    // appended by the caller afterwards).
+    let _ = sqlx::query(
+        "UPDATE messages SET context_tokens = NULL
+         WHERE conversation_id = $1 AND id > $2 AND role = 'assistant'",
+    )
+    .bind(ctx.conversation_id)
+    .bind(trigger_msg_id)
+    .execute(&ctx.pool)
+    .await;
+
     crate::spells::consolidate_conversation_memories(&ctx.pool, ctx.user_id, ctx.conversation_id)
         .await;
     crate::worker::emit(ctx, serde_json::json!({"type": "compact"})).await;
@@ -200,25 +216,28 @@ fn compute_drop_boundary(
         return None;
     }
 
+    // Accumulate from the end; the message that crosses the budget is dropped
+    // too. Keeping it would make the kept tail *at least* the budget — and
+    // unboundedly larger when a single huge message (e.g. a giant tool
+    // result) is the one that crosses, leaving post-compaction context above
+    // the trigger and forcing an immediate re-compaction on the next turn.
     let mut acc: i64 = 0;
-    let mut first_kept = 0usize; // index within `pre`
+    let mut first_kept: Option<usize> = None; // index within `pre`
     for (k, &i) in pre.iter().enumerate().rev() {
         acc += messages[i].estimate_tokens() as i64;
-        if acc >= tail_budget_tokens {
-            first_kept = k;
+        if acc > tail_budget_tokens {
+            first_kept = Some(k + 1);
             break;
         }
     }
-    if first_kept == 0 {
-        return None; // whole conversation fits the tail budget → drop nothing
-    }
+    // Never crossed → the whole conversation fits the tail budget → drop nothing.
+    let mut first_kept = first_kept?;
 
     // Snap forward to a User message so the kept tail never starts mid-turn.
+    // `first_kept == pre.len()` drops the entire raw tail (the summary covers
+    // it), which is correct when the newest messages alone exceed the budget.
     while first_kept < pre.len() && !matches!(messages[pre[first_kept]], Message::User(_)) {
         first_kept += 1;
-    }
-    if first_kept == 0 {
-        return None;
     }
     let last_dropped = pre[first_kept - 1];
     Some(rows[last_dropped].id)
@@ -260,6 +279,9 @@ async fn build_reminder(ctx: &WorkerContext) -> Option<String> {
 // ── Internal: boundary search ─────────────────────────────────────────────────
 
 /// Latest provider-reported input context size on an assistant message.
+/// Only snapshots past the compaction boundary count: rows at or before it
+/// were measured against a window that no longer loads, so falling back to
+/// them after a compaction would re-trigger it on stale data.
 async fn latest_context_tokens(pool: &PgPool, conv_id: Uuid) -> i64 {
     sqlx::query_scalar::<_, Option<i64>>(
         "WITH RECURSIVE branch AS (
@@ -276,6 +298,10 @@ async fn latest_context_tokens(pool: &PgPool, conv_id: Uuid) -> i64 {
          FROM branch
          WHERE role = 'assistant'
            AND context_tokens IS NOT NULL
+           AND id > COALESCE(
+               (SELECT compact_drop_through_msg_id FROM conversations WHERE id = $1),
+               -1
+           )
          ORDER BY id DESC LIMIT 1",
     )
     .bind(conv_id)
@@ -286,7 +312,6 @@ async fn latest_context_tokens(pool: &PgPool, conv_id: Uuid) -> i64 {
     .flatten()
     .unwrap_or(0)
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -481,6 +506,55 @@ mod tests {
             current = node.parent_id;
         }
         0
+    }
+
+    fn bare_row(id: i64) -> MessageRow {
+        MessageRow {
+            id,
+            conversation_id: Uuid::nil(),
+            role: String::new(),
+            name: None,
+            content: None,
+            spell_casts: None,
+            spell_cast_id: None,
+            reasoning: None,
+            created_at: 0,
+            parent_id: None,
+            streaming: false,
+            job_id: None,
+            summary_text: None,
+            summary_tokens: None,
+            provider_data: None,
+        }
+    }
+
+    #[test]
+    fn drop_boundary_excludes_the_message_that_crosses_the_tail_budget() {
+        // ids 1..=5 precede the trigger (id 10). Message id 3 is huge; the
+        // kept tail must not include it — keeping the crossing message made
+        // the kept tail unbounded (old behaviour), so post-compaction context
+        // stayed above the trigger and re-compacted on the next turn.
+        let rows: Vec<MessageRow> = (1..=5).map(bare_row).collect();
+        let messages = vec![
+            user_msg("one"),
+            assistant_msg("two"),
+            user_msg("HUGE ".repeat(2000)), // ~2000+ tokens
+            assistant_msg("four"),
+            user_msg("five"),
+        ];
+        let boundary =
+            compute_drop_boundary(&rows, &messages, 10, 50).expect("boundary must be set");
+        // Walking back, ids 5 and 4 fit in the budget; id 3 crosses and is
+        // dropped. The kept tail then snaps forward to the next User message
+        // (id 5), so the last dropped row is id 4.
+        assert_eq!(boundary, 4);
+    }
+
+    #[test]
+    fn drop_boundary_keeps_everything_when_tail_budget_covers_it() {
+        let rows: Vec<MessageRow> = (1..=3).map(bare_row).collect();
+        let messages = vec![user_msg("hello"), assistant_msg("hi"), user_msg("thanks")];
+        assert_eq!(compute_drop_boundary(&rows, &messages, 10, 10_000), None);
     }
 
     #[test]
@@ -704,7 +778,12 @@ mod tests {
         // provider-reported context snapshot — forcing compaction. This is the
         // real decoupling: trigger watches context_tokens, not message bytes.
         let m_root = db
-            .append(conv_id, user_id, &user_msg("oldest question about topic A"), None)
+            .append(
+                conv_id,
+                user_id,
+                &user_msg("oldest question about topic A"),
+                None,
+            )
             .await
             .expect("root");
         let _a1 = db
@@ -770,7 +849,13 @@ mod tests {
         let pre_len = messages.len();
 
         crate::worker::run_compaction_phase(
-            &ctx, &http, &request, &bundle, &model, None, &mut messages,
+            &ctx,
+            &http,
+            &request,
+            &bundle,
+            &model,
+            None,
+            &mut messages,
         )
         .await
         .expect("run_compaction_phase");
@@ -801,7 +886,11 @@ mod tests {
         let window = load_for_generation(&ctx.db, conv_id, user_id)
             .await
             .expect("reload compacted window");
-        let joined = window.iter().map(render_text).collect::<Vec<_>>().join("\n");
+        let joined = window
+            .iter()
+            .map(render_text)
+            .collect::<Vec<_>>()
+            .join("\n");
 
         assert!(
             joined.contains("mock summary"),
@@ -828,4 +917,3 @@ mod tests {
         test_db.cleanup().await;
     }
 }
-
