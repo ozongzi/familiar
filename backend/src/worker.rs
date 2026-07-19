@@ -14,7 +14,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use agentix::raw::shared::ToolDefinition;
-use agentix::types::UsageStats;
+use agentix::types::Usage;
 use agentix::{LlmEvent, McpTool, Message, Request, Tool, ToolBundle, ToolOutput, UserContent};
 use futures::StreamExt;
 use serde_json::{Value, json};
@@ -587,7 +587,7 @@ async fn generation_loop(
         let mut reasoning_buf = String::new();
         let mut tool_calls_buf: Vec<agentix::ToolCall> = Vec::new();
         let mut provider_state: Option<serde_json::Value> = None;
-        let mut usage = UsageStats::default();
+        let mut usage = Usage::default();
         let mut token_count: u32 = 0;
         let mut ttft_logged = false;
         let mut ttfa_logged = false; // first event of any kind (content, reasoning, tool call)
@@ -615,7 +615,7 @@ async fn generation_loop(
                             Some(&reasoning_buf)
                         },
                         None,
-                        crate::db::MessageContext::from_usage(&usage, &compact_model),
+                        crate::db::MessageContext::from_usage(&usage),
                         provider_state.as_ref(),
                     )
                     .await;
@@ -702,7 +702,6 @@ async fn generation_loop(
                         ctx,
                         streaming_msg_id,
                         model_id,
-                        &compact_model,
                         &u,
                         ttft_ms,
                         Some(total_ms),
@@ -734,15 +733,15 @@ async fn generation_loop(
         }
 
         // ── Emit usage summary ────────────────────────────────────────────
-        if usage.total_tokens > 0 {
-            let context_tokens = compact_model.context_tokens_from_usage(&usage);
+        if usage.total() > 0 {
+            let context_tokens = usage.total_input() as i64;
             emit(
                 ctx,
                 json!({
                     "type": "usage",
-                    "prompt_tokens": usage.prompt_tokens,
-                    "completion_tokens": usage.completion_tokens,
-                    "total_tokens": usage.total_tokens,
+                    "prompt_tokens": usage.input,
+                    "completion_tokens": usage.total_output(),
+                    "total_tokens": usage.total(),
                     "context_tokens": context_tokens,
                     "compact_trigger_tokens": compact_model.compact_trigger_tokens,
                 }),
@@ -780,7 +779,7 @@ async fn generation_loop(
                     Some(&reasoning_buf)
                 },
                 tc_json.as_deref(),
-                crate::db::MessageContext::from_usage(&usage, &compact_model),
+                crate::db::MessageContext::from_usage(&usage),
                 provider_state.as_ref(),
             )
             .await;
@@ -968,14 +967,13 @@ async fn persist_usage_event(
     ctx: &WorkerContext,
     message_id: i64,
     model_id: Option<Uuid>,
-    model: &ModelConfig,
-    usage: &UsageStats,
+    usage: &Usage,
     ttft_ms: Option<i64>,
     total_ms: Option<i64>,
 ) {
-    // Compact only needs the model's input-context size on this turn,
-    // normalised for the provider's wire semantics.
-    let context_tokens = model.context_tokens_from_usage(usage);
+    // Compact only needs the model's input-context size on this turn:
+    // agentix 0.28 buckets are disjoint, so it's a plain sum.
+    let context_tokens = usage.total_input() as i64;
     let now = chrono::Utc::now().timestamp();
 
     let _ = sqlx::query(
@@ -990,10 +988,10 @@ async fn persist_usage_event(
     )
     .bind(ctx.job_id)
     .bind(message_id)
-    .bind(usage.prompt_tokens as i64)
-    .bind(usage.completion_tokens as i64)
-    .bind(usage.cache_read_tokens as i64)
-    .bind(usage.cache_creation_tokens as i64)
+    .bind(usage.input as i64)
+    .bind(usage.total_output() as i64)
+    .bind(usage.cache_read as i64)
+    .bind(usage.cache_write() as i64)
     .bind(model_id)
     .bind(ttft_ms)
     .bind(total_ms)

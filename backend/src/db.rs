@@ -127,15 +127,12 @@ pub struct MessageContext {
 }
 
 impl MessageContext {
-    /// Build from an `agentix::UsageStats`. Returns `None` when the provider
-    /// did not report any input-context size for this turn. The model config
-    /// supplies the wire semantics (whether cache tokens are already included
-    /// in `prompt_tokens` — see `ModelConfig::context_tokens_from_usage`).
-    pub fn from_usage(
-        u: &agentix::types::UsageStats,
-        model: &crate::config::ModelConfig,
-    ) -> Option<Self> {
-        let total = model.context_tokens_from_usage(u);
+    /// Build from an `agentix::Usage`. Returns `None` when the provider
+    /// did not report any input-context size for this turn. agentix 0.28
+    /// buckets are disjoint, so total context is a plain sum for every
+    /// provider — no per-wire semantics needed.
+    pub fn from_usage(u: &agentix::types::Usage) -> Option<Self> {
+        let total = u.total_input() as i64;
         if total == 0 {
             return None;
         }

@@ -136,12 +136,12 @@ async fn run_agent_direct_call_probe() -> anyhow::Result<()> {
             AgentEvent::Usage(u) => {
                 eprintln!(
                     "\nUSAGE prompt={} completion={} total={}",
-                    u.prompt_tokens, u.completion_tokens, u.total_tokens
+                    u.input, u.output, u.total()
                 );
             }
             AgentEvent::Warning(w) => eprintln!("\nWARNING {w}"),
             AgentEvent::Done(total) => {
-                eprintln!("\nDONE total_tokens={}", total.total_tokens);
+                eprintln!("\nDONE total_tokens={}", total.total());
                 break;
             }
             AgentEvent::Error(e) => {
@@ -197,7 +197,7 @@ async fn run_direct_call_probe() -> anyhow::Result<()> {
             LlmEvent::Usage(u) => {
                 eprintln!(
                     "\nUSAGE prompt={} completion={} total={}",
-                    u.prompt_tokens, u.completion_tokens, u.total_tokens
+                    u.input, u.output, u.total()
                 );
             }
             LlmEvent::Done => {
@@ -252,7 +252,7 @@ async fn run_tool_visibility_probe() -> anyhow::Result<()> {
             LlmEvent::Usage(u) => {
                 eprintln!(
                     "\nUSAGE prompt={} completion={} total={}",
-                    u.prompt_tokens, u.completion_tokens, u.total_tokens
+                    u.input, u.output, u.total()
                 );
             }
             LlmEvent::Done => {
@@ -305,7 +305,7 @@ async fn run_raw_stream() -> anyhow::Result<()> {
             LlmEvent::Usage(u) => {
                 eprintln!(
                     "\nUSAGE prompt={} completion={} total={}",
-                    u.prompt_tokens, u.completion_tokens, u.total_tokens
+                    u.input, u.output, u.total()
                 );
             }
             LlmEvent::Done => {
@@ -380,12 +380,12 @@ async fn run_agent_loop() -> anyhow::Result<()> {
             AgentEvent::Usage(u) => {
                 eprintln!(
                     "\nUSAGE prompt={} completion={} total={}",
-                    u.prompt_tokens, u.completion_tokens, u.total_tokens
+                    u.input, u.output, u.total()
                 );
             }
             AgentEvent::Warning(w) => eprintln!("\nWARNING {w}"),
             AgentEvent::Done(total) => {
-                eprintln!("\nDONE total_tokens={}", total.total_tokens);
+                eprintln!("\nDONE total_tokens={}", total.total());
                 break;
             }
             AgentEvent::Error(e) => {

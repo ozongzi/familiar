@@ -503,7 +503,7 @@ mod overhead_estimate {
         };
 
         println!("========== LIVE EVENTS FROM `claude` CLI ==========");
-        let mut usage_events: Vec<agentix::types::UsageStats> = Vec::new();
+        let mut usage_events: Vec<agentix::types::Usage> = Vec::new();
         let mut other_event_kinds: Vec<&'static str> = Vec::new();
         let mut tokens_collected = String::new();
 
@@ -513,11 +513,11 @@ mod overhead_estimate {
                     println!(
                         "[Usage #{}] prompt={} cache_read={} cache_creation={} completion={} total={}",
                         usage_events.len() + 1,
-                        u.prompt_tokens,
-                        u.cache_read_tokens,
-                        u.cache_creation_tokens,
-                        u.completion_tokens,
-                        u.total_tokens
+                        u.input,
+                        u.cache_read,
+                        u.cache_write(),
+                        u.total_output(),
+                        u.total()
                     );
                     usage_events.push(u);
                 }
@@ -542,15 +542,15 @@ mod overhead_estimate {
         println!("Total Usage events received: {}", usage_events.len());
         if usage_events.len() > 1 {
             println!("⚠  Multiple Usage events → worker.rs `usage += u` would DOUBLE-COUNT");
-            let total_prompt: usize = usage_events.iter().map(|u| u.prompt_tokens).sum();
-            let total_cache_read: usize = usage_events.iter().map(|u| u.cache_read_tokens).sum();
-            let total_cache_creation: usize = usage_events.iter().map(|u| u.cache_creation_tokens).sum();
+            let total_prompt: u64 = usage_events.iter().map(|u| u.input).sum();
+            let total_cache_read: u64 = usage_events.iter().map(|u| u.cache_read).sum();
+            let total_cache_creation: u64 = usage_events.iter().map(|u| u.cache_write()).sum();
             println!(
                 "  accumulated prompt={total_prompt} cache_read={total_cache_read} cache_creation={total_cache_creation}"
             );
             let single_max = usage_events
                 .iter()
-                .map(|u| u.prompt_tokens + u.cache_read_tokens + u.cache_creation_tokens)
+                .map(|u| u.total_input())
                 .max()
                 .unwrap_or(0);
             println!("  max single-event total input: {single_max}");
@@ -611,7 +611,7 @@ mod overhead_estimate {
         };
 
         println!("========== LIVE EVENTS FROM DeepSeek API ==========");
-        let mut usage_events: Vec<agentix::types::UsageStats> = Vec::new();
+        let mut usage_events: Vec<agentix::types::Usage> = Vec::new();
         let mut other_event_kinds: Vec<&'static str> = Vec::new();
         let mut tokens_collected = String::new();
 
@@ -621,11 +621,11 @@ mod overhead_estimate {
                     println!(
                         "[Usage #{}] prompt={} cache_read={} cache_creation={} completion={} total={}",
                         usage_events.len() + 1,
-                        u.prompt_tokens,
-                        u.cache_read_tokens,
-                        u.cache_creation_tokens,
-                        u.completion_tokens,
-                        u.total_tokens
+                        u.input,
+                        u.cache_read,
+                        u.cache_write(),
+                        u.total_output(),
+                        u.total()
                     );
                     usage_events.push(u);
                 }
@@ -648,7 +648,7 @@ mod overhead_estimate {
         println!("Total Usage events received: {}", usage_events.len());
         if !usage_events.is_empty() {
             let last = usage_events.last().unwrap();
-            let real_input = last.prompt_tokens; // DeepSeek prompt_tokens = total input
+            let real_input = last.total_input(); // DeepSeek: miss + cache hit = total prompt
             let local_total = local_sys + local_tools + local_user;
             println!(
                 "Real prompt_tokens (last event): {} | local cl100k estimate: {} | ratio {:.2}",
